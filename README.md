@@ -32,9 +32,10 @@ Niño3.4 index is derived from predicted SST for ENSO evaluation.
 ## Current Architecture Idea
 
 1. Joint time-variable patch embedding
-2. Regional / spatial attention
+2. Regional / spatial attention (physics-informed, 热收支约束)
 3. Target-month and rollout-step conditioned TMoE
-4. Variable-specific decoders
+4. Coupled variable decoder (SST-HC-taux-tauy 联合解码)
+5. CNOP-based ensemble prediction (后续)
 
 ## Current Status
 
