@@ -1,0 +1,41 @@
+# WalkerNet default config
+# All hyperparameters here. Both Person A (model) and Person B (data/train) read from this.
+
+# === Data ===
+data:
+  path: ""                    # path to data directory or file (nc / npy)
+  L: 3                        # input window length: 3 or 12 months
+  H: 45                       # grid height (latitude)
+  W: 90                       # grid width (longitude)
+  variables: ["SST", "HC", "taux", "tauy"]
+  norm: "zscore"              # normalization: "zscore", "minmax", or "none"
+  train_years: [1980, 2010]   # inclusive
+  val_years: [2011, 2015]
+  test_years: [2016, 2023]
+
+# === Model ===
+model:
+  patch_size: 4               # spatial patch size
+  d_model: 256                # token embedding dimension
+  nhead: 8                    # number of attention heads
+  dim_ff: 1024                # FFN hidden dimension
+  num_layers: 6               # number of ViT blocks
+  num_experts: 12             # TMoE experts (default: one per month)
+  dropout: 0.1
+  max_rollout_steps: 24       # max supported rollout steps
+
+# === Training ===
+training:
+  epochs: 100
+  batch_size: 16
+  lr: 1.0e-4
+  weight_decay: 1.0e-2
+  grad_clip: 1.0              # max gradient norm
+  loss: "mse"                 # "mse", "weighted_mse", "area_weighted_mse"
+  seed: 42
+
+# === Logging ===
+logging:
+  log_interval: 50            # log every N steps
+  save_dir: "checkpoints/"
+  use_tensorboard: true
