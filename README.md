@@ -19,23 +19,23 @@ Use historical global physical fields to predict future global fields, and evalu
 
 Input shape:
 
-B × L × 4 × H × W
+B × L × 4 × H × W（L = 3 或 12 个月，可配置）
 
 ## Output
 
 Future global physical fields:
 
-B × K × 4 × H × W
+B × 1 × 4 × H × W (1 month output, autoregressive rollout for longer lead times)
 
 Niño3.4 index is derived from predicted SST for ENSO evaluation.
 
 ## Current Architecture Idea
 
 1. Joint time-variable patch embedding
-2. Regional / spatial attention (physics-informed, 热收支约束)
-3. Target-month and rollout-step conditioned TMoE
-4. Coupled variable decoder (SST-HC-taux-tauy 联合解码)
-5. CNOP-based ensemble prediction (后续)
+2. Spatial attention (global spatial teleconnections)
+3. TMoE (target-month conditioned routing)
+4. Coupled variable decoder (4 variables jointly decoded)
+5. Rollout step embedding (independent conditioning signal for multi-step prediction)
 
 ## Current Status
 
