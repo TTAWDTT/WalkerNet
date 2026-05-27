@@ -1,70 +1,188 @@
-"""
-Training loop: forward, loss, backward, validation, checkpointing.
+"""WalkerNet 训练循环。
 
-Owner: Zhen Luo
-Responsibility: Training logic, logging, checkpoint save/load
+依赖 interfaces.py 中约定的调用形式：
+
+    y_pred = model(batch["x"], batch["target_month"])
+
+loss 使用 valid_mask 忽略无效区域。
 """
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
 
 import torch
+from torch.utils.data import DataLoader
+
+
+def masked_mse_loss(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    valid_mask: torch.Tensor,
+    variable_weights: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """按变量计算 masked MSE，再对变量取平均。
+
+    Args:
+        pred: ``(B, 1, 4, H, W)`` 1 是输出的长度（不是输入的长度）
+        target: ``(B, 1, 4, H, W)``
+        valid_mask: ``(B, 4, H, W)``，True 表示有效
+        variable_weights: 可选 ``(4,)``，用于变量加权
+
+    Returns:
+        标量 loss
+    """
+    if pred.shape != target.shape:
+        raise ValueError(f"pred and target shape mismatch: {pred.shape} vs {target.shape}")
+    if pred.ndim != 5:
+        raise ValueError(f"pred/target must be (B, 1, 4, H, W), got {pred.shape}")
+    if valid_mask.shape != (pred.shape[0], pred.shape[2], pred.shape[3], pred.shape[4]):
+        raise ValueError(f"valid_mask shape mismatch: got {valid_mask.shape}, pred={pred.shape}")
+
+    mask = valid_mask[:, None].to(device=pred.device, dtype=pred.dtype)
+    squared = (pred - target) ** 2
+
+    per_var_losses = []
+    for var_idx in range(pred.shape[2]):
+        var_squared = squared[:, :, var_idx]
+        var_mask = mask[:, :, var_idx]
+        denom = var_mask.sum().clamp_min(1.0)
+        per_var_losses.append((var_squared * var_mask).sum() / denom)
+
+    losses = torch.stack(per_var_losses)
+    if variable_weights is not None:
+        weights = variable_weights.to(device=pred.device, dtype=pred.dtype)
+        weights = weights / weights.sum().clamp_min(torch.finfo(pred.dtype).eps)
+        return (losses * weights).sum()
+    return losses.mean()
 
 
 class Trainer:
-    """Handles the training loop for WalkerNet."""
+    """负责训练、验证、保存 checkpoint 的轻量 Trainer。"""
 
-    def __init__(self, model, train_loader, val_loader, config):
-        """
-        Args:
-            model: WalkerNet instance
-            train_loader: DataLoader for training set
-            val_loader: DataLoader for validation set
-            config: dict with keys:
-                - lr: learning rate
-                - weight_decay: weight decay
-                - epochs: total epochs
-                - loss: loss function name ("mse", "weighted_mse", etc.)
-                - grad_clip: gradient clipping value (optional)
-                - save_dir: checkpoint save directory
-                - log_interval: logging frequency (steps)
-        """
-        # TODO: implement
-        # 1. Create optimizer (AdamW)
-        # 2. Create scheduler (optional)
-        # 3. Create loss function
-        # 4. Set up logging (tensorboard / wandb / print)
-        # 5. Set up checkpointing
-        pass
+    def __init__(
+        self,
+        model: torch.nn.Module,
+        train_loader: DataLoader,
+        val_loader: DataLoader | None,
+        config: dict[str, Any],
+        device: torch.device | str | None = None,
+    ) -> None:
+        self.model = model
+        self.train_loader = train_loader
+        self.val_loader = val_loader
+        self.config = config
+        self.training_config = config.get("training", config)
+        self.logging_config = config.get("logging", {})
+        self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
 
-    def train_epoch(self):
-        """Run one training epoch.
+        self.model.to(self.device)
 
-        For each batch:
-            1. model(x, target_month) -> y_pred
-            2. compute loss(y_pred, y_true)
-            3. loss.backward(), optimizer.step()
-            4. log metrics
+        self.epochs = int(self.training_config.get("epochs", 1))
+        self.grad_clip = self.training_config.get("grad_clip")
+        self.log_interval = int(self.logging_config.get("log_interval", 50))
+        self.save_dir = Path(self.logging_config.get("save_dir", "checkpoints"))
+        self.save_dir.mkdir(parents=True, exist_ok=True)
 
-        Returns:
-            dict of training metrics (avg loss, etc.)
-        """
-        raise NotImplementedError
+        self.optimizer = torch.optim.AdamW(
+            self.model.parameters(),
+            lr=float(self.training_config.get("lr", 1e-4)),
+            weight_decay=float(self.training_config.get("weight_decay", 0.0)),
+        )
+
+        self.best_val_loss = float("inf")
+
+    def train_epoch(self, epoch: int) -> dict[str, float]:
+        """训练一个 epoch。"""
+        self.model.train()
+        total_loss = 0.0
+        num_batches = 0
+
+        for step, batch in enumerate(self.train_loader, start=1):
+            batch = self._move_batch(batch)
+
+            self.optimizer.zero_grad(set_to_none=True)
+            pred = self.model(batch["x"], batch["target_month"])
+            loss = masked_mse_loss(pred, batch["y"], batch["valid_mask"])
+            loss.backward()
+
+            if self.grad_clip is not None:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), float(self.grad_clip))
+
+            self.optimizer.step()
+
+            total_loss += float(loss.detach().cpu())
+            num_batches += 1
+
+            if self.log_interval > 0 and step % self.log_interval == 0:
+                avg = total_loss / max(num_batches, 1)
+                print(f"epoch={epoch} step={step}/{len(self.train_loader)} train_loss={avg:.6f}")
+
+        return {"loss": total_loss / max(num_batches, 1)}
 
     @torch.no_grad()
-    def validate(self):
-        """Run validation.
+    def validate(self) -> dict[str, float]:
+        """在验证集上计算 loss。"""
+        if self.val_loader is None:
+            return {}
 
-        Returns:
-            dict of validation metrics (avg loss, per-variable loss, etc.)
-        """
-        raise NotImplementedError
+        self.model.eval()
+        total_loss = 0.0
+        num_batches = 0
 
-    def save_checkpoint(self, path, epoch, metrics):
-        """Save model + optimizer state and metrics."""
-        raise NotImplementedError
+        for batch in self.val_loader:
+            batch = self._move_batch(batch)
+            pred = self.model(batch["x"], batch["target_month"])
+            loss = masked_mse_loss(pred, batch["y"], batch["valid_mask"])
+            total_loss += float(loss.detach().cpu())
+            num_batches += 1
 
-    def load_checkpoint(self, path):
-        """Load model + optimizer state. Returns epoch and metrics."""
-        raise NotImplementedError
+        return {"loss": total_loss / max(num_batches, 1)}
 
-    def train(self):
-        """Full training loop: iterate epochs, validate, checkpoint, early stop."""
-        raise NotImplementedError
+    def save_checkpoint(self, path: str | Path, epoch: int, metrics: dict[str, float]) -> None:
+        """保存模型、优化器和指标。"""
+        checkpoint = {
+            "epoch": epoch,
+            "model": self.model.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+            "metrics": metrics,
+            "config": self.config,
+        }
+        torch.save(checkpoint, path)
+
+    def load_checkpoint(self, path: str | Path) -> tuple[int, dict[str, float]]:
+        """读取 checkpoint，返回 epoch 和 metrics。"""
+        checkpoint = torch.load(path, map_location=self.device)
+        self.model.load_state_dict(checkpoint["model"])
+        self.optimizer.load_state_dict(checkpoint["optimizer"])
+        return int(checkpoint.get("epoch", 0)), dict(checkpoint.get("metrics", {}))
+
+    def train(self) -> None:
+        """完整训练循环。"""
+        for epoch in range(1, self.epochs + 1):
+            train_metrics = self.train_epoch(epoch)
+            val_metrics = self.validate()
+
+            message = f"epoch={epoch} train_loss={train_metrics['loss']:.6f}"
+            if val_metrics:
+                message += f" val_loss={val_metrics['loss']:.6f}"
+            print(message)
+
+            latest_path = self.save_dir / "latest.pt"
+            self.save_checkpoint(latest_path, epoch, {"train": train_metrics, "val": val_metrics})
+
+            if val_metrics and val_metrics["loss"] < self.best_val_loss:
+                self.best_val_loss = val_metrics["loss"]
+                best_path = self.save_dir / "best.pt"
+                self.save_checkpoint(best_path, epoch, {"train": train_metrics, "val": val_metrics})
+
+    def _move_batch(self, batch: dict[str, Any]) -> dict[str, Any]:
+        """把 batch 中的 tensor 移到训练设备。"""
+        moved = {}
+        for key, value in batch.items():
+            if isinstance(value, torch.Tensor):
+                moved[key] = value.to(self.device)
+            else:
+                moved[key] = value
+        return moved
