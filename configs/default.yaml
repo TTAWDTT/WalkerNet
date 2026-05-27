@@ -3,11 +3,11 @@
 
 # === Data ===
 data:
-  path: ""                    # path to data directory or file (nc / npy)
+  path: "data_1x1"            # path to remapped data directory or file (nc / npy)
   L: 3                        # input window length: 3 or 12 months
-  H: 45                       # grid height (latitude)
-  W: 90                       # grid width (longitude)
-  variables: ["SST", "HC", "taux", "tauy"]
+  H: 180                      # grid height (latitude)
+  W: 360                      # grid width (longitude)
+  variables: ["tos", "zos", "tauu", "tauv"]
   norm: "zscore"              # normalization: "zscore", "minmax", or "none"
   train_years: [1980, 2010]   # inclusive
   val_years: [2011, 2015]
