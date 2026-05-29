@@ -1,191 +1,268 @@
-"""
-WalkerNet model architecture.
+"""WalkerNet model architecture.
 
-Owner: Ziyi Zhuang
-Responsibility: All neural network modules
+Owner: Ziyi Zhuang.
+Implements model(x, target_month, rollout_step=None) -> y_pred per src/interfaces.py.
 
-Architecture:
-  Input (B, L, 4, H, W)
-    -> Joint Time-Variable Patch Embedding
-    -> Spatial Attention (ViT)
-    -> TMoE (target-month conditioned)
-    -> Coupled Variable Decoder
-  Output (B, 1, 4, H, W)
+Step 1 assembly: shapes and gradients flow end-to-end.
+TMoE is a placeholder (shared FFN) until expert routing is designed.
 """
+
+from __future__ import annotations
 
 import torch
 import torch.nn as nn
 
+try:
+    from .interfaces import GRID_H, GRID_W, NUM_VARIABLES
+except ImportError:  # pragma: no cover - allows running this file directly
+    from interfaces import GRID_H, GRID_W, NUM_VARIABLES
+
 
 class PatchEmbedding(nn.Module):
-    """Joint time-variable patch embedding.
+    """(B, L, 4, H, W) -> (B, N, d_model) via Conv2d patch projection + learnable pos embed."""
 
-    Flattens L time steps x 4 variables into the channel dimension,
-    then applies patch projection to produce token sequence.
-
-    Input:  (B, L, 4, H, W)
-    Output: (B, N, d_model)  where N = (H/patch_size) * (W/patch_size)
-    """
-
-    def __init__(self, in_channels, patch_size, d_model):
-        """
-        Args:
-            in_channels: L * 4 (time steps x variables)
-            patch_size: spatial patch size (int or tuple)
-            d_model: embedding dimension
-        """
+    def __init__(self, in_channels, patch_size, d_model, grid_shape=(GRID_H, GRID_W), dropout=0.0):
         super().__init__()
-        # TODO: implement
-        pass
+        H, W = grid_shape
+        if H % patch_size != 0 or W % patch_size != 0:
+            raise ValueError(f"grid {(H, W)} not divisible by patch_size {patch_size}")
+        self.patch_size = patch_size
+        self.grid_h = H // patch_size
+        self.grid_w = W // patch_size
+        self.num_patches = self.grid_h * self.grid_w
+        self.proj = nn.Conv2d(in_channels, d_model, kernel_size=patch_size, stride=patch_size)
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches, d_model))
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
-        """
-        Args:
-            x: (B, L, 4, H, W)
-        Returns:
-            (B, N, d_model)
-        """
-        raise NotImplementedError
+        B, L, V, H, W = x.shape
+        x = x.reshape(B, L * V, H, W)
+        x = self.proj(x).flatten(2).transpose(1, 2)
+        return self.dropout(x + self.pos_embed)
 
 
 class SpatialAttentionBlock(nn.Module):
-    """Single ViT-style spatial attention block.
-
-    Standard pre-norm Transformer block:
-      LayerNorm -> MultiheadAttention -> Residual
-      LayerNorm -> FFN -> Residual
-    """
+    """Pre-norm ViT block: LN -> MHA -> residual; LN -> FFN -> residual."""
 
     def __init__(self, d_model, nhead, dim_ff, dropout=0.1):
         super().__init__()
-        # TODO: implement
-        pass
+        self.norm1 = nn.LayerNorm(d_model)
+        self.attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.ffn = nn.Sequential(
+            nn.Linear(d_model, dim_ff),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(dim_ff, d_model),
+            nn.Dropout(dropout),
+        )
 
     def forward(self, x):
-        """
-        Args:
-            x: (B, N, d_model)
-        Returns:
-            (B, N, d_model)
-        """
-        raise NotImplementedError
+        h = self.norm1(x)
+        attn_out, _ = self.attn(h, h, h, need_weights=False)
+        x = x + attn_out
+        x = x + self.ffn(self.norm2(x))
+        return x
 
 
 class TemporalMixtureOfExperts(nn.Module):
-    """TMoE: routes tokens to different expert FFNs based on target month.
+    """Top-k soft TMoE routed by target_month.
 
-    Uses target_month (1-12) to select/expert-weight a set of FFN experts.
-    Can be conditioned via month embedding added to gating input.
+    Routing is purely temporal: a month embedding feeds a gate that produces
+    a soft top-k weight over `num_experts` FFN experts, shared across all tokens
+    in the sample. Each expert is an FFN block (LN+residual stay outside).
     """
 
-    def __init__(self, d_model, dim_ff, num_experts=12):
-        """
-        Args:
-            d_model: token dimension
-            dim_ff: FFN hidden dimension
-            num_experts: number of expert networks (default 12, one per month)
-        """
+    def __init__(self, d_model, dim_ff, num_experts=12, top_k=2, dropout=0.1, gate_dim=64):
         super().__init__()
-        # TODO: implement
-        pass
+        if not 1 <= top_k <= num_experts:
+            raise ValueError(f"top_k must be in [1, {num_experts}], got {top_k}")
+        self.num_experts = num_experts
+        self.top_k = top_k
+
+        self.norm = nn.LayerNorm(d_model)
+        self.month_embed = nn.Embedding(12, gate_dim)
+        nn.init.trunc_normal_(self.month_embed.weight, std=0.02)
+        self.gate = nn.Linear(gate_dim, num_experts)
+
+        self.experts = nn.ModuleList(
+            nn.Sequential(
+                nn.Linear(d_model, dim_ff),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(dim_ff, d_model),
+                nn.Dropout(dropout),
+            )
+            for _ in range(num_experts)
+        )
 
     def forward(self, x, target_month):
-        """
-        Args:
-            x: (B, N, d_model)
-            target_month: (B,) int64, values in [1, 12]
-        Returns:
-            (B, N, d_model)
-        """
-        raise NotImplementedError
+        B = x.shape[0]
+        month_idx = (target_month - 1).clamp(0, 11)
+        logits = self.gate(self.month_embed(month_idx))
+
+        topk_vals, topk_idx = logits.topk(self.top_k, dim=-1)
+        masked = torch.full_like(logits, float("-inf"))
+        masked.scatter_(-1, topk_idx, topk_vals)
+        weights = torch.softmax(masked, dim=-1)
+
+        h = self.norm(x)
+        out = torch.zeros_like(x)
+        for i, expert in enumerate(self.experts):
+            out = out + weights[:, i].view(B, 1, 1) * expert(h)
+        return x + out
 
 
 class RolloutEmbedding(nn.Module):
-    """Encodes rollout step as a conditioning signal.
-
-    Injects lead-time awareness into the model. Not used for TMoE routing,
-    but added to token representations or cross-attended.
-    """
+    """Additive embedding for autoregressive step index."""
 
     def __init__(self, d_model, max_steps=24):
-        """
-        Args:
-            d_model: embedding dimension
-            max_steps: maximum rollout steps to support
-        """
         super().__init__()
-        # TODO: implement
-        pass
+        self.max_steps = max_steps
+        self.embed = nn.Embedding(max_steps, d_model)
+        nn.init.trunc_normal_(self.embed.weight, std=0.02)
 
     def forward(self, x, rollout_step):
-        """
-        Args:
-            x: (B, N, d_model)
-            rollout_step: (B,) int64, 0=single-step, 1/2/3...=rollout
-        Returns:
-            (B, N, d_model)
-        """
-        raise NotImplementedError
+        if rollout_step is None:
+            rollout_step = torch.zeros(x.shape[0], dtype=torch.long, device=x.device)
+        rollout_step = rollout_step.clamp(min=0, max=self.max_steps - 1)
+        return x + self.embed(rollout_step).unsqueeze(1)
 
 
 class CoupledVariableDecoder(nn.Module):
-    """Decodes token representations back to 4 coupled physical fields.
+    """Decode tokens to (B, 1, 4, H, W) via low-res feature map + PixelShuffle x2 x2.
 
-    All 4 variables decoded jointly (not independently),
-    leveraging physical coupling between SST, HC, taux, tauy.
-
-    Input:  (B, N, d_model)
-    Output: (B, 1, 4, H, W)
+    Pipeline:
+        (B, N, d_model) -> reshape (B, d_model, H/p, W/p)
+                        -> Conv refine (variable coupling lives in channel dim)
+                        -> PixelShuffle x2 (with conv head producing 4*d_up^2 channels)
+                        -> Conv refine
+                        -> PixelShuffle x2
+                        -> Conv2d(d_up -> 4)
+                        -> unsqueeze time dim
     """
 
-    def __init__(self, d_model, out_channels, patch_size, target_shape):
-        """
-        Args:
-            d_model: token dimension
-            out_channels: 4 (number of output variables)
-            patch_size: spatial patch size (must match embedding)
-            target_shape: (H, W) of output grid
-        """
+    def __init__(self, d_model, out_channels, patch_size, target_shape, hidden_channels=128):
         super().__init__()
-        # TODO: implement
-        pass
+        H, W = target_shape
+        if H % patch_size != 0 or W % patch_size != 0:
+            raise ValueError(f"target_shape {(H, W)} not divisible by patch_size {patch_size}")
+        if patch_size % 4 != 0:
+            raise ValueError(f"patch_size must be divisible by 4 for two PixelShuffle x2 stages, got {patch_size}")
+
+        self.out_channels = out_channels
+        self.patch_size = patch_size
+        self.grid_h = H // patch_size
+        self.grid_w = W // patch_size
+        self.H = H
+        self.W = W
+        self.residual_patch = patch_size // 4
+
+        c = hidden_channels
+        self.norm = nn.LayerNorm(d_model)
+        self.proj = nn.Conv2d(d_model, c, kernel_size=1)
+
+        self.refine1 = nn.Sequential(
+            nn.Conv2d(c, c, kernel_size=3, padding=1),
+            nn.GELU(),
+            nn.Conv2d(c, c, kernel_size=3, padding=1),
+            nn.GELU(),
+        )
+        self.up1 = nn.Sequential(
+            nn.Conv2d(c, c * 4, kernel_size=3, padding=1),
+            nn.PixelShuffle(2),
+            nn.GELU(),
+        )
+
+        self.refine2 = nn.Sequential(
+            nn.Conv2d(c, c, kernel_size=3, padding=1),
+            nn.GELU(),
+        )
+        self.up2 = nn.Sequential(
+            nn.Conv2d(c, c * 4, kernel_size=3, padding=1),
+            nn.PixelShuffle(2),
+            nn.GELU(),
+        )
+
+        # If patch_size > 4, finish lifting to (H, W) with one more PixelShuffle stage.
+        if self.residual_patch > 1:
+            r = self.residual_patch
+            self.up_residual = nn.Sequential(
+                nn.Conv2d(c, c * r * r, kernel_size=3, padding=1),
+                nn.PixelShuffle(r),
+                nn.GELU(),
+            )
+        else:
+            self.up_residual = nn.Identity()
+
+        self.head = nn.Conv2d(c, out_channels, kernel_size=1)
 
     def forward(self, x):
-        """
-        Args:
-            x: (B, N, d_model)
-        Returns:
-            (B, 1, 4, H, W)
-        """
-        raise NotImplementedError
+        B, N, D = x.shape
+        x = self.norm(x)
+        x = x.transpose(1, 2).reshape(B, D, self.grid_h, self.grid_w)
+        x = self.proj(x)
+        x = self.refine1(x)
+        x = self.up1(x)
+        x = self.refine2(x)
+        x = self.up2(x)
+        x = self.up_residual(x)
+        x = self.head(x)
+        return x.unsqueeze(1)
 
 
 class WalkerNet(nn.Module):
-    """Complete WalkerNet model.
-
-    Assembles all components into the full pipeline.
-    See interfaces.py for the exact input/output contract.
-    """
+    """Full pipeline: PatchEmbedding -> N x SpatialAttention -> TMoE -> Rollout -> Decoder."""
 
     def __init__(self, config):
-        """
-        Args:
-            config: dict or OmegaConf with all hyperparameters.
-                    Expected keys: L, patch_size, d_model, nhead, dim_ff,
-                    num_layers, num_experts, H, W, max_rollout_steps
-        """
         super().__init__()
-        # TODO: implement — assemble PatchEmbedding, N x SpatialAttentionBlock,
-        #       TMoE, RolloutEmbedding, CoupledVariableDecoder
-        pass
+        data_cfg = config.get("data", {})
+        model_cfg = config.get("model", config)
+
+        L = int(data_cfg.get("L", 3))
+        H = int(data_cfg.get("H", GRID_H))
+        W = int(data_cfg.get("W", GRID_W))
+        V = NUM_VARIABLES
+
+        patch_size = int(model_cfg["patch_size"])
+        d_model = int(model_cfg["d_model"])
+        nhead = int(model_cfg["nhead"])
+        dim_ff = int(model_cfg["dim_ff"])
+        num_layers = int(model_cfg["num_layers"])
+        num_experts = int(model_cfg.get("num_experts", 12))
+        top_k = int(model_cfg.get("top_k", 2))
+        dropout = float(model_cfg.get("dropout", 0.1))
+        max_rollout_steps = int(model_cfg.get("max_rollout_steps", 24))
+        decoder_hidden = int(model_cfg.get("decoder_hidden", 128))
+
+        self.patch_embed = PatchEmbedding(
+            in_channels=L * V,
+            patch_size=patch_size,
+            d_model=d_model,
+            grid_shape=(H, W),
+            dropout=dropout,
+        )
+        self.blocks = nn.ModuleList(
+            [SpatialAttentionBlock(d_model, nhead, dim_ff, dropout=dropout) for _ in range(num_layers)]
+        )
+        self.tmoe = TemporalMixtureOfExperts(
+            d_model, dim_ff, num_experts=num_experts, top_k=top_k, dropout=dropout
+        )
+        self.rollout_embed = RolloutEmbedding(d_model, max_steps=max_rollout_steps)
+        self.decoder = CoupledVariableDecoder(
+            d_model=d_model,
+            out_channels=V,
+            patch_size=patch_size,
+            target_shape=(H, W),
+            hidden_channels=decoder_hidden,
+        )
 
     def forward(self, x, target_month, rollout_step=None):
-        """
-        Args:
-            x: (B, L, 4, H, W)
-            target_month: (B,) int64, values in [1, 12]
-            rollout_step: (B,) int64, 0=single-step (default)
-        Returns:
-            (B, 1, 4, H, W)
-        """
-        raise NotImplementedError
+        z = self.patch_embed(x)
+        z = self.rollout_embed(z, rollout_step)
+        for block in self.blocks:
+            z = block(z)
+        z = self.tmoe(z, target_month)
+        return self.decoder(z)
+

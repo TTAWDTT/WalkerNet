@@ -2,3 +2,6 @@
 data_example/*
 data_1x1/*
 .vscode/*
+__pycache__/
+*.pyc
+CLAUDE.md
