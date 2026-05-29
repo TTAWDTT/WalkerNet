@@ -147,8 +147,8 @@ src/
 - [x] 实现基础 metrics
 - [x] 实现 masked MSE 与 Trainer 骨架
 - [x] 实现训练入口 `src/train.py`
-- [ ] 实现 `src/model.py`
-- [ ] 跑通 synthetic tensor smoke test
+- [x] 实现 `src/model.py`
+- [x] 跑通 synthetic tensor smoke test
 - [ ] 跑通真实数据最小训练
 - [ ] 加入完整 ENSO 评估实验
 

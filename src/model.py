@@ -4,7 +4,6 @@ Owner: Ziyi Zhuang.
 Implements model(x, target_month, rollout_step=None) -> y_pred per src/interfaces.py.
 
 Step 1 assembly: shapes and gradients flow end-to-end.
-TMoE is a placeholder (shared FFN) until expert routing is designed.
 """
 
 from __future__ import annotations
