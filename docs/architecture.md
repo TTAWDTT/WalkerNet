@@ -28,7 +28,10 @@
 ↓ Joint Time-Variable Patch Embedding
 将 L 个时间步 × 4 个变量一起 patch 化，捕获跨时间和跨变量的交互
 
-Z: B × (L×4) × N × d
+↓ Rollout Step Embedding
+将 rollout_step 编码为 embedding 加到 token 上，让后续所有层感知 lead-time
+
+Z: B × N × d
 
 ↓ Spatial Attention
 空间注意力，捕捉全球尺度的遥相关
