@@ -38,6 +38,9 @@ SMALL_CFG = {
         "nhead": 2,
         "dim_ff": 32,
         "num_layers": 2,
+        "patch_fusion_heads": 4,
+        "patch_fusion_layers": 1,
+        "patch_fusion_dim_ff": 64,
         "num_experts": 4,
         "top_k": 2,
         "decoder_hidden": 8,
@@ -58,16 +61,99 @@ def _expect_value_error(fn, *args, **kwargs):
 # --- PatchEmbedding ---------------------------------------------------
 
 def test_patch_embed_shape():
-    pe = PatchEmbedding(in_channels=12, patch_size=4, d_model=16, grid_shape=(20, 40))
+    pe = PatchEmbedding(
+        input_length=3,
+        num_variables=NUM_VARIABLES,
+        patch_size=4,
+        d_model=16,
+        grid_shape=(20, 40),
+        fusion_heads=4,
+        dropout=0.0,
+    )
     x = torch.randn(2, 3, 4, 20, 40)
-    out = pe(x)
+    month = torch.tensor([1, 12], dtype=torch.long)
+    out = pe(x, month)
     assert out.shape == (2, 5 * 10, 16), out.shape
 
 
 def test_patch_embed_rejects_non_divisible_grid():
     _expect_value_error(
-        PatchEmbedding, in_channels=12, patch_size=4, d_model=16, grid_shape=(21, 40)
+        PatchEmbedding,
+        input_length=3,
+        num_variables=NUM_VARIABLES,
+        patch_size=4,
+        d_model=16,
+        grid_shape=(21, 40),
+        fusion_heads=4,
     )
+
+
+def test_patch_embed_rejects_bad_fusion_heads():
+    _expect_value_error(
+        PatchEmbedding,
+        input_length=3,
+        num_variables=NUM_VARIABLES,
+        patch_size=4,
+        d_model=16,
+        grid_shape=(20, 40),
+        fusion_heads=3,
+    )
+
+
+def test_patch_embed_target_month_changes_output():
+    torch.manual_seed(0)
+    pe = PatchEmbedding(
+        input_length=3,
+        num_variables=NUM_VARIABLES,
+        patch_size=4,
+        d_model=16,
+        grid_shape=(20, 40),
+        fusion_heads=4,
+        dropout=0.0,
+    )
+    pe.eval()
+    x = torch.randn(2, 3, 4, 20, 40)
+    out_jan = pe(x, torch.tensor([1, 1], dtype=torch.long))
+    out_jul = pe(x, torch.tensor([7, 7], dtype=torch.long))
+    max_diff = (out_jan - out_jul).abs().max().item()
+    assert max_diff > 0, f"calendar month embedding has no effect (max diff={max_diff})"
+
+
+def test_patch_embed_time_variable_embeddings_get_grads():
+    torch.manual_seed(0)
+    pe = PatchEmbedding(
+        input_length=3,
+        num_variables=NUM_VARIABLES,
+        patch_size=4,
+        d_model=16,
+        grid_shape=(20, 40),
+        fusion_heads=4,
+        dropout=0.0,
+    )
+    x = torch.randn(2, 3, 4, 20, 40)
+    out = pe(x, torch.tensor([1, 12], dtype=torch.long))
+    out.square().mean().backward()
+
+    assert pe.relative_time_embed.grad is not None
+    assert torch.isfinite(pe.relative_time_embed.grad).all()
+    assert pe.calendar_month_embed.weight.grad is not None
+    assert torch.isfinite(pe.calendar_month_embed.weight.grad).all()
+    assert pe.variable_embed.weight.grad is not None
+    assert torch.isfinite(pe.variable_embed.weight.grad).all()
+
+
+def test_patch_embed_rejects_bad_target_month():
+    pe = PatchEmbedding(
+        input_length=3,
+        num_variables=NUM_VARIABLES,
+        patch_size=4,
+        d_model=16,
+        grid_shape=(20, 40),
+        fusion_heads=4,
+        dropout=0.0,
+    )
+    x = torch.randn(2, 3, 4, 20, 40)
+    _expect_value_error(pe, x, torch.tensor([0, 13], dtype=torch.long))
 
 
 # --- SpatialAttentionBlock --------------------------------------------
@@ -229,7 +315,8 @@ def test_walkernet_full_resolution_builds():
         "data": {"L": 3, "H": 180, "W": 360},
         "model": {
             "patch_size": 4, "d_model": 64, "nhead": 4, "dim_ff": 128,
-            "num_layers": 2, "num_experts": 4, "top_k": 2,
+            "num_layers": 2, "patch_fusion_heads": 4, "patch_fusion_layers": 1,
+            "patch_fusion_dim_ff": 128, "num_experts": 4, "top_k": 2,
             "decoder_hidden": 32, "dropout": 0.0, "max_rollout_steps": 8,
         },
     }
