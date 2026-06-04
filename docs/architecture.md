@@ -1,80 +1,202 @@
-# Architecture Notes
+# WalkerNet Architecture Notes
+
+本文档记录当前 `src/model.py` 已实现的神经网络结构。
+模型对外接口保持为：
+
+```python
+y_pred = model(x, target_month, rollout_step=None)
+```
+
 
 ## Task Definition
 
-- 输入：连续 3 个月的全球物理场
-- 输出：下 1 个月的全球物理场
-- 支持滚动预测（autoregressive rollout）
-- CNOP 研究在预报模型训练好之后进行，本项目本身只做预报
+- 输入：连续 `L` 个月的全球物理场。
+- 输出：下 1 个月的全球物理场。
+- 空间网格：`180 x 360` 的 1 度规则经纬度网格。
+- CNOP 研究在预报模型训练完成后进行，本模型本身只负责预报。
+
 
 ## Variables
 
-4 个变量，耦合的海气系统状态变量：
+张量中的变量顺序固定为：
 
-- SST（海表温度）
-- HC（海洋热含量）
-- taux（纬向风应力）
-- tauy（经向风应力）
+```text
+0 -> tos   Sea surface temperature
+1 -> zos   Sea surface height above geoid
+2 -> tauu  Zonal wind stress
+3 -> tauv  Meridional wind stress
+```
+
 
 ## Shapes
 
-输入：B × L × 4 × H × W（L 为历史窗口长度，如 3 或 12 个月）
-输出：B × 1 × 4 × H × W（预测下 1 个月）
+```text
+x:      (B, L, 4, 180, 360)
+y_pred: (B, 1, 4, 180, 360)
+```
+
+默认配置中：
+
+```text
+L = 3
+patch_size = 4
+N = (180 / 4) * (360 / 4) = 4050
+d = d_model
+```
+
 
 ## Pipeline
 
-输入: B × L × 4 × H × W（L = 3 或 12，可配置）
+整体流程：
 
-↓ Joint Time-Variable Patch Embedding
-将 L 个时间步 × 4 个变量一起 patch 化，捕获跨时间和跨变量的交互
+```text
+(B, L, 4, 180, 360)
+-> Explicit Time-Variable Patch Embedding
+-> (B, 4050, d)
+-> Rollout Step Embedding
+-> Spatial Attention Blocks
+-> TMoE
+-> Coupled Variable Decoder
+-> (B, 1, 4, 180, 360)
+```
 
-↓ Rollout Step Embedding
-将 rollout_step 编码为 embedding 加到 token 上，让后续所有层感知 lead-time
 
-Z: B × N × d
+## Explicit Time-Variable Patch Embedding
 
-↓ Spatial Attention
-空间注意力，捕捉全球尺度的遥相关
+模型前端不再把 `L x 4` 直接压成 channel。
+当前实现分为四步。
 
-↓ TMoE (Temporal Mixture-of-Experts)
-用 target month 条件化路由，不同月份分配到不同 expert
+### 1. 变量专属 Patch Projection
 
-↓ Coupled Variable Decoder
-4 变量联合解码，输出 B × 1 × 4 × H × W
+每个变量使用自己的浅层 patch projection，同一变量跨时间共享权重：
 
-## Rollout 机制
+```text
+(B, L, 4, 180, 360)
+-> (B, L, 4, 4050, d)
+```
 
-单步预测只预报 1 个月。多步预测通过自回归 rollout：
+这一步只负责把单变量、单时间步的局地 `4 x 4` 网格块转成 token，不负责变量交互。
 
-- 将上一步输出拼接到输入窗口末尾，滑动一步，再预测下一个月
-- 每步的 rollout step 编码为一个 embedding，注入模型作为条件信息
-- rollout embedding 记录当前是第几步预测，让模型感知 lead time
+### 2. 时间、月份、变量编码
 
-注意：rollout step embedding 是独立的条件编码，不一定要用于 TMoE 的路由。
+每个 patch token 加入三类 embedding：
+
+```text
+relative_time_embed   历史窗口内的位置
+calendar_month_embed  该历史步实际对应的月份
+variable_embed        tos / zos / tauu / tauv 的变量身份
+```
+
+其中输入历史月份由 `target_month` 和 `L` 在模型内部推出，不要求 Dataset 额外返回。
+
+### 3. Patch 内 Time-Variable Fusion
+
+对每个空间 patch 内的 `L * 4` 个 token 加入一个 learnable fusion token，并做轻量 self-attention：
+
+```text
+(B, 4050, L*4, d)
+-> 加 fusion token
+-> (B, 4050, 1 + L*4, d)
+-> FusionAttentionBlock
+-> 取 fusion token
+-> (B, 4050, d)
+```
+
+这个模块只建模同一空间 patch 内部的时间-变量关系。
+不同空间 patch 之间的全球交互交给后续 Spatial Attention。
+
+### 4. 二维空间位置编码
+
+融合后加入二维 patch 位置编码：
+
+```text
+pos = lat_patch_embed + lon_patch_embed
+```
+
+输出仍为：
+
+```text
+(B, 4050, d)
+```
+
+
+## Rollout Step Embedding
+
+`rollout_step` 用于自回归预测时注入 lead-time 条件。
+单步训练时可以传 `None`，等价于 `rollout_step = 0`。
+
+
+## Spatial Attention Blocks
+
+主干使用多层 pre-norm Transformer block：
+
+```text
+LayerNorm
+MultiheadAttention
+Residual
+LayerNorm
+FFN
+Residual
+```
+
+形状保持：
+
+```text
+(B, 4050, d) -> (B, 4050, d)
+```
+
+该部分用于建模全球空间遥相关。
+
+
+## TMoE
+
+TMoE 使用 `target_month` 做月份条件路由：
+
+```text
+target_month
+-> month embedding
+-> gate
+-> top-k expert weights
+```
+
+每个 expert 是一个 FFN，TMoE 输出形状仍为：
+
+```text
+(B, 4050, d)
+```
+
+
+## Coupled Variable Decoder
+
+Decoder 将 token map 还原为四变量全球场：
+
+```text
+(B, 4050, d)
+-> (B, d, 45, 90)
+-> Conv refine
+-> PixelShuffle x2
+-> Conv refine
+-> PixelShuffle x2
+-> Conv2d to 4 variables
+-> (B, 1, 4, 180, 360)
+```
+
+四个变量在 decoder 的 channel 维中联合解码。
+
 
 ## Conditioning Signals
 
-模型有两个条件信号：
+当前模型使用三类条件信息：
 
-1. **Target month**：预测目标的月份（1-12），用于 TMoE 路由，捕捉季节性差异
-2. **Rollout step**：当前滚动步数，编码为 embedding 注入，让模型区分直接预测 vs 多步累积预测
+1. `target_month`：预测目标月份，用于输入历史月份推导和 TMoE 路由。
+2. `rollout_step`：自回归步数，用于 lead-time embedding。
+3. 历史窗口相对位置：用于区分最早历史月和最近历史月。
 
-## Why This Design
 
-- Joint embedding 避免 L × 4 × N 的全注意力开销
-- 变量耦合解码利用 SST-HC-taux-tauy 的物理关联
-- TMoE 捕捉不同月份的预报差异
-- Rollout embedding 记录 lead time 信息，区分短期和累积误差
+## CNOP Integration
 
-## CNOP Integration (后续)
+训练完成后，可以利用模型自动微分计算 CNOP：
 
-训练完成后，利用模型自动微分计算 CNOP（条件非线性最优扰动）：
-- 预报敏感性分析：哪些初始误差场对预报影响最大
-- CNOP 初始化的集合预报
-- 参考 Tao et al. 2026, Zhou et al. 2025
-
-## References
-
-- STCast: Zhang et al. 2025, arXiv:2504.05574
-- AI-Enabled CNOP: Zhou et al. 2025, npj Climate and Atmospheric Science, DOI:10.1038/s41612-025-01303-6
-- 3D CNOP: Tao et al. 2026, Climate Dynamics, DOI:10.1007/s00382-025-07986-0
+- 预报敏感性分析。
+- CNOP 初始化的集合预报。
+- 初始扰动对 ENSO 相关指标的影响分析。

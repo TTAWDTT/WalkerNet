@@ -76,13 +76,14 @@ y_pred = model(x, target_month, rollout_step=None)
 
 ## 架构方向
 
-模型侧参考 `docs/architecture.md`，当前计划包括：
+模型侧参考 `docs/architecture.md`，当前实现包括：
 
-1. Joint time-variable patch embedding
-2. Spatial attention，用于捕捉全球空间遥相关
-3. TMoE，使用 target month 做月份条件路由
-4. Coupled variable decoder，联合解码 4 个变量
-5. Rollout step embedding，用于自回归多步预测时注入 lead-time 信息
+1. 显式 time-variable patch embedding
+2. Patch 内 time-variable fusion，用于融合历史月份与变量 token
+3. Spatial attention，用于捕捉全球空间遥相关
+4. TMoE，使用 target month 做月份条件路由
+5. Coupled variable decoder，联合解码 4 个变量
+6. Rollout step embedding，用于自回归多步预测时注入 lead-time 信息
 
 ## 数据准备
 
@@ -154,10 +155,8 @@ src/
 
 ## 运行入口
 
-模型实现完成后：
+训练入口：
 
 ```bash
 python -m src.train --config configs/default.yaml
 ```
-
-当前 `src/model.py` 仍是占位模板，因此完整训练需要等模型侧实现完成后再运行。

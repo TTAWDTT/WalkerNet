@@ -1,5 +1,8 @@
 # WalkerNet 模型升级记录
 
+状态：第一轮 PatchEmbedding 升级已实现。
+对应代码范围包括 `src/model.py`、`configs/default.yaml` 和 `tests/test_model_shapes.py`。
+
 ## 1. 改动目标
 
 当前模型已经满足基本输入输出接口：
@@ -257,9 +260,9 @@ target_month: (B,)
 新增的输入历史月份应由模型内部根据 `target_month` 和 `L` 推出，不要求 Dataset 额外返回。
 
 
-## 9. 需要同步修改的内容
+## 9. 已同步修改的内容
 
-确认该设计后，需要修改：
+本轮已经同步修改：
 
 1. `src/model.py`
    - 替换当前 `PatchEmbedding`。
@@ -273,13 +276,14 @@ target_month: (B,)
 
 3. `docs/architecture.md`
    - 将模型前端描述同步为新的设计。
-   - 修正变量说明中仍写 `HC` 的问题，当前变量为 `zos`。
+   - 修正旧变量说明，当前变量为 `zos`。
 
 4. `configs/default.yaml`
-   - 如需要，加入 patch fusion 的超参数，例如：
+   - 加入 patch fusion 的超参数：
 
 ```yaml
 model:
   patch_fusion_heads: 4
   patch_fusion_layers: 1
+  patch_fusion_dim_ff: 1024
 ```
