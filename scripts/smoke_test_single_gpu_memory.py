@@ -112,9 +112,11 @@ def main() -> None:
     set_seed(args.seed)
     config = load_config(args.config)
     device = torch.device(args.device)
+    if device.type == "cuda" and device.index is None:
+        device = torch.device("cuda:0")
     amp = bool(config.get("training", {}).get("amp", False)) and not args.no_amp
 
-    torch.cuda.set_device(device)
+    torch.cuda.set_device(device.index)
     print(f"device={device} ({torch.cuda.get_device_name(device)})")
     print(f"torch={torch.__version__} cuda={torch.version.cuda}")
     print(f"amp={amp}")
