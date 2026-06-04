@@ -20,6 +20,9 @@ model:
   nhead: 8                    # number of attention heads
   dim_ff: 1024                # FFN hidden dimension
   num_layers: 6               # number of ViT blocks
+  patch_fusion_heads: 4       # heads for local time-variable fusion inside each patch
+  patch_fusion_layers: 1      # lightweight fusion blocks before spatial attention
+  patch_fusion_dim_ff: 1024   # FFN hidden dimension in patch fusion
   num_experts: 12             # TMoE experts (default: one per month)
   top_k: 2                    # TMoE top-k soft routing
   decoder_hidden: 128         # decoder conv channel width
