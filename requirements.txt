@@ -4,3 +4,4 @@ PyYAML
 xarray
 netCDF4
 cftime
+typing_extensions
