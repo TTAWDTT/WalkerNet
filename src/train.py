@@ -62,6 +62,11 @@ def cleanup_distributed(distributed: bool) -> None:
         dist.destroy_process_group()
 
 
+def rank_log(rank: int, message: str) -> None:
+    """打印带 rank 前缀的启动阶段日志，方便定位 DDP 卡点。"""
+    print(f"[rank {rank}] {message}", flush=True)
+
+
 def prepare_norm_stats_cache(config: dict[str, Any], distributed: bool, rank: int) -> None:
     """DDP 训练前准备归一化统计缓存。
 
@@ -76,9 +81,9 @@ def prepare_norm_stats_cache(config: dict[str, Any], distributed: bool, rank: in
         return
 
     if rank == 0:
-        print(f"prepare norm stats cache: {stats_path}", flush=True)
+        rank_log(rank, f"prepare norm stats cache: {stats_path}")
         WalkerDataset(data_config["path"], config, split="train")
-        print("norm stats cache ready", flush=True)
+        rank_log(rank, "norm stats cache ready")
     dist.barrier()
 
 
@@ -132,29 +137,30 @@ def main() -> None:
     else:
         device = get_device() if args.device is None else torch.device(args.device)
 
-    if is_main:
-        print("building dataloaders...", flush=True)
+    rank_log(rank, "building dataloaders...")
     prepare_norm_stats_cache(config, distributed=distributed, rank=rank)
     train_loader, val_loader = build_dataloaders(
         config,
         num_workers=args.num_workers,
         distributed=distributed,
     )
-    if is_main:
-        print("dataloaders ready", flush=True)
+    rank_log(rank, "dataloaders ready")
 
-    if is_main:
-        print("building model...", flush=True)
+    rank_log(rank, "building model...")
     model = WalkerNet(config)
+    rank_log(rank, "model built")
     total_params, trainable_params = count_parameters(model)
     if distributed:
+        rank_log(rank, f"moving model to {device}")
         model.to(device)
+        rank_log(rank, "wrapping model with DistributedDataParallel")
         model = torch.nn.parallel.DistributedDataParallel(
             model,
             device_ids=[local_rank],
             output_device=local_rank,
             find_unused_parameters=False,
         )
+        rank_log(rank, "ddp model ready")
     if is_main:
         print(f"device={device}")
         print(f"distributed={distributed} world_size={world_size}")
