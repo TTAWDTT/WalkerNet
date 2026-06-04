@@ -27,6 +27,7 @@ model:
   decoder_hidden: 128
   dropout: 0.1
   max_rollout_steps: 24
+  residual_output: true
 
 training:
   epochs: 100
@@ -36,7 +37,15 @@ training:
   amp: true
   grad_accum_steps: 8
   grad_clip: 1.0
-  loss: "mse"
+  rollout_steps: 6
+  detach_rollout: true
+  lead_weights: [1.0, 0.8, 0.6, 0.5, 0.4, 0.3]
+  loss: "field_residual_gradient_nino"
+  loss_weights:
+    field: 1.0
+    residual: 0.5
+    gradient: 0.05
+    nino34: 0.2
   seed: 42
 
 logging:

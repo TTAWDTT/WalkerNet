@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import os
 from typing import Any
 
@@ -115,14 +116,17 @@ def build_dataloaders(
     distributed: bool = False,
 ) -> tuple[DataLoader, DataLoader]:
     """构建 train/val DataLoader。"""
-    data_config = config["data"]
+    loader_config = copy.deepcopy(config)
+    data_config = loader_config["data"]
     training_config = config["training"]
     batch_size = int(training_config.get("batch_size", 1))
+    rollout_steps = max(1, int(training_config.get("rollout_steps", 1)))
+    data_config["target_steps"] = rollout_steps
     pin_memory = torch.cuda.is_available()
     persistent_workers = num_workers > 0
 
-    train_set = WalkerDataset(data_config["path"], config, split="train")
-    val_set = WalkerDataset(data_config["path"], config, split="val", norm_stats=train_set.norm_stats)
+    train_set = WalkerDataset(data_config["path"], loader_config, split="train")
+    val_set = WalkerDataset(data_config["path"], loader_config, split="val", norm_stats=train_set.norm_stats)
     train_sampler = DistributedSampler(train_set, shuffle=True, drop_last=False) if distributed else None
     val_sampler = DistributedSampler(val_set, shuffle=False, drop_last=False) if distributed else None
 

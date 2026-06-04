@@ -51,6 +51,39 @@ class TinyModel(nn.Module):
         return self.bias.view(1, 1, 1, 1, 1).expand(B, 1, 4, H, W)
 
 
+class TinyRolloutDataset(Dataset):
+    def __len__(self) -> int:
+        return 3
+
+    def __getitem__(self, idx: int):
+        x = torch.zeros(12, 4, 4, 4, dtype=torch.float32)
+        y_rollout = torch.stack([
+            torch.ones(4, 4, 4, dtype=torch.float32),
+            torch.full((4, 4, 4), 2.0, dtype=torch.float32),
+        ])
+        return {
+            "x": x,
+            "y": y_rollout[:1],
+            "y_rollout": y_rollout,
+            "target_month": int((idx % 12) + 1),
+            "target_months": torch.tensor([1, 2], dtype=torch.long),
+            "valid_mask": torch.ones(4, 4, 4, dtype=torch.bool),
+        }
+
+
+class RecordingRolloutModel(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.bias = nn.Parameter(torch.tensor(0.0))
+        self.seen_steps: list[int] = []
+
+    def forward(self, x, target_month, rollout_step=None):
+        if rollout_step is not None:
+            self.seen_steps.extend(int(v) for v in rollout_step.detach().cpu().tolist())
+        B, _, _, H, W = x.shape
+        return self.bias.view(1, 1, 1, 1, 1).expand(B, 1, 4, H, W)
+
+
 def test_trainer_gradient_accumulation_and_checkpoint():
     train_loader = DataLoader(TinyDataset(), batch_size=1, shuffle=False)
     val_loader = DataLoader(TinyDataset(), batch_size=1, shuffle=False)
@@ -98,6 +131,39 @@ def test_trainer_gradient_accumulation_and_checkpoint():
         assert epoch == 1
         assert loaded_metrics["optimizer_steps"] == 2.0
         assert torch.allclose(restored.bias, model.bias)
+
+
+def test_trainer_uses_rollout_targets_and_steps():
+    train_loader = DataLoader(TinyRolloutDataset(), batch_size=1, shuffle=False)
+    config = {
+        "training": {
+            "epochs": 1,
+            "lr": 1e-2,
+            "weight_decay": 0.0,
+            "grad_accum_steps": 1,
+            "grad_clip": 1.0,
+            "amp": False,
+            "rollout_steps": 2,
+            "lead_weights": [1.0, 0.8],
+            "detach_rollout": True,
+            "loss_weights": {
+                "field": 1.0,
+                "residual": 0.5,
+                "gradient": 0.05,
+                "nino34": 0.2,
+            },
+        },
+        "logging": {"log_interval": 0, "save_dir": "checkpoints"},
+    }
+
+    model = RecordingRolloutModel()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        config["logging"]["save_dir"] = tmpdir
+        trainer = Trainer(model, train_loader, None, config, device="cpu")
+        metrics = trainer.train_epoch(1)
+
+    assert metrics["optimizer_steps"] == 3.0
+    assert model.seen_steps == [0, 1, 0, 1, 0, 1]
 
 
 def _run_all():

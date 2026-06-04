@@ -7,7 +7,9 @@ NetCDF 的经纬度映射。重网格请先运行 ``scripts/remap_to_1x1.sh``。
 
     x:            (L, 4, 180, 360), float32
     y:            (1, 4, 180, 360), float32
+    y_rollout:    (K, 4, 180, 360), float32，可选，用于多步滚动训练
     target_month: int in [1, 12]
+    target_months:(K,), int64，可选，逐 lead 目标月份
     valid_mask:   (4, 180, 360), bool
 
 设计原则：
@@ -71,10 +73,13 @@ class WalkerDataset(Dataset):
         self.data_config = config.get("data", config)
         self.split = split
         self.L = int(self.data_config["L"])
+        self.target_steps = int(self.data_config.get("target_steps", 1))
         self.norm = str(self.data_config.get("norm", "zscore")).lower()
 
         if self.L < 1:
             raise ValueError(f"Input window L must be >= 1, got {self.L}")
+        if self.target_steps < 1:
+            raise ValueError(f"target_steps must be >= 1, got {self.target_steps}")
 
         # Dataset 和模型必须使用 interfaces.py 中固定的变量顺序。
         expected_variables = tuple(self.data_config.get("variables", VARIABLES))
@@ -129,25 +134,33 @@ class WalkerDataset(Dataset):
 
         # 取历史窗口和目标月。copy=True 是为了后续 NaN 填充/归一化不会影响缓存。
         x_np = np.array(self.data[target_t - self.L : target_t], copy=True)
-        y_np = np.array(self.data[target_t : target_t + 1], copy=True)
+        y_rollout_np = np.array(self.data[target_t : target_t + self.target_steps], copy=True)
 
         x = torch.from_numpy(x_np).float()
-        y = torch.from_numpy(y_np).float()
+        y_rollout = torch.from_numpy(y_rollout_np).float()
 
         x = self._normalize_tensor(x)
-        y = self._normalize_tensor(y)
+        y_rollout = self._normalize_tensor(y_rollout)
+        y = y_rollout[:1]
 
         # 模型输入不允许有 NaN/Inf。无效位置由 valid_mask 告诉 loss。
         x = torch.nan_to_num(x, nan=FILL_VALUE, posinf=FILL_VALUE, neginf=FILL_VALUE)
-        y = torch.nan_to_num(y, nan=FILL_VALUE, posinf=FILL_VALUE, neginf=FILL_VALUE)
+        y_rollout = torch.nan_to_num(y_rollout, nan=FILL_VALUE, posinf=FILL_VALUE, neginf=FILL_VALUE)
+        y = y_rollout[:1]
 
-        return {
+        sample: WalkerSample = {
             "x": x,
             "y": y,
             "target_month": int(self.months[target_t]),
             "valid_mask": self.valid_mask,
             "time_index": target_t,
         }
+        if self.target_steps > 1:
+            sample["y_rollout"] = y_rollout
+            sample["target_months"] = torch.from_numpy(
+                np.array(self.months[target_t : target_t + self.target_steps], dtype=np.int64)
+            )
+        return sample
 
     def denormalize(self, y: torch.Tensor) -> torch.Tensor:
         """把归一化空间中的张量还原到物理量单位。
@@ -379,8 +392,15 @@ class WalkerDataset(Dataset):
         target_in_split = (self.years >= int(start_year)) & (self.years <= int(end_year))
 
         # t 必须至少 >= L，否则没有足够历史窗口。
+        # 多步训练时还要保证所有未来目标月都仍在当前 split 内，避免 val/test 泄漏。
         enough_history = np.arange(len(self.years)) >= self.L
-        return np.where(target_in_split & enough_history)[0].astype(np.int64)
+        last_target = np.arange(len(self.years)) + self.target_steps - 1
+        enough_future = last_target < len(self.years)
+        future_in_split = np.zeros(len(self.years), dtype=bool)
+        valid_future_positions = np.where(enough_future)[0]
+        future_years = self.years[last_target[valid_future_positions]]
+        future_in_split[valid_future_positions] = future_years <= int(end_year)
+        return np.where(target_in_split & enough_history & enough_future & future_in_split)[0].astype(np.int64)
 
     def _compute_norm_stats(self) -> dict[str, torch.Tensor]:
         """只用训练年份计算归一化统计量。"""
