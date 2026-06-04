@@ -14,6 +14,7 @@ from typing import Any
 from contextlib import nullcontext
 
 import torch
+import torch.distributed as dist
 from torch.utils.data import DataLoader
 from torch.cuda.amp import autocast
 
@@ -70,6 +71,8 @@ class Trainer:
         val_loader: DataLoader | None,
         config: dict[str, Any],
         device: torch.device | str | None = None,
+        rank: int = 0,
+        world_size: int = 1,
     ) -> None:
         self.model = model
         self.train_loader = train_loader
@@ -78,6 +81,10 @@ class Trainer:
         self.training_config = config.get("training", config)
         self.logging_config = config.get("logging", {})
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        self.rank = int(rank)
+        self.world_size = int(world_size)
+        self.is_distributed = self.world_size > 1 and dist.is_available() and dist.is_initialized()
+        self.is_main = self.rank == 0
 
         self.model.to(self.device)
 
@@ -89,7 +96,8 @@ class Trainer:
         self.amp_enabled = bool(self.training_config.get("amp", False)) and self.device.type == "cuda"
         self.log_interval = int(self.logging_config.get("log_interval", 50))
         self.save_dir = Path(self.logging_config.get("save_dir", "checkpoints"))
-        self.save_dir.mkdir(parents=True, exist_ok=True)
+        if self.is_main:
+            self.save_dir.mkdir(parents=True, exist_ok=True)
 
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
@@ -122,24 +130,26 @@ class Trainer:
                 break
 
             batch = self._move_batch(batch)
-
-            with autocast() if self.amp_enabled else nullcontext():
-                pred = self.model(batch["x"], batch["target_month"])
-                loss = masked_mse_loss(pred, batch["y"], batch["valid_mask"])
-                scaled_loss = loss / self.grad_accum_steps
-
-            if self.amp_enabled:
-                self.scaler.scale(scaled_loss).backward()
-            else:
-                scaled_loss.backward()
-
             is_last_limited_step = self.max_train_steps_per_epoch > 0 and step == self.max_train_steps_per_epoch
             should_step = step % self.grad_accum_steps == 0 or step == len(self.train_loader) or is_last_limited_step
+
+            # DDP + 梯度累积：非 optimizer step 的小步先不做跨卡梯度同步。
+            with self._sync_context(should_step):
+                with autocast() if self.amp_enabled else nullcontext():
+                    pred = self.model(batch["x"], batch["target_month"])
+                    loss = masked_mse_loss(pred, batch["y"], batch["valid_mask"])
+                    scaled_loss = loss / self.grad_accum_steps
+
+                if self.amp_enabled:
+                    self.scaler.scale(scaled_loss).backward()
+                else:
+                    scaled_loss.backward()
+
             if should_step:
                 if self.grad_clip is not None:
                     if self.amp_enabled:
                         self.scaler.unscale_(self.optimizer)
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), float(self.grad_clip))
+                    torch.nn.utils.clip_grad_norm_(self._model_for_state().parameters(), float(self.grad_clip))
 
                 if self.amp_enabled:
                     self.scaler.step(self.optimizer)
@@ -153,13 +163,14 @@ class Trainer:
             total_loss += float(loss.detach().cpu())
             num_batches += 1
 
-            if self.log_interval > 0 and step % self.log_interval == 0:
+            if self.is_main and self.log_interval > 0 and step % self.log_interval == 0:
                 avg = total_loss / max(num_batches, 1)
                 print(
                     f"epoch={epoch} step={step}/{len(self.train_loader)} "
                     f"optimizer_steps={optimizer_steps} train_loss={avg:.6f}"
                 )
 
+        total_loss, num_batches = self._reduce_loss_stats(total_loss, num_batches)
         return {
             "loss": total_loss / max(num_batches, 1),
             "optimizer_steps": float(optimizer_steps),
@@ -186,14 +197,18 @@ class Trainer:
             total_loss += float(loss.detach().cpu())
             num_batches += 1
 
+        total_loss, num_batches = self._reduce_loss_stats(total_loss, num_batches)
         return {"loss": total_loss / max(num_batches, 1)}
 
     def save_checkpoint(self, path: str | Path, epoch: int, metrics: dict[str, float]) -> None:
         """保存模型、优化器和指标。"""
+        if not self.is_main:
+            return
+
         checkpoint = {
             "epoch": epoch,
             "global_step": self.global_step,
-            "model": self.model.state_dict(),
+            "model": self._model_for_state().state_dict(),
             "optimizer": self.optimizer.state_dict(),
             "scaler": self.scaler.state_dict(),
             "metrics": metrics,
@@ -204,7 +219,8 @@ class Trainer:
     def load_checkpoint(self, path: str | Path) -> tuple[int, dict[str, float]]:
         """读取 checkpoint，返回 epoch 和 metrics。"""
         checkpoint = torch.load(path, map_location=self.device)
-        self.model.load_state_dict(checkpoint["model"])
+        state_dict = checkpoint["model"]
+        self._model_for_state().load_state_dict(state_dict)
         self.optimizer.load_state_dict(checkpoint["optimizer"])
         if "scaler" in checkpoint:
             self.scaler.load_state_dict(checkpoint["scaler"])
@@ -214,13 +230,18 @@ class Trainer:
     def train(self) -> None:
         """完整训练循环。"""
         for epoch in range(1, self.epochs + 1):
+            sampler = getattr(self.train_loader, "sampler", None)
+            if hasattr(sampler, "set_epoch"):
+                sampler.set_epoch(epoch)
+
             train_metrics = self.train_epoch(epoch)
             val_metrics = self.validate()
 
-            message = f"epoch={epoch} train_loss={train_metrics['loss']:.6f}"
-            if val_metrics:
-                message += f" val_loss={val_metrics['loss']:.6f}"
-            print(message)
+            if self.is_main:
+                message = f"epoch={epoch} train_loss={train_metrics['loss']:.6f}"
+                if val_metrics:
+                    message += f" val_loss={val_metrics['loss']:.6f}"
+                print(message)
 
             latest_path = self.save_dir / "latest.pt"
             self.save_checkpoint(latest_path, epoch, {"train": train_metrics, "val": val_metrics})
@@ -229,6 +250,25 @@ class Trainer:
                 self.best_val_loss = val_metrics["loss"]
                 best_path = self.save_dir / "best.pt"
                 self.save_checkpoint(best_path, epoch, {"train": train_metrics, "val": val_metrics})
+
+    def _model_for_state(self) -> torch.nn.Module:
+        """返回真正持有参数的模型；DDP 包装时需要取 .module。"""
+        return self.model.module if hasattr(self.model, "module") else self.model
+
+    def _sync_context(self, should_step: bool):
+        """DDP 梯度累积时，非 optimizer step 的 micro-batch 关闭梯度同步。"""
+        if self.is_distributed and not should_step and hasattr(self.model, "no_sync"):
+            return self.model.no_sync()
+        return nullcontext()
+
+    def _reduce_loss_stats(self, total_loss: float, num_batches: int) -> tuple[float, int]:
+        """把各 rank 的 loss sum / batch count 汇总成全局平均所需统计量。"""
+        if not self.is_distributed:
+            return total_loss, num_batches
+
+        stats = torch.tensor([total_loss, float(num_batches)], dtype=torch.float64, device=self.device)
+        dist.all_reduce(stats, op=dist.ReduceOp.SUM)
+        return float(stats[0].item()), int(stats[1].item())
 
     def _move_batch(self, batch: dict[str, Any]) -> dict[str, Any]:
         """把 batch 中的 tensor 移到训练设备。"""
