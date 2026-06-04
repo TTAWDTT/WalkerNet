@@ -62,6 +62,26 @@ def cleanup_distributed(distributed: bool) -> None:
         dist.destroy_process_group()
 
 
+def prepare_norm_stats_cache(config: dict[str, Any], distributed: bool, rank: int) -> None:
+    """DDP 训练前准备归一化统计缓存。
+
+    WalkerDataset 默认会在 train split 上计算 mean/std。多卡时如果每个 rank
+    都重复计算，会在启动阶段浪费很多时间；这里让 rank 0 先算并落盘，其它 rank
+    barrier 等待后直接读取缓存。
+    """
+    data_config = config.get("data", {})
+    stats_path = data_config.get("norm_stats_path")
+    norm = str(data_config.get("norm", "zscore")).lower()
+    if not distributed or not stats_path or norm == "none":
+        return
+
+    if rank == 0:
+        print(f"prepare norm stats cache: {stats_path}", flush=True)
+        WalkerDataset(data_config["path"], config, split="train")
+        print("norm stats cache ready", flush=True)
+    dist.barrier()
+
+
 def build_dataloaders(
     config: dict[str, Any],
     num_workers: int = 0,
@@ -112,12 +132,19 @@ def main() -> None:
     else:
         device = get_device() if args.device is None else torch.device(args.device)
 
+    if is_main:
+        print("building dataloaders...", flush=True)
+    prepare_norm_stats_cache(config, distributed=distributed, rank=rank)
     train_loader, val_loader = build_dataloaders(
         config,
         num_workers=args.num_workers,
         distributed=distributed,
     )
+    if is_main:
+        print("dataloaders ready", flush=True)
 
+    if is_main:
+        print("building model...", flush=True)
     model = WalkerNet(config)
     total_params, trainable_params = count_parameters(model)
     if distributed:
