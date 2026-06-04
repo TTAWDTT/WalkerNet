@@ -13,7 +13,12 @@ WalkerNet 最小共享接口约定。
 
 from __future__ import annotations
 
-from typing import NotRequired, TypedDict
+try:
+    from typing import NotRequired, TypedDict
+except ImportError:  # Python 3.8 compatibility on the training server.
+    from typing import TypedDict
+
+    from typing_extensions import NotRequired
 
 import torch
 
