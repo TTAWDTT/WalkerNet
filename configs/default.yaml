@@ -35,6 +35,8 @@ training:
   batch_size: 16
   lr: 1.0e-4
   weight_decay: 1.0e-2
+  amp: true
+  grad_accum_steps: 1
   grad_clip: 1.0              # max gradient norm
   loss: "mse"                 # "mse", "weighted_mse", "area_weighted_mse"
   seed: 42
