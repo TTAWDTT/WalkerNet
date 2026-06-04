@@ -4,7 +4,7 @@
 # === Data ===
 data:
   path: "data_1x1"            # path to remapped data directory or file (nc / npy)
-  L: 3                        # input window length: 3 or 12 months
+  L: 12                       # input window length: use past 12 months
   H: 180                      # grid height (latitude)
   W: 360                      # grid width (longitude)
   variables: ["tos", "zos", "tauu", "tauv"]

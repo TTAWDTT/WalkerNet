@@ -30,8 +30,11 @@ from src.model import (  # noqa: E402
 )
 
 
+TEST_L = 12
+
+
 SMALL_CFG = {
-    "data": {"L": 3, "H": 20, "W": 40},
+    "data": {"L": TEST_L, "H": 20, "W": 40},
     "model": {
         "patch_size": 4,
         "d_model": 16,
@@ -62,7 +65,7 @@ def _expect_value_error(fn, *args, **kwargs):
 
 def test_patch_embed_shape():
     pe = PatchEmbedding(
-        input_length=3,
+        input_length=TEST_L,
         num_variables=NUM_VARIABLES,
         patch_size=4,
         d_model=16,
@@ -70,7 +73,7 @@ def test_patch_embed_shape():
         fusion_heads=4,
         dropout=0.0,
     )
-    x = torch.randn(2, 3, 4, 20, 40)
+    x = torch.randn(2, TEST_L, 4, 20, 40)
     month = torch.tensor([1, 12], dtype=torch.long)
     out = pe(x, month)
     assert out.shape == (2, 5 * 10, 16), out.shape
@@ -79,7 +82,7 @@ def test_patch_embed_shape():
 def test_patch_embed_rejects_non_divisible_grid():
     _expect_value_error(
         PatchEmbedding,
-        input_length=3,
+        input_length=TEST_L,
         num_variables=NUM_VARIABLES,
         patch_size=4,
         d_model=16,
@@ -91,7 +94,7 @@ def test_patch_embed_rejects_non_divisible_grid():
 def test_patch_embed_rejects_bad_fusion_heads():
     _expect_value_error(
         PatchEmbedding,
-        input_length=3,
+        input_length=TEST_L,
         num_variables=NUM_VARIABLES,
         patch_size=4,
         d_model=16,
@@ -103,7 +106,7 @@ def test_patch_embed_rejects_bad_fusion_heads():
 def test_patch_embed_target_month_changes_output():
     torch.manual_seed(0)
     pe = PatchEmbedding(
-        input_length=3,
+        input_length=TEST_L,
         num_variables=NUM_VARIABLES,
         patch_size=4,
         d_model=16,
@@ -112,7 +115,7 @@ def test_patch_embed_target_month_changes_output():
         dropout=0.0,
     )
     pe.eval()
-    x = torch.randn(2, 3, 4, 20, 40)
+    x = torch.randn(2, TEST_L, 4, 20, 40)
     out_jan = pe(x, torch.tensor([1, 1], dtype=torch.long))
     out_jul = pe(x, torch.tensor([7, 7], dtype=torch.long))
     max_diff = (out_jan - out_jul).abs().max().item()
@@ -122,7 +125,7 @@ def test_patch_embed_target_month_changes_output():
 def test_patch_embed_time_variable_embeddings_get_grads():
     torch.manual_seed(0)
     pe = PatchEmbedding(
-        input_length=3,
+        input_length=TEST_L,
         num_variables=NUM_VARIABLES,
         patch_size=4,
         d_model=16,
@@ -130,7 +133,7 @@ def test_patch_embed_time_variable_embeddings_get_grads():
         fusion_heads=4,
         dropout=0.0,
     )
-    x = torch.randn(2, 3, 4, 20, 40)
+    x = torch.randn(2, TEST_L, 4, 20, 40)
     out = pe(x, torch.tensor([1, 12], dtype=torch.long))
     out.square().mean().backward()
 
@@ -144,7 +147,7 @@ def test_patch_embed_time_variable_embeddings_get_grads():
 
 def test_patch_embed_rejects_bad_target_month():
     pe = PatchEmbedding(
-        input_length=3,
+        input_length=TEST_L,
         num_variables=NUM_VARIABLES,
         patch_size=4,
         d_model=16,
@@ -152,7 +155,7 @@ def test_patch_embed_rejects_bad_target_month():
         fusion_heads=4,
         dropout=0.0,
     )
-    x = torch.randn(2, 3, 4, 20, 40)
+    x = torch.randn(2, TEST_L, 4, 20, 40)
     _expect_value_error(pe, x, torch.tensor([0, 13], dtype=torch.long))
 
 
@@ -312,7 +315,7 @@ def test_walkernet_full_resolution_builds():
     Forward is too heavy for CPU; we only verify __init__ and patch counts.
     """
     cfg = {
-        "data": {"L": 3, "H": 180, "W": 360},
+        "data": {"L": 12, "H": 180, "W": 360},
         "model": {
             "patch_size": 4, "d_model": 64, "nhead": 4, "dim_ff": 128,
             "num_layers": 2, "patch_fusion_heads": 4, "patch_fusion_layers": 1,

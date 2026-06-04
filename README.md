@@ -29,6 +29,8 @@ WalkerNet 用历史全球物理场预测下一月全球场，并从预测的 `to
 输出 y: B x 1 x 4 x 180 x 360
 ```
 
+默认配置使用过去 `12` 个月预测接下来 `1` 个月。
+
 更长 lead time 通过 autoregressive rollout 实现。
 
 ## 变量约定
