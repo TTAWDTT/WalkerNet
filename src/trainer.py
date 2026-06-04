@@ -83,6 +83,8 @@ class Trainer:
 
         self.epochs = int(self.training_config.get("epochs", 1))
         self.grad_accum_steps = max(1, int(self.training_config.get("grad_accum_steps", 1)))
+        self.max_train_steps_per_epoch = int(self.training_config.get("max_train_steps_per_epoch", 0))
+        self.max_val_steps = int(self.training_config.get("max_val_steps", 0))
         self.grad_clip = self.training_config.get("grad_clip")
         self.amp_enabled = bool(self.training_config.get("amp", False)) and self.device.type == "cuda"
         self.log_interval = int(self.logging_config.get("log_interval", 50))
@@ -116,6 +118,9 @@ class Trainer:
 
         self.optimizer.zero_grad(set_to_none=True)
         for step, batch in enumerate(self.train_loader, start=1):
+            if self.max_train_steps_per_epoch > 0 and step > self.max_train_steps_per_epoch:
+                break
+
             batch = self._move_batch(batch)
 
             with autocast() if self.amp_enabled else nullcontext():
@@ -128,7 +133,8 @@ class Trainer:
             else:
                 scaled_loss.backward()
 
-            should_step = step % self.grad_accum_steps == 0 or step == len(self.train_loader)
+            is_last_limited_step = self.max_train_steps_per_epoch > 0 and step == self.max_train_steps_per_epoch
+            should_step = step % self.grad_accum_steps == 0 or step == len(self.train_loader) or is_last_limited_step
             if should_step:
                 if self.grad_clip is not None:
                     if self.amp_enabled:
@@ -170,6 +176,9 @@ class Trainer:
         num_batches = 0
 
         for batch in self.val_loader:
+            if self.max_val_steps > 0 and num_batches >= self.max_val_steps:
+                break
+
             batch = self._move_batch(batch)
             with autocast() if self.amp_enabled else nullcontext():
                 pred = self.model(batch["x"], batch["target_month"])
