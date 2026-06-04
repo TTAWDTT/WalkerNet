@@ -11,9 +11,11 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from contextlib import nullcontext
 
 import torch
 from torch.utils.data import DataLoader
+from torch.cuda.amp import autocast
 
 
 def masked_mse_loss(
@@ -80,7 +82,9 @@ class Trainer:
         self.model.to(self.device)
 
         self.epochs = int(self.training_config.get("epochs", 1))
+        self.grad_accum_steps = max(1, int(self.training_config.get("grad_accum_steps", 1)))
         self.grad_clip = self.training_config.get("grad_clip")
+        self.amp_enabled = bool(self.training_config.get("amp", False)) and self.device.type == "cuda"
         self.log_interval = int(self.logging_config.get("log_interval", 50))
         self.save_dir = Path(self.logging_config.get("save_dir", "checkpoints"))
         self.save_dir.mkdir(parents=True, exist_ok=True)
@@ -90,36 +94,70 @@ class Trainer:
             lr=float(self.training_config.get("lr", 1e-4)),
             weight_decay=float(self.training_config.get("weight_decay", 0.0)),
         )
+        if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
+            try:
+                self.scaler = torch.amp.GradScaler("cuda", enabled=self.amp_enabled)
+            except TypeError:  # pragma: no cover - older torch signature variance
+                self.scaler = torch.amp.GradScaler(enabled=self.amp_enabled)
+        else:  # pragma: no cover - older torch fallback
+            from torch.cuda.amp import GradScaler as CudaGradScaler
+
+            self.scaler = CudaGradScaler(enabled=self.amp_enabled)
 
         self.best_val_loss = float("inf")
+        self.global_step = 0
 
     def train_epoch(self, epoch: int) -> dict[str, float]:
         """训练一个 epoch。"""
         self.model.train()
         total_loss = 0.0
         num_batches = 0
+        optimizer_steps = 0
 
+        self.optimizer.zero_grad(set_to_none=True)
         for step, batch in enumerate(self.train_loader, start=1):
             batch = self._move_batch(batch)
 
-            self.optimizer.zero_grad(set_to_none=True)
-            pred = self.model(batch["x"], batch["target_month"])
-            loss = masked_mse_loss(pred, batch["y"], batch["valid_mask"])
-            loss.backward()
+            with autocast() if self.amp_enabled else nullcontext():
+                pred = self.model(batch["x"], batch["target_month"])
+                loss = masked_mse_loss(pred, batch["y"], batch["valid_mask"])
+                scaled_loss = loss / self.grad_accum_steps
 
-            if self.grad_clip is not None:
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), float(self.grad_clip))
+            if self.amp_enabled:
+                self.scaler.scale(scaled_loss).backward()
+            else:
+                scaled_loss.backward()
 
-            self.optimizer.step()
+            should_step = step % self.grad_accum_steps == 0 or step == len(self.train_loader)
+            if should_step:
+                if self.grad_clip is not None:
+                    if self.amp_enabled:
+                        self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), float(self.grad_clip))
+
+                if self.amp_enabled:
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    self.optimizer.step()
+                self.optimizer.zero_grad(set_to_none=True)
+                optimizer_steps += 1
+                self.global_step += 1
 
             total_loss += float(loss.detach().cpu())
             num_batches += 1
 
             if self.log_interval > 0 and step % self.log_interval == 0:
                 avg = total_loss / max(num_batches, 1)
-                print(f"epoch={epoch} step={step}/{len(self.train_loader)} train_loss={avg:.6f}")
+                print(
+                    f"epoch={epoch} step={step}/{len(self.train_loader)} "
+                    f"optimizer_steps={optimizer_steps} train_loss={avg:.6f}"
+                )
 
-        return {"loss": total_loss / max(num_batches, 1)}
+        return {
+            "loss": total_loss / max(num_batches, 1),
+            "optimizer_steps": float(optimizer_steps),
+        }
 
     @torch.no_grad()
     def validate(self) -> dict[str, float]:
@@ -133,8 +171,9 @@ class Trainer:
 
         for batch in self.val_loader:
             batch = self._move_batch(batch)
-            pred = self.model(batch["x"], batch["target_month"])
-            loss = masked_mse_loss(pred, batch["y"], batch["valid_mask"])
+            with autocast() if self.amp_enabled else nullcontext():
+                pred = self.model(batch["x"], batch["target_month"])
+                loss = masked_mse_loss(pred, batch["y"], batch["valid_mask"])
             total_loss += float(loss.detach().cpu())
             num_batches += 1
 
@@ -144,8 +183,10 @@ class Trainer:
         """保存模型、优化器和指标。"""
         checkpoint = {
             "epoch": epoch,
+            "global_step": self.global_step,
             "model": self.model.state_dict(),
             "optimizer": self.optimizer.state_dict(),
+            "scaler": self.scaler.state_dict(),
             "metrics": metrics,
             "config": self.config,
         }
@@ -156,6 +197,9 @@ class Trainer:
         checkpoint = torch.load(path, map_location=self.device)
         self.model.load_state_dict(checkpoint["model"])
         self.optimizer.load_state_dict(checkpoint["optimizer"])
+        if "scaler" in checkpoint:
+            self.scaler.load_state_dict(checkpoint["scaler"])
+        self.global_step = int(checkpoint.get("global_step", self.global_step))
         return int(checkpoint.get("epoch", 0)), dict(checkpoint.get("metrics", {}))
 
     def train(self) -> None:

@@ -1,0 +1,43 @@
+# Server training config for the 8x RTX 3090 machine.
+
+data:
+  path: "/mnt/sda/WalkerNet/data_1x1"
+  L: 12
+  H: 180
+  W: 360
+  variables: ["tos", "zos", "tauu", "tauv"]
+  norm: "zscore"
+  train_years: [1850, 2000]
+  val_years: [2001, 2007]
+  test_years: [2008, 2014]
+
+model:
+  patch_size: 4
+  d_model: 256
+  nhead: 8
+  dim_ff: 1024
+  num_layers: 6
+  patch_fusion_heads: 4
+  patch_fusion_layers: 1
+  patch_fusion_dim_ff: 1024
+  num_experts: 12
+  top_k: 2
+  decoder_hidden: 128
+  dropout: 0.1
+  max_rollout_steps: 24
+
+training:
+  epochs: 100
+  batch_size: 1
+  lr: 1.0e-4
+  weight_decay: 1.0e-2
+  amp: true
+  grad_accum_steps: 16
+  grad_clip: 1.0
+  loss: "mse"
+  seed: 42
+
+logging:
+  log_interval: 50
+  save_dir: "/mnt/sda/WalkerNet/checkpoints"
+  use_tensorboard: true
