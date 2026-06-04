@@ -13,10 +13,16 @@ from __future__ import annotations
 
 import argparse
 import gc
+import sys
 import time
+from pathlib import Path
 
 import torch
 from torch.cuda.amp import GradScaler, autocast
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from src.interfaces import NUM_VARIABLES
 from src.model import WalkerNet
