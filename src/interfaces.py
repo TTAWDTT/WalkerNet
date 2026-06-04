@@ -105,8 +105,14 @@ class WalkerSample(TypedDict):
     # 预测目标，shape = (1, 4, 180, 360)，float32
     y: torch.Tensor
 
+    # 可选：多步滚动训练目标，shape = (K, 4, 180, 360)，float32
+    y_rollout: NotRequired[torch.Tensor]
+
     # y 对应的月份，Python int，范围 1-12
     target_month: int
+
+    # 可选：y_rollout 每个 lead 对应的月份，shape = (K,)，int64
+    target_months: NotRequired[torch.Tensor]
 
     # 有效区域 mask，shape = (4, 180, 360)，bool
     # True 表示该变量在该网格点有效；False 表示无效或缺测。
@@ -126,8 +132,14 @@ class WalkerBatch(TypedDict):
     # shape = (B, 1, 4, 180, 360)，float32
     y: torch.Tensor
 
+    # 可选：shape = (B, K, 4, 180, 360)，float32
+    y_rollout: NotRequired[torch.Tensor]
+
     # shape = (B,)，int64
     target_month: torch.Tensor
+
+    # 可选：shape = (B, K)，int64
+    target_months: NotRequired[torch.Tensor]
 
     # shape = (B, 4, 180, 360)，bool
     valid_mask: torch.Tensor
