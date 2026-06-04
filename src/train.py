@@ -11,10 +11,13 @@
 from __future__ import annotations
 
 import argparse
+import os
 from typing import Any
 
 import torch
+import torch.distributed as dist
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 
 from .dataset import WalkerDataset
 from .model import WalkerNet
@@ -31,7 +34,39 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def build_dataloaders(config: dict[str, Any], num_workers: int = 0) -> tuple[DataLoader, DataLoader]:
+def is_distributed() -> bool:
+    """判断当前进程是否由 torchrun 拉起。"""
+    return int(os.environ.get("WORLD_SIZE", "1")) > 1
+
+
+def setup_distributed() -> tuple[bool, int, int, int]:
+    """初始化 DDP，返回 distributed/rank/local_rank/world_size。"""
+    distributed = is_distributed()
+    if not distributed:
+        return False, 0, 0, 1
+
+    rank = int(os.environ["RANK"])
+    local_rank = int(os.environ["LOCAL_RANK"])
+    world_size = int(os.environ["WORLD_SIZE"])
+    if not torch.cuda.is_available():
+        raise RuntimeError("DDP training requires CUDA devices")
+
+    torch.cuda.set_device(local_rank)
+    dist.init_process_group(backend="nccl")
+    return True, rank, local_rank, world_size
+
+
+def cleanup_distributed(distributed: bool) -> None:
+    """训练结束后关闭 DDP 进程组。"""
+    if distributed and dist.is_initialized():
+        dist.destroy_process_group()
+
+
+def build_dataloaders(
+    config: dict[str, Any],
+    num_workers: int = 0,
+    distributed: bool = False,
+) -> tuple[DataLoader, DataLoader]:
     """构建 train/val DataLoader。"""
     data_config = config["data"]
     training_config = config["training"]
@@ -41,11 +76,14 @@ def build_dataloaders(config: dict[str, Any], num_workers: int = 0) -> tuple[Dat
 
     train_set = WalkerDataset(data_config["path"], config, split="train")
     val_set = WalkerDataset(data_config["path"], config, split="val", norm_stats=train_set.norm_stats)
+    train_sampler = DistributedSampler(train_set, shuffle=True, drop_last=False) if distributed else None
+    val_sampler = DistributedSampler(val_set, shuffle=False, drop_last=False) if distributed else None
 
     train_loader = DataLoader(
         train_set,
         batch_size=batch_size,
-        shuffle=True,
+        shuffle=train_sampler is None,
+        sampler=train_sampler,
         num_workers=num_workers,
         pin_memory=pin_memory,
         persistent_workers=persistent_workers,
@@ -54,6 +92,7 @@ def build_dataloaders(config: dict[str, Any], num_workers: int = 0) -> tuple[Dat
         val_set,
         batch_size=batch_size,
         shuffle=False,
+        sampler=val_sampler,
         num_workers=num_workers,
         pin_memory=pin_memory,
         persistent_workers=persistent_workers,
@@ -64,23 +103,54 @@ def build_dataloaders(config: dict[str, Any], num_workers: int = 0) -> tuple[Dat
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
+    distributed, rank, local_rank, world_size = setup_distributed()
+    is_main = rank == 0
 
     set_seed(int(config.get("training", {}).get("seed", 42)))
-    device = get_device() if args.device is None else args.device
+    if distributed:
+        device = torch.device(f"cuda:{local_rank}")
+    else:
+        device = get_device() if args.device is None else torch.device(args.device)
 
-    train_loader, val_loader = build_dataloaders(config, num_workers=args.num_workers)
+    train_loader, val_loader = build_dataloaders(
+        config,
+        num_workers=args.num_workers,
+        distributed=distributed,
+    )
 
     model = WalkerNet(config)
     total_params, trainable_params = count_parameters(model)
-    print(f"device={device}")
-    print(f"params total={total_params:,} trainable={trainable_params:,}")
-    print(f"train batches={len(train_loader)} val batches={len(val_loader)}")
+    if distributed:
+        model.to(device)
+        model = torch.nn.parallel.DistributedDataParallel(
+            model,
+            device_ids=[local_rank],
+            output_device=local_rank,
+            find_unused_parameters=False,
+        )
+    if is_main:
+        print(f"device={device}")
+        print(f"distributed={distributed} world_size={world_size}")
+        print(f"params total={total_params:,} trainable={trainable_params:,}")
+        print(f"train batches={len(train_loader)} val batches={len(val_loader)}")
 
-    trainer = Trainer(model, train_loader, val_loader, config, device=device)
-    if args.resume is not None:
-        epoch, metrics = trainer.load_checkpoint(args.resume)
-        print(f"resumed from {args.resume} (epoch={epoch}, metrics={metrics})")
-    trainer.train()
+    try:
+        trainer = Trainer(
+            model,
+            train_loader,
+            val_loader,
+            config,
+            device=device,
+            rank=rank,
+            world_size=world_size,
+        )
+        if args.resume is not None:
+            epoch, metrics = trainer.load_checkpoint(args.resume)
+            if is_main:
+                print(f"resumed from {args.resume} (epoch={epoch}, metrics={metrics})")
+        trainer.train()
+    finally:
+        cleanup_distributed(distributed)
 
 
 if __name__ == "__main__":
