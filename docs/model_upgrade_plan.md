@@ -287,3 +287,94 @@ model:
   patch_fusion_layers: 1
   patch_fusion_dim_ff: 1024
 ```
+
+
+## 10. 第二轮训练目标升级：Residual + Rollout Loss
+
+状态：已实现。
+
+上一轮正式训练暴露出一个关键问题：单步 `tos/zos` 没有稳定超过
+persistence，尤其 `zos` 月际变化很小，直接预测完整场容易引入额外扰动。
+
+因此第二轮训练目标改为：
+
+```text
+delta = decoder(...)
+y_pred = x_last + delta
+```
+
+模型对外接口仍保持不变：
+
+```python
+y_pred = model(x, target_month, rollout_step=None)
+```
+
+但内部 decoder 输出被解释为相对输入最后一个月的修正量。
+
+### 10.1 多步滚动训练
+
+训练阶段支持 autoregressive rollout。当前正式配置：
+
+```yaml
+training:
+  rollout_steps: 6
+  detach_rollout: true
+  lead_weights: [1.0, 0.8, 0.6, 0.5, 0.4, 0.3]
+```
+
+每一步预测后，将预测场接回输入窗口继续预测下一步：
+
+```text
+x[0:12] -> pred lead-1
+x[1:12] + pred lead-1 -> pred lead-2
+...
+```
+
+`detach_rollout: true` 表示接回窗口的预测场不做跨步反传，用来控制显存和
+训练稳定性。模型仍然会在自己的预测输入上学习后续 lead。
+
+### 10.2 组合 loss
+
+每个 lead 的 loss 由四项组成：
+
+```text
+loss_lead =
+  1.0  * field_mse
++ 0.5  * residual_mse
++ 0.05 * gradient_mse
++ 0.2  * nino34_region_mse
+```
+
+含义：
+
+1. `field_mse`：完整场预测误差，保证基本场不乱。
+2. `residual_mse`：约束 `y_pred - x_last` 接近真实月变化量。
+3. `gradient_mse`：约束空间一阶差分，缓解纯 MSE 造成的过度平滑。
+4. `nino34_region_mse`：从预测 `tos` 场计算 Niño3.4 区域平均后再比较，
+   仍然满足“先预测场，再计算指数”的要求。
+
+lead 权重会在实现中归一化，因此总 loss 尺度不会随 rollout 步数直接放大。
+
+### 10.3 Dataset 兼容策略
+
+Dataset 默认仍返回单步目标：
+
+```text
+y: (1, 4, 180, 360)
+```
+
+训练入口会根据 `training.rollout_steps` 临时设置：
+
+```yaml
+data:
+  target_steps: 6
+```
+
+此时 Dataset 额外返回：
+
+```text
+y_rollout:     (6, 4, 180, 360)
+target_months: (6,)
+```
+
+普通评测脚本不设置 `target_steps`，因此仍按单步 Dataset 读取，不会被多步训练改动影响。
