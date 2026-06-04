@@ -38,7 +38,7 @@ y_pred: (B, 1, 4, 180, 360)
 默认配置中：
 
 ```text
-L = 3
+L = 12
 patch_size = 4
 N = (180 / 4) * (360 / 4) = 4050
 d = d_model
@@ -91,7 +91,7 @@ variable_embed        tos / zos / tauu / tauv 的变量身份
 
 ### 3. Patch 内 Time-Variable Fusion
 
-对每个空间 patch 内的 `L * 4` 个 token 加入一个 learnable fusion token，并做轻量 self-attention：
+对每个空间 patch 内的 `L * 4` 个 token 加入一个 learnable fusion token，并做轻量 self-attention。默认 `L=12` 时，每个 patch 内有 `48` 个 time-variable token：
 
 ```text
 (B, 4050, L*4, d)

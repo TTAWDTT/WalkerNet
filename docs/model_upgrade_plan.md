@@ -68,10 +68,10 @@ per-time/per-variable patchify:
 -> (B, 4050, L*4, d)
 ```
 
-默认 `L=3` 时，每个空间 patch 内有：
+当前默认 `L=12`，因此每个空间 patch 内有：
 
 ```text
-3 * 4 = 12 个 token
+12 * 4 = 48 个 token
 ```
 
 
@@ -117,10 +117,10 @@ z = z + relative_time_embed[None, :, None, None, :]
 
 ```text
 target_month = 7
-L = 3
+L = 12
 
 输入历史月份:
-4 月, 5 月, 6 月
+上一年 7 月 到 当年 6 月
 ```
 
 建议使用可学习月份 embedding：
