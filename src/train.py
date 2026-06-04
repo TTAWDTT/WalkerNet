@@ -80,10 +80,14 @@ def prepare_norm_stats_cache(config: dict[str, Any], distributed: bool, rank: in
     if not distributed or not stats_path or norm == "none":
         return
 
+    stats_file = os.path.expanduser(str(stats_path))
     if rank == 0:
-        rank_log(rank, f"prepare norm stats cache: {stats_path}")
-        WalkerDataset(data_config["path"], config, split="train")
-        rank_log(rank, "norm stats cache ready")
+        if os.path.exists(stats_file):
+            rank_log(rank, f"norm stats cache exists: {stats_path}")
+        else:
+            rank_log(rank, f"prepare norm stats cache: {stats_path}")
+            WalkerDataset(data_config["path"], config, split="train")
+            rank_log(rank, "norm stats cache ready")
     dist.barrier()
 
 
