@@ -91,6 +91,24 @@ def prepare_norm_stats_cache(config: dict[str, Any], distributed: bool, rank: in
     dist.barrier()
 
 
+def prepare_data_cache(config: dict[str, Any], distributed: bool, rank: int) -> None:
+    """DDP 训练前准备完整数据缓存。
+
+    data_cache_path 会把四个 NetCDF 预先堆成 .npy 文件。各 rank 之后用 mmap
+    读取同一份缓存，避免多卡启动时每个进程都重复慢读 NetCDF。
+    """
+    data_config = config.get("data", {})
+    cache_path = data_config.get("data_cache_path")
+    if not distributed or not cache_path:
+        return
+
+    if rank == 0:
+        rank_log(rank, f"prepare data cache if needed: {cache_path}")
+        WalkerDataset.prepare_data_cache(data_config["path"], config)
+        rank_log(rank, "data cache ready")
+    dist.barrier()
+
+
 def build_dataloaders(
     config: dict[str, Any],
     num_workers: int = 0,
@@ -142,6 +160,7 @@ def main() -> None:
         device = get_device() if args.device is None else torch.device(args.device)
 
     rank_log(rank, "building dataloaders...")
+    prepare_data_cache(config, distributed=distributed, rank=rank)
     prepare_norm_stats_cache(config, distributed=distributed, rank=rank)
     train_loader, val_loader = build_dataloaders(
         config,

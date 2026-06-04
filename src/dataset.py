@@ -53,8 +53,8 @@ class WalkerDataset(Dataset):
     这里的 t 是预测目标月的时间索引。
     """
 
-    # 进程内缓存，key 是 data_path，value 是已加载好的数组和坐标。
-    _data_cache: dict[Path, dict[str, Any]] = {}
+    # 进程内缓存，key 是 data_path + data_cache_path，value 是已加载好的数组和坐标。
+    _data_cache: dict[tuple[Path, str], dict[str, Any]] = {}
 
     def __init__(
         self,
@@ -88,7 +88,7 @@ class WalkerDataset(Dataset):
 
         # ---- 读取共享数据缓存 ----
         self.data_path = Path(data_path or self.data_config["path"]).expanduser().resolve()
-        cache = self._load_or_get_cache(self.data_path)
+        cache = self._load_or_get_cache(self.data_path, self.data_config)
 
         self.data = cache["data"]
         self.years = cache["years"]
@@ -168,14 +168,44 @@ class WalkerDataset(Dataset):
         raise ValueError(f"Unsupported normalization method: {self.norm}")
 
     @classmethod
-    def _load_or_get_cache(cls, data_path: Path) -> dict[str, Any]:
-        """读取数据目录；如果已经读过，就直接复用内存缓存。"""
-        if data_path not in cls._data_cache:
-            cls._data_cache[data_path] = cls._load_data(data_path)
-        return cls._data_cache[data_path]
+    def prepare_data_cache(cls, data_path: str | Path | None, config: dict[str, Any]) -> None:
+        """预先生成完整数据缓存；DDP 下应由 rank 0 调用一次。
+
+        该缓存不改变数据内容，只把四个 NetCDF 预先堆成连续的 ``.npy`` 文件，
+        之后各 rank 可以用 mmap 快速打开同一份数组。
+        """
+        data_config = config.get("data", config)
+        cache_paths = cls._data_cache_paths(data_config)
+        if cache_paths is None or cls._data_cache_exists(cache_paths):
+            return
+
+        resolved_data_path = Path(data_path or data_config["path"]).expanduser().resolve()
+        payload = cls._load_data_from_netcdf(resolved_data_path)
+        cls._save_data_cache(cache_paths, payload)
+
+    @classmethod
+    def _load_or_get_cache(cls, data_path: Path, data_config: dict[str, Any]) -> dict[str, Any]:
+        """读取数据目录；如果当前进程已经读过，就直接复用缓存对象。"""
+        cache_paths = cls._data_cache_paths(data_config)
+        cache_key = (data_path, str(cache_paths["prefix"]) if cache_paths is not None else "")
+        if cache_key not in cls._data_cache:
+            cls._data_cache[cache_key] = cls._load_data(data_path, data_config)
+        return cls._data_cache[cache_key]
+
+    @classmethod
+    def _load_data(cls, data_path: Path, data_config: dict[str, Any]) -> dict[str, Any]:
+        """优先读取 .npy 数据缓存；没有缓存时回退到 NetCDF。"""
+        cache_paths = cls._data_cache_paths(data_config)
+        if cache_paths is not None and cls._data_cache_exists(cache_paths):
+            return cls._load_data_cache(cache_paths)
+
+        payload = cls._load_data_from_netcdf(data_path)
+        if cache_paths is not None:
+            cls._save_data_cache(cache_paths, payload)
+        return payload
 
     @staticmethod
-    def _load_data(data_path: Path) -> dict[str, Any]:
+    def _load_data_from_netcdf(data_path: Path) -> dict[str, Any]:
         """读取四个 remap 后的 NetCDF 文件并堆成 (T, 4, H, W)。"""
         if not data_path.exists():
             raise FileNotFoundError(
@@ -243,6 +273,84 @@ class WalkerDataset(Dataset):
             "lon": reference_lon,
             "valid_mask": valid_mask,
         }
+
+    @staticmethod
+    def _data_cache_paths(data_config: dict[str, Any]) -> dict[str, Path] | None:
+        """根据 data_cache_path 生成一组缓存文件路径。"""
+        value = data_config.get("data_cache_path")
+        if not value:
+            return None
+
+        prefix = Path(value).expanduser()
+        parent = prefix.parent
+        name = prefix.name
+        return {
+            "prefix": prefix,
+            "data": parent / f"{name}_data.npy",
+            "years": parent / f"{name}_years.npy",
+            "months": parent / f"{name}_months.npy",
+            "lat": parent / f"{name}_lat.npy",
+            "lon": parent / f"{name}_lon.npy",
+            "valid_mask": parent / f"{name}_valid_mask.npy",
+            "meta": parent / f"{name}_meta.pt",
+        }
+
+    @staticmethod
+    def _data_cache_exists(paths: dict[str, Path]) -> bool:
+        """检查完整数据缓存是否已经可用。"""
+        required = ("data", "years", "months", "lat", "lon", "valid_mask", "meta")
+        return all(paths[key].exists() for key in required)
+
+    @staticmethod
+    def _load_data_cache(paths: dict[str, Path]) -> dict[str, Any]:
+        """用 mmap 读取已经堆好的完整数据缓存。"""
+        meta = torch.load(paths["meta"], map_location="cpu")
+        expected = {
+            "variables": VARIABLES,
+            "grid": (GRID_H, GRID_W),
+        }
+        for key, value in expected.items():
+            if meta.get(key) != value:
+                raise ValueError(f"Data cache meta mismatch: {key}={meta.get(key)!r}, expected {value!r}")
+
+        data = np.load(paths["data"], mmap_mode="r")
+        years = np.load(paths["years"])
+        months = np.load(paths["months"])
+        lat = np.load(paths["lat"])
+        lon = np.load(paths["lon"])
+        valid_mask_np = np.load(paths["valid_mask"])
+
+        if tuple(data.shape[1:]) != (len(VARIABLES), GRID_H, GRID_W):
+            raise ValueError(f"Data cache shape mismatch: got {data.shape}")
+
+        return {
+            "data": data,
+            "years": years,
+            "months": months,
+            "lat": lat,
+            "lon": lon,
+            "valid_mask": torch.from_numpy(valid_mask_np.astype(np.bool_, copy=False)),
+        }
+
+    @staticmethod
+    def _save_data_cache(paths: dict[str, Path], payload: dict[str, Any]) -> None:
+        """把完整数据缓存写到磁盘，供多卡训练 mmap 复用。"""
+        paths["prefix"].parent.mkdir(parents=True, exist_ok=True)
+
+        np.save(paths["data"], payload["data"])
+        np.save(paths["years"], payload["years"])
+        np.save(paths["months"], payload["months"])
+        np.save(paths["lat"], payload["lat"])
+        np.save(paths["lon"], payload["lon"])
+        np.save(paths["valid_mask"], payload["valid_mask"].cpu().numpy())
+        torch.save(
+            {
+                "variables": VARIABLES,
+                "grid": (GRID_H, GRID_W),
+                "shape": tuple(payload["data"].shape),
+            },
+            paths["meta"],
+        )
 
     @staticmethod
     def _read_year_month(path: Path) -> tuple[np.ndarray, np.ndarray]:
