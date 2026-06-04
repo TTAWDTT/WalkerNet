@@ -331,7 +331,11 @@ class CoupledVariableDecoder(nn.Module):
 
 
 class WalkerNet(nn.Module):
-    """Full pipeline: PatchEmbedding -> N x SpatialAttention -> TMoE -> Rollout -> Decoder."""
+    """Full pipeline: PatchEmbedding -> N x SpatialAttention -> TMoE -> Rollout -> Decoder.
+
+    默认使用 residual prediction：decoder 输出相对输入最后一个月的修正量，
+    forward 返回 ``x_last + delta``。这样 persistence 是模型的天然起点。
+    """
 
     def __init__(self, config):
         super().__init__()
@@ -353,6 +357,7 @@ class WalkerNet(nn.Module):
         dropout = float(model_cfg.get("dropout", 0.1))
         max_rollout_steps = int(model_cfg.get("max_rollout_steps", 24))
         decoder_hidden = int(model_cfg.get("decoder_hidden", 128))
+        self.residual_output = bool(model_cfg.get("residual_output", True))
 
         patch_fusion_heads = int(model_cfg.get("patch_fusion_heads", 4))
         patch_fusion_layers = int(model_cfg.get("patch_fusion_layers", 1))
@@ -385,9 +390,13 @@ class WalkerNet(nn.Module):
         )
 
     def forward(self, x, target_month, rollout_step=None):
+        x_last = x[:, -1:].contiguous()
         z = self.patch_embed(x, target_month)
         z = self.rollout_embed(z, rollout_step)
         for block in self.blocks:
             z = block(z)
         z = self.tmoe(z, target_month)
-        return self.decoder(z)
+        decoded = self.decoder(z)
+        if self.residual_output:
+            return x_last + decoded
+        return decoded
