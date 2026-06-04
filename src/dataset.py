@@ -104,8 +104,15 @@ class WalkerDataset(Dataset):
             raise ValueError(f"No samples found for split={split!r}, years={years}, L={self.L}")
 
         # train Dataset 默认自己计算归一化统计；val/test 应传入 train.norm_stats。
+        # 如果 config.data.norm_stats_path 存在，则优先复用磁盘缓存，DDP 多卡时尤其重要。
         if norm_stats is None:
-            self.norm_stats = self._compute_norm_stats()
+            stats_path = self._norm_stats_path()
+            if stats_path is not None and stats_path.exists():
+                self.norm_stats = self._load_norm_stats(stats_path)
+            else:
+                self.norm_stats = self._compute_norm_stats()
+                if stats_path is not None:
+                    self._save_norm_stats(stats_path, self.norm_stats)
         else:
             self.norm_stats = norm_stats
 
@@ -307,6 +314,49 @@ class WalkerDataset(Dataset):
             return stats
 
         raise ValueError(f"Unsupported normalization method: {self.norm}")
+
+    def _norm_stats_path(self) -> Path | None:
+        """返回归一化统计缓存路径；未配置则返回 None。"""
+        value = self.data_config.get("norm_stats_path")
+        if not value:
+            return None
+        return Path(value).expanduser()
+
+    def _load_norm_stats(self, path: Path) -> dict[str, torch.Tensor]:
+        """从磁盘读取归一化统计，并做轻量一致性检查。"""
+        payload = torch.load(path, map_location="cpu")
+        if not isinstance(payload, dict) or "stats" not in payload:
+            raise ValueError(f"Invalid norm stats file: {path}")
+
+        meta = dict(payload.get("meta", {}))
+        expected_meta = {
+            "norm": self.norm,
+            "variables": VARIABLES,
+            "train_years": tuple(self.data_config["train_years"]),
+        }
+        for key, expected in expected_meta.items():
+            if meta.get(key) != expected:
+                raise ValueError(
+                    f"Norm stats meta mismatch for {path}: {key}={meta.get(key)!r}, expected {expected!r}"
+                )
+
+        stats = payload["stats"]
+        if not isinstance(stats, dict):
+            raise ValueError(f"Invalid norm stats payload: {path}")
+        return {key: value.detach().cpu() for key, value in stats.items()}
+
+    def _save_norm_stats(self, path: Path, stats: dict[str, torch.Tensor]) -> None:
+        """把训练集归一化统计写入磁盘，供验证集和 DDP 其它 rank 复用。"""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "meta": {
+                "norm": self.norm,
+                "variables": VARIABLES,
+                "train_years": tuple(self.data_config["train_years"]),
+            },
+            "stats": {key: value.detach().cpu() for key, value in stats.items()},
+        }
+        torch.save(payload, path)
 
     def _normalize_tensor(self, tensor: torch.Tensor) -> torch.Tensor:
         """按变量维度广播归一化统计量。"""
