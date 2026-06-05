@@ -245,14 +245,7 @@ class Trainer:
 
             # DDP + 梯度累积：非 optimizer step 的小步先不做跨卡梯度同步。
             with self._sync_context(should_step):
-                with autocast() if self.amp_enabled else nullcontext():
-                    loss = self._compute_batch_loss(batch)
-                    scaled_loss = loss / self.grad_accum_steps
-
-                if self.amp_enabled:
-                    self.scaler.scale(scaled_loss).backward()
-                else:
-                    scaled_loss.backward()
+                loss = self._backward_batch_loss(batch)
 
             if should_step:
                 if self.grad_clip is not None:
@@ -431,6 +424,73 @@ class Trainer:
                 window = torch.cat([window[:, 1:], next_frame], dim=1)
 
         return total
+
+    def _backward_batch_loss(self, batch: dict[str, Any]) -> torch.Tensor:
+        """逐 lead 反传一个 batch，降低多步 rollout 的显存峰值。
+
+        旧写法会先把所有 lead 的 loss 累加成一个总 loss，再一次性 backward；
+        这样会同时保留多个 lead 的计算图。当前默认 ``detach_rollout=True``，
+        每个 lead 之间不需要跨步反传，因此可以每算完一个 lead 就立即 backward。
+        """
+        if not self.detach_rollout:
+            with autocast() if self.amp_enabled else nullcontext():
+                loss = self._compute_batch_loss(batch)
+                scaled_loss = loss / self.grad_accum_steps
+            self._backward_scaled_loss(scaled_loss)
+            return loss.detach()
+
+        window = batch["x"]
+        valid_mask = batch["valid_mask"]
+        targets = batch.get("y_rollout", batch["y"])
+        if targets.ndim != 5:
+            raise ValueError(f"targets must be (B, K, 4, H, W), got {targets.shape}")
+
+        available_steps = targets.shape[1]
+        steps = min(self.rollout_steps, available_steps)
+        target_months = batch.get("target_months")
+        lead_weights = self.lead_weights[:steps].to(device=window.device, dtype=window.dtype)
+        total_for_logging = window.new_zeros(())
+
+        for step_idx in range(steps):
+            x_last = window[:, -1:].contiguous()
+            target = targets[:, step_idx : step_idx + 1]
+            if target_months is None:
+                target_month = self._advance_month(batch["target_month"], step_idx)
+            else:
+                target_month = target_months[:, step_idx]
+            rollout_step = torch.full(
+                (window.shape[0],),
+                step_idx,
+                dtype=torch.long,
+                device=window.device,
+            )
+
+            with autocast() if self.amp_enabled else nullcontext():
+                pred = self.model(window, target_month, rollout_step=rollout_step)
+                lead_loss = lead_weights[step_idx] * forecast_loss(
+                    pred,
+                    target,
+                    x_last,
+                    valid_mask,
+                    self.loss_weights,
+                )
+                scaled_loss = lead_loss / self.grad_accum_steps
+
+            self._backward_scaled_loss(scaled_loss)
+            total_for_logging = total_for_logging + lead_loss.detach()
+
+            if step_idx + 1 < steps:
+                next_frame = self._mask_next_frame(pred.detach(), valid_mask)
+                window = torch.cat([window[:, 1:], next_frame], dim=1)
+
+        return total_for_logging
+
+    def _backward_scaled_loss(self, scaled_loss: torch.Tensor) -> None:
+        """根据 AMP 设置反传已经按 grad_accum_steps 缩放过的 loss。"""
+        if self.amp_enabled:
+            self.scaler.scale(scaled_loss).backward()
+        else:
+            scaled_loss.backward()
 
     def _build_lead_weights(self) -> torch.Tensor:
         """读取并归一化 rollout lead 权重。"""
