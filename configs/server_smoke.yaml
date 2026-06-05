@@ -29,11 +29,11 @@ model:
 
 training:
   epochs: 1
-  batch_size: 2
+  batch_size: 1
   lr: 1.0e-4
   weight_decay: 1.0e-2
   amp: true
-  grad_accum_steps: 2
+  grad_accum_steps: 4
   grad_clip: 1.0
   max_train_steps_per_epoch: 10
   max_val_steps: 3

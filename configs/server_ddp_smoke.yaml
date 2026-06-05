@@ -33,12 +33,12 @@ model:
 training:
   epochs: 1
   # DDP 下这里是“每张卡”的 batch_size。
-  # 8 卡时全局 batch_size = 2 * 8 * grad_accum_steps。
-  batch_size: 2
+  # 8 卡时全局 batch_size = 1 * 8 * grad_accum_steps。
+  batch_size: 1
   lr: 1.0e-4
   weight_decay: 1.0e-2
   amp: true
-  grad_accum_steps: 2
+  grad_accum_steps: 4
   grad_clip: 1.0
   max_train_steps_per_epoch: 8
   max_val_steps: 2
