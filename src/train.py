@@ -32,6 +32,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", type=str, default=None, help="Training device, e.g. cuda, cuda:0, cpu")
     parser.add_argument("--num-workers", type=int, default=0, help="DataLoader workers")
     parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
+    parser.add_argument(
+        "--init-checkpoint",
+        type=str,
+        default=None,
+        help="只加载模型权重作为初始化，不恢复 optimizer/scaler/global_step",
+    )
     return parser.parse_args()
 
 
@@ -208,6 +214,14 @@ def main() -> None:
             epoch, metrics = trainer.load_checkpoint(args.resume)
             if is_main:
                 print(f"resumed from {args.resume} (epoch={epoch}, metrics={metrics})")
+        elif args.init_checkpoint is not None:
+            checkpoint = torch.load(args.init_checkpoint, map_location=device)
+            trainer._model_for_state().load_state_dict(checkpoint["model"])
+            if is_main:
+                print(
+                    f"initialized model from {args.init_checkpoint} "
+                    f"(source_epoch={checkpoint.get('epoch')})"
+                )
         trainer.train()
     finally:
         cleanup_distributed(distributed)
