@@ -215,9 +215,11 @@ def evaluate_rollout(
     device: torch.device,
     max_lead: int,
     leads: list[int],
+    trained_rollout_steps: int,
 ) -> dict[str, Any]:
     """执行自回归 rollout 评测。"""
     model.eval()
+    trained_rollout_steps = max(1, int(trained_rollout_steps))
     lead_stats = _init_lead_stats(leads)
 
     # 为了计算 3-month mean，需要保留所有 1..max_lead 的 Niño3.4 anomaly。
@@ -239,7 +241,14 @@ def evaluate_rollout(
         for step in range(1, max_lead + 1):
             target_t = base_target_t + step - 1
             target_month = torch.as_tensor(dataset.months[target_t.detach().cpu().numpy()], device=device, dtype=torch.long)
-            pred_norm = model(window, target_month)
+            # 训练时 rollout_step 从 0 开始计数；超过训练步数的远期评测复用最后一个已训练 step。
+            rollout_step = torch.full(
+                (window.shape[0],),
+                min(step - 1, trained_rollout_steps - 1),
+                dtype=torch.long,
+                device=device,
+            )
+            pred_norm = model(window, target_month, rollout_step=rollout_step)
             pred_phys = dataset.denormalize(pred_norm)
             target_norm, target_phys = _target_tensors(dataset, target_t, device)
 
@@ -267,7 +276,6 @@ def evaluate_rollout(
             persistence_nino[step].append(persistence_raw - clim)
             target_nino[step].append(target_raw - clim)
 
-            # 单步模型没有训练非零 rollout_step，因此只更新窗口，不传 rollout_step。
             window = torch.cat([window[:, 1:], pred_norm], dim=1)
 
         if batch_idx % 5 == 0:
@@ -332,15 +340,17 @@ def main() -> None:
     checkpoint = torch.load(args.checkpoint, map_location=device)
     model = WalkerNet(config).to(device)
     model.load_state_dict(checkpoint["model"])
+    trained_rollout_steps = int(config.get("training", {}).get("rollout_steps", 1))
 
     print(f"checkpoint={args.checkpoint}")
     print(f"checkpoint_epoch={checkpoint.get('epoch')}")
     print(
         f"split={args.split} usable_samples={len(subset)} original_samples={len(dataset)} "
-        f"max_lead={args.max_lead} leads={leads} batches={len(loader)} device={device}"
+        f"max_lead={args.max_lead} leads={leads} batches={len(loader)} "
+        f"trained_rollout_steps={trained_rollout_steps} device={device}"
     )
 
-    result = evaluate_rollout(model, loader, dataset, device, args.max_lead, leads)
+    result = evaluate_rollout(model, loader, dataset, device, args.max_lead, leads, trained_rollout_steps)
 
     json_payload = {
         "checkpoint": str(args.checkpoint),
@@ -350,6 +360,8 @@ def main() -> None:
         "original_samples": len(dataset),
         "max_lead": args.max_lead,
         "leads": leads,
+        "trained_rollout_steps": trained_rollout_steps,
+        "rollout_step_policy": "min(step - 1, trained_rollout_steps - 1)",
         "field": _jsonable_lead_dict(result["field"]),
         "nino34_anomaly": {
             "monthly": {
