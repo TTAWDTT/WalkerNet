@@ -378,3 +378,23 @@ target_months: (6,)
 ```
 
 普通评测脚本不设置 `target_steps`，因此仍按单步 Dataset 读取，不会被多步训练改动影响。
+
+## 11. Rollout 稳定性阶段
+
+12-step rollout fine-tune 后，`checkpoints_rollout12_0607/best.pt` 已经让
+1/3/6/9/12/18 月 Niño3.4 anomaly RMSE 全部优于 persistence。详细结果见
+`docs/results.md`。
+
+新的瓶颈不再是“长 lead RMSE 完全失控”，而是：
+
+1. 9/12/18 月 ACC 仍偏弱；
+2. `val_loss` 与真实 rollout skill 不完全一致；
+3. 继续训练到 `latest.pt` 后 RMSE 反而弱于 epoch 13 的 `best.pt`。
+
+因此下一阶段不再盲目延长 epoch，而是改为 rollout-aware 训练闭环：
+
+1. 使用 `src/select_rollout_checkpoint.py` 从 rollout 评测结果中选择 checkpoint。
+2. 在 loss 中加入 `area_weighted: true`，用 `cos(lat)` 修正 1° 经纬网面积差异。
+3. 加入 `nino34_pattern_corr` 和 `nino34_pattern_variance`，约束 Niño3.4 区域异常形态与振幅。
+4. 使用 `residual_delta_std` 按变量月变化尺度缩放 residual loss。
+5. 从 `checkpoints_rollout12_0607/best.pt` 低学习率 fine-tune，目标是提升 ACC，同时保持 RMSE 优势。
