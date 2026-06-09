@@ -76,3 +76,41 @@ Checkpoint:
 2. 训练 loss 加入 area-weighted field loss。
 3. 加入 Niño3.4 区域异常形态相关和振幅约束。
 4. 从 `checkpoints_rollout12_0607/best.pt` 低学习率 fine-tune，而不是重新训练。
+
+## 0608 ACC fine-tune 复盘
+
+Checkpoint:
+
+```text
+/mnt/sda/WalkerNet/checkpoints_rollout12_acc_0608/best.pt
+```
+
+该轮尝试加入 `nino34_pattern_corr`、`nino34_pattern_variance` 和
+`residual_delta_std`，目标是提升长 lead ACC。测试结果显示，该策略没有改善
+rollout skill，反而整体弱于 `checkpoints_rollout12_0607/best.pt`。
+
+主要判断：
+
+1. `nino34_pattern_corr` 约束的是 Niño3.4 区域内部的空间形态相关，不等价于
+   最终评测使用的 Niño3.4 时间序列 ACC。
+2. `residual_delta_std` 会显著放大 `tos/zos` 的月变化误差，容易让模型过度追逐
+   单步 delta，削弱自由滚动稳定性。
+3. `val_loss` 混入新 loss 后不再可靠代表真实 rollout skill，因此不能只靠
+   普通验证 loss 选择 checkpoint。
+
+## 0610 修正方案
+
+新增配置：
+
+```text
+configs/server_3090_rollout12_delta_finetune_0610.yaml
+```
+
+修正点：
+
+1. 保留 `area_weighted` field loss。
+2. 移除 `nino34_pattern_corr` 和 `nino34_pattern_variance`。
+3. 移除 `residual_delta_std`，避免过强放大 `tos/zos` residual。
+4. 新增 `nino34_delta` loss，约束预测场计算得到的 Niño3.4 指数相对上一月的修正量，
+   即更直接地学习相对 persistence 的冷暖修正。
+5. 继续从 `/mnt/sda/WalkerNet/checkpoints_rollout12_0607/best.pt` 低学习率 fine-tune。

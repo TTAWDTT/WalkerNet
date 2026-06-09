@@ -100,30 +100,31 @@ def nino34_region_mse_loss(pred: torch.Tensor, target: torch.Tensor, valid_mask:
 
     该项仍然是 field-first：loss 输入是预测场，不是模型直接输出的指数。
     """
-    if pred.shape[-2:] != target.shape[-2:]:
-        raise ValueError(f"pred/target spatial mismatch: {pred.shape} vs {target.shape}")
-
-    H, W = pred.shape[-2:]
-    lat = torch.linspace(-89.5, 89.5, H, device=pred.device, dtype=pred.dtype)
-    lon = torch.linspace(0.5, 359.5, W, device=pred.device, dtype=pred.dtype)
-    lat_mask = (lat >= -5.0) & (lat <= 5.0)
-    lon_mask = (lon >= 190.0) & (lon <= 240.0)
-    if not bool(lat_mask.any()) or not bool(lon_mask.any()):
+    pred_index = _nino34_index(pred, valid_mask)
+    target_index = _nino34_index(target, valid_mask)
+    if pred_index.numel() == 0:
         return pred.new_zeros(())
-
-    pred_region = pred[:, :, 0][..., lat_mask, :][..., lon_mask]
-    target_region = target[:, :, 0][..., lat_mask, :][..., lon_mask]
-    mask_region = valid_mask[:, None, 0][..., lat_mask, :][..., lon_mask].to(device=pred.device)
-
-    weights = torch.cos(torch.deg2rad(lat[lat_mask]))
-    weights = weights / weights.sum().clamp_min(torch.finfo(pred.dtype).eps)
-    view_shape = [1] * pred_region.ndim
-    view_shape[-2] = weights.numel()
-    weights = weights.view(*view_shape)
-
-    pred_index = _weighted_region_mean(pred_region, mask_region, weights)
-    target_index = _weighted_region_mean(target_region, mask_region, weights)
     return torch.mean((pred_index - target_index) ** 2)
+
+
+def nino34_delta_mse_loss(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    x_last: torch.Tensor,
+    valid_mask: torch.Tensor,
+) -> torch.Tensor:
+    """约束 Niño3.4 指数相对上一月的修正量。
+
+    评测时会先预测完整 ``tos`` 场，再计算 Niño3.4 指数；这里也保持相同路径。
+    与直接约束指数值不同，该项关注模型相对 persistence 做出的冷暖修正，
+    用来减少自由滚动时的相位漂移。
+    """
+    pred_index = _nino34_index(pred, valid_mask)
+    target_index = _nino34_index(target, valid_mask)
+    last_index = _nino34_index(x_last, valid_mask)
+    if pred_index.numel() == 0:
+        return pred.new_zeros(())
+    return torch.mean(((pred_index - last_index) - (target_index - last_index)) ** 2)
 
 
 def nino34_pattern_corr_loss(pred: torch.Tensor, target: torch.Tensor, valid_mask: torch.Tensor) -> torch.Tensor:
@@ -134,6 +135,8 @@ def nino34_pattern_corr_loss(pred: torch.Tensor, target: torch.Tensor, valid_mas
     时也能提供“相位/形态不要塌掉”的训练信号。
     """
     pred_region, target_region, mask_region, weights = _nino34_region_tensors(pred, target, valid_mask)
+    if pred_region.numel() == 0:
+        return pred.new_zeros(())
     pred_anom = pred_region - _weighted_region_mean(pred_region, mask_region, weights)[..., None, None]
     target_anom = target_region - _weighted_region_mean(target_region, mask_region, weights)[..., None, None]
     mask_f = mask_region.to(device=pred.device, dtype=pred.dtype)
@@ -149,6 +152,8 @@ def nino34_pattern_corr_loss(pred: torch.Tensor, target: torch.Tensor, valid_mas
 def nino34_pattern_variance_loss(pred: torch.Tensor, target: torch.Tensor, valid_mask: torch.Tensor) -> torch.Tensor:
     """约束 Niño3.4 区域内异常振幅，避免长 lead 过度平滑。"""
     pred_region, target_region, mask_region, weights = _nino34_region_tensors(pred, target, valid_mask)
+    if pred_region.numel() == 0:
+        return pred.new_zeros(())
     pred_anom = pred_region - _weighted_region_mean(pred_region, mask_region, weights)[..., None, None]
     target_anom = target_region - _weighted_region_mean(target_region, mask_region, weights)[..., None, None]
     mask_f = mask_region.to(device=pred.device, dtype=pred.dtype)
@@ -173,6 +178,7 @@ def forecast_loss(
     residual_weight = float(weights.get("residual", 0.0))
     gradient_weight = float(weights.get("gradient", 0.0))
     nino_weight = float(weights.get("nino34", 0.0))
+    nino_delta_weight = float(weights.get("nino34_delta", 0.0))
     nino_corr_weight = float(weights.get("nino34_pattern_corr", 0.0))
     nino_var_weight = float(weights.get("nino34_pattern_variance", 0.0))
     area_weighted = bool(weights.get("area_weighted", False))
@@ -192,6 +198,8 @@ def forecast_loss(
         loss = loss + gradient_weight * masked_gradient_mse_loss(pred, target, valid_mask, area_weighted=area_weighted)
     if nino_weight:
         loss = loss + nino_weight * nino34_region_mse_loss(pred, target, valid_mask)
+    if nino_delta_weight:
+        loss = loss + nino_delta_weight * nino34_delta_mse_loss(pred, target, x_last, valid_mask)
     if nino_corr_weight:
         loss = loss + nino_corr_weight * nino34_pattern_corr_loss(pred, target, valid_mask)
     if nino_var_weight:
@@ -228,6 +236,16 @@ def _weighted_region_mean(values: torch.Tensor, mask: torch.Tensor, lat_weights:
     return weighted.sum(dim=(-2, -1)) / denom
 
 
+def _nino34_index(field: torch.Tensor, valid_mask: torch.Tensor) -> torch.Tensor:
+    """从完整场中计算 Niño3.4 区域平均 ``tos`` 指数。"""
+    dummy = field
+    target = field
+    region, _, mask_region, weights = _nino34_region_tensors(dummy, target, valid_mask)
+    if region.numel() == 0:
+        return field.new_empty((0,))
+    return _weighted_region_mean(region, mask_region, weights)
+
+
 def _latitude_area_weights(tensor: torch.Tensor, enabled: bool) -> torch.Tensor:
     """返回可广播到 ``(..., H, W)`` 的纬向面积权重。"""
     if not enabled:
@@ -253,7 +271,7 @@ def _nino34_region_tensors(
     lat_mask = (lat >= -5.0) & (lat <= 5.0)
     lon_mask = (lon >= 190.0) & (lon <= 240.0)
     if not bool(lat_mask.any()) or not bool(lon_mask.any()):
-        empty = pred.new_zeros(())
+        empty = pred.new_empty((0,))
         return empty, empty, empty.to(dtype=torch.bool), empty
 
     pred_region = pred[:, :, 0][..., lat_mask, :][..., lon_mask]
