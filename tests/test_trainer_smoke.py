@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.trainer import Trainer  # noqa: E402
+from src.trainer import Trainer, nino34_delta_mse_loss  # noqa: E402
 
 
 class TinyDataset(Dataset):
@@ -164,6 +164,24 @@ def test_trainer_uses_rollout_targets_and_steps():
 
     assert metrics["optimizer_steps"] == 3.0
     assert model.seen_steps == [0, 1, 0, 1, 0, 1]
+
+
+def test_nino34_delta_loss_tracks_index_correction():
+    H, W = 180, 360
+    x_last = torch.zeros(1, 1, 4, H, W, dtype=torch.float32)
+    pred = x_last.clone()
+    target = x_last.clone()
+    valid_mask = torch.ones(1, 4, H, W, dtype=torch.bool)
+
+    lat = torch.linspace(-89.5, 89.5, H)
+    lat_mask = (lat >= -5.0) & (lat <= 5.0)
+
+    pred[:, :, 0, lat_mask, :] = 2.0
+    target[:, :, 0, lat_mask, :] = 3.0
+
+    loss = nino34_delta_mse_loss(pred, target, x_last, valid_mask)
+
+    assert torch.allclose(loss, torch.tensor(1.0), atol=1e-6)
 
 
 def _run_all():
