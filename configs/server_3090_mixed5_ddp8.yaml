@@ -1,0 +1,70 @@
+# 5-source mixed training config for 8-GPU DDP on walker-3090.
+# 约定：每卡 batch_size=1，8 卡时 grad_accum_steps=2，
+# 全局有效 batch = 1 * 8 * 2 = 16，和单卡配置保持一致。
+
+data:
+  path: "/mnt/sda/WalkerNet/data_1x1"
+  source_name: "CESM2"
+  sources:
+    - name: "CESM2"
+      path: "/mnt/sda/WalkerNet/data_1x1"
+    - name: "EC-Earth3"
+      path: "/mnt/sda/WalkerNet/cmip6_1x1/EC-Earth3"
+    - name: "GFDL-ESM4"
+      path: "/mnt/sda/WalkerNet/cmip6_1x1/GFDL-ESM4"
+    - name: "IPSL-CM6A-LR"
+      path: "/mnt/sda/WalkerNet/cmip6_1x1/IPSL-CM6A-LR"
+    - name: "MPI-ESM1-2-HR"
+      path: "/mnt/sda/WalkerNet/cmip6_1x1/MPI-ESM1-2-HR"
+  L: 12
+  H: 180
+  W: 360
+  variables: ["tos", "zos", "tauu", "tauv"]
+  norm: "zscore"
+  data_cache_path: "/mnt/sda/WalkerNet/cache/mixed5_data"
+  norm_stats_path: "/mnt/sda/WalkerNet/cache/mixed5_norm_stats_train.pt"
+  train_years: [1850, 2000]
+  val_years: [2001, 2007]
+  test_years: [2008, 2014]
+
+model:
+  patch_size: 4
+  d_model: 256
+  nhead: 8
+  dim_ff: 1024
+  num_layers: 6
+  patch_fusion_heads: 4
+  patch_fusion_layers: 1
+  patch_fusion_dim_ff: 1024
+  num_experts: 12
+  top_k: 2
+  decoder_hidden: 128
+  dropout: 0.1
+  max_rollout_steps: 24
+  residual_output: true
+
+training:
+  epochs: 100
+  batch_size: 1
+  lr: 1.0e-4
+  weight_decay: 1.0e-2
+  amp: true
+  grad_accum_steps: 2
+  grad_clip: 1.0
+  rollout_steps: 12
+  detach_rollout: true
+  lead_weights: [1.0, 1.0, 1.0, 0.9, 0.9, 0.8, 0.8, 0.8, 0.7, 0.7, 0.6, 0.6]
+  loss: "area_weighted_field_residual_gradient_nino_delta"
+  loss_weights:
+    area_weighted: true
+    field: 1.0
+    residual: 0.2
+    gradient: 0.05
+    nino34: 0.4
+    nino34_delta: 0.2
+  seed: 42
+
+logging:
+  log_interval: 50
+  save_dir: "/mnt/sda/WalkerNet/checkpoints_mixed5_ddp8"
+  use_tensorboard: true
