@@ -121,6 +121,8 @@ class WalkerSample(TypedDict):
     # 可选：调试/评估用，不是模型输入。
     time_index: NotRequired[int]
     target_time: NotRequired[object]
+    source_index: NotRequired[int]
+    source_id: NotRequired[str]
 
 
 class WalkerBatch(TypedDict):
@@ -147,6 +149,8 @@ class WalkerBatch(TypedDict):
     # 可选：调试/评估用，不是模型输入。
     time_index: NotRequired[torch.Tensor]
     target_time: NotRequired[object]
+    source_index: NotRequired[torch.Tensor]
+    source_id: NotRequired[object]
 
 
 # ============================================================
