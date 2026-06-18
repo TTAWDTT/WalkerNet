@@ -14,6 +14,7 @@ NetCDF 的经纬度映射。重网格请先运行 ``scripts/remap_to_1x1.sh``。
 
 设计原则：
 - 预处理和训练读取分离：CDO remap 是一次性脚本，Dataset 只读结果。
+- 支持单 source 和多 source 混合训练；一个样本内部只来自同一个 source。
 - 模型输入不能包含 NaN/Inf：缺测区域用 valid_mask 标记，张量中填 0。
 - 归一化统计只从训练年份计算，验证/测试复用训练统计。
 """
@@ -22,6 +23,8 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from dataclasses import dataclass
+import re
 
 import numpy as np
 import torch
@@ -42,6 +45,17 @@ REMAPPED_FILENAMES = {
 }
 
 SPLITS = ("train", "val", "test")
+
+
+@dataclass(frozen=True)
+class SourceSpec:
+    """一个数据源的最小描述。
+
+    name 用于日志、缓存后缀和调试；path 指向包含四个 ``*_1x1.nc`` 的目录。
+    """
+
+    name: str
+    path: Path
 
 
 class WalkerDataset(Dataset):
@@ -75,6 +89,8 @@ class WalkerDataset(Dataset):
         self.L = int(self.data_config["L"])
         self.target_steps = int(self.data_config.get("target_steps", 1))
         self.norm = str(self.data_config.get("norm", "zscore")).lower()
+        self.sources = self._resolve_sources(data_path, self.data_config)
+        self.source_names = tuple(source.name for source in self.sources)
 
         if self.L < 1:
             raise ValueError(f"Input window L must be >= 1, got {self.L}")
@@ -92,17 +108,24 @@ class WalkerDataset(Dataset):
             raise ValueError(f"config grid must be {(GRID_H, GRID_W)}, got {(h, w)}")
 
         # ---- 读取共享数据缓存 ----
-        self.data_path = Path(data_path or self.data_config["path"]).expanduser().resolve()
-        cache = self._load_or_get_cache(self.data_path, self.data_config)
+        self.source_payloads: list[dict[str, Any]] = []
+        for source in self.sources:
+            source_config = self._source_data_config(self.data_config, source.name)
+            print(f"[dataset] load source {source.name}: {source.path}", flush=True)
+            self.source_payloads.append(self._load_or_get_cache(source.path, source_config))
+            print(f"[dataset] source {source.name} ready", flush=True)
 
-        self.data = cache["data"]
-        self.years = cache["years"]
-        self.months = cache["months"]
-        self.lat = cache["lat"]
-        self.lon = cache["lon"]
-        self.valid_mask = cache["valid_mask"]
+        # 为了兼容已有评测代码，单 source 时保留这些便捷属性。
+        first_payload = self.source_payloads[0]
+        self.data_path = self.sources[0].path
+        self.data = first_payload["data"]
+        self.years = first_payload["years"]
+        self.months = first_payload["months"]
+        self.lat = first_payload["lat"]
+        self.lon = first_payload["lon"]
+        self.valid_mask = first_payload["valid_mask"]
 
-        # sample_indices 保存的是目标月 t，而不是输入窗口起点。
+        # sample_indices 保存 (source_idx, target_t)，target_t 是目标月索引。
         self.sample_indices = self._build_sample_indices(split)
         if len(self.sample_indices) == 0:
             years = self.data_config[f"{split}_years"]
@@ -130,11 +153,18 @@ class WalkerDataset(Dataset):
         return int(len(self.sample_indices))
 
     def __getitem__(self, idx: int) -> WalkerSample:
-        target_t = int(self.sample_indices[idx])
+        source_idx, target_t = self.sample_indices[idx]
+        source_idx = int(source_idx)
+        target_t = int(target_t)
+        source_name = self.source_names[source_idx]
+        payload = self.source_payloads[source_idx]
+        data = payload["data"]
+        months = payload["months"]
+        valid_mask = payload["valid_mask"]
 
         # 取历史窗口和目标月。copy=True 是为了后续 NaN 填充/归一化不会影响缓存。
-        x_np = np.array(self.data[target_t - self.L : target_t], copy=True)
-        y_rollout_np = np.array(self.data[target_t : target_t + self.target_steps], copy=True)
+        x_np = np.array(data[target_t - self.L : target_t], copy=True)
+        y_rollout_np = np.array(data[target_t : target_t + self.target_steps], copy=True)
 
         x = torch.from_numpy(x_np).float()
         y_rollout = torch.from_numpy(y_rollout_np).float()
@@ -151,14 +181,16 @@ class WalkerDataset(Dataset):
         sample: WalkerSample = {
             "x": x,
             "y": y,
-            "target_month": int(self.months[target_t]),
-            "valid_mask": self.valid_mask,
+            "target_month": int(months[target_t]),
+            "valid_mask": valid_mask,
             "time_index": target_t,
+            "source_index": source_idx,
+            "source_id": source_name,
         }
         if self.target_steps > 1:
             sample["y_rollout"] = y_rollout
             sample["target_months"] = torch.from_numpy(
-                np.array(self.months[target_t : target_t + self.target_steps], dtype=np.int64)
+                np.array(months[target_t : target_t + self.target_steps], dtype=np.int64)
             )
         return sample
 
@@ -188,13 +220,63 @@ class WalkerDataset(Dataset):
         之后各 rank 可以用 mmap 快速打开同一份数组。
         """
         data_config = config.get("data", config)
-        cache_paths = cls._data_cache_paths(data_config)
-        if cache_paths is None or cls._data_cache_exists(cache_paths):
-            return
+        for source in cls._resolve_sources(data_path, data_config):
+            source_config = cls._source_data_config(data_config, source.name)
+            cache_paths = cls._data_cache_paths(source_config)
+            if cache_paths is None or cls._data_cache_exists(cache_paths):
+                continue
 
-        resolved_data_path = Path(data_path or data_config["path"]).expanduser().resolve()
-        payload = cls._load_data_from_netcdf(resolved_data_path)
-        cls._save_data_cache(cache_paths, payload)
+            print(f"[dataset] prepare cache for source {source.name}: {source.path}", flush=True)
+            payload = cls._load_data_from_netcdf(source.path)
+            cls._save_data_cache(cache_paths, payload)
+            print(f"[dataset] cache ready for source {source.name}", flush=True)
+
+    @staticmethod
+    def _resolve_sources(data_path: str | Path | None, data_config: dict[str, Any]) -> list[SourceSpec]:
+        """解析单 source 或多 source 配置。
+
+        多 source 配置示例：
+
+            sources:
+              - name: CESM2
+                path: /mnt/sda/WalkerNet/data_1x1
+              - name: EC-Earth3
+                path: /mnt/sda/WalkerNet/cmip6_1x1/EC-Earth3
+        """
+        raw_sources = data_config.get("sources")
+        if not raw_sources:
+            raw_path = data_path or data_config["path"]
+            path = Path(raw_path).expanduser().resolve()
+            name = str(data_config.get("source_name") or path.name)
+            return [SourceSpec(name=name, path=path)]
+
+        sources: list[SourceSpec] = []
+        for idx, item in enumerate(raw_sources):
+            if isinstance(item, (str, Path)):
+                path = Path(item).expanduser().resolve()
+                name = path.name
+            elif isinstance(item, dict):
+                if "path" not in item:
+                    raise ValueError(f"data.sources[{idx}] must contain path")
+                path = Path(item["path"]).expanduser().resolve()
+                name = str(item.get("name") or path.name)
+            else:
+                raise TypeError(f"data.sources[{idx}] must be a path string or mapping, got {type(item)!r}")
+
+            if not name:
+                raise ValueError(f"data.sources[{idx}] has empty name")
+            sources.append(SourceSpec(name=name, path=path))
+        return sources
+
+    @staticmethod
+    def _source_data_config(data_config: dict[str, Any], source_name: str) -> dict[str, Any]:
+        """给每个 source 派生独立数据缓存路径，避免多个 source 覆盖同一组 .npy。"""
+        source_config = dict(data_config)
+        if data_config.get("sources") and data_config.get("data_cache_path"):
+            prefix = Path(str(data_config["data_cache_path"])).expanduser()
+            safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", source_name)
+            source_config["data_cache_path"] = str(prefix.parent / f"{prefix.name}_{safe_name}")
+        return source_config
 
     @classmethod
     def _load_or_get_cache(cls, data_path: Path, data_config: dict[str, Any]) -> dict[str, Any]:
@@ -210,11 +292,14 @@ class WalkerDataset(Dataset):
         """优先读取 .npy 数据缓存；没有缓存时回退到 NetCDF。"""
         cache_paths = cls._data_cache_paths(data_config)
         if cache_paths is not None and cls._data_cache_exists(cache_paths):
+            print(f"[dataset] use data cache: {cache_paths['prefix']}", flush=True)
             return cls._load_data_cache(cache_paths)
 
+        print(f"[dataset] build data cache from NetCDF: {data_path}", flush=True)
         payload = cls._load_data_from_netcdf(data_path)
         if cache_paths is not None:
             cls._save_data_cache(cache_paths, payload)
+            print(f"[dataset] saved data cache: {cache_paths['prefix']}", flush=True)
         return payload
 
     @staticmethod
@@ -237,6 +322,7 @@ class WalkerDataset(Dataset):
             if not path.exists():
                 raise FileNotFoundError(f"Missing remapped file for {variable}: {path}")
 
+            print(f"[dataset] read {path}", flush=True)
             with xr.open_dataset(path, decode_times=False) as ds:
                 if variable not in ds:
                     raise ValueError(f"{path} does not contain variable {variable!r}")
@@ -387,18 +473,31 @@ class WalkerDataset(Dataset):
                 return years, months
 
     def _build_sample_indices(self, split: str) -> np.ndarray:
-        """根据 split 年份范围构造所有可用目标月 t。"""
+        """根据 split 年份范围构造所有可用 ``(source_idx, target_t)``。"""
+        pieces = []
+        for source_idx, payload in enumerate(self.source_payloads):
+            target_indices = self._build_source_sample_indices(payload["years"], split)
+            if target_indices.size == 0:
+                continue
+            source_column = np.full_like(target_indices, source_idx)
+            pieces.append(np.stack([source_column, target_indices], axis=1))
+        if not pieces:
+            return np.empty((0, 2), dtype=np.int64)
+        return np.concatenate(pieces, axis=0).astype(np.int64)
+
+    def _build_source_sample_indices(self, years: np.ndarray, split: str) -> np.ndarray:
+        """根据单个 source 的年份范围构造所有可用目标月 t。"""
         start_year, end_year = self.data_config[f"{split}_years"]
-        target_in_split = (self.years >= int(start_year)) & (self.years <= int(end_year))
+        target_in_split = (years >= int(start_year)) & (years <= int(end_year))
 
         # t 必须至少 >= L，否则没有足够历史窗口。
         # 多步训练时还要保证所有未来目标月都仍在当前 split 内，避免 val/test 泄漏。
-        enough_history = np.arange(len(self.years)) >= self.L
-        last_target = np.arange(len(self.years)) + self.target_steps - 1
-        enough_future = last_target < len(self.years)
-        future_in_split = np.zeros(len(self.years), dtype=bool)
+        enough_history = np.arange(len(years)) >= self.L
+        last_target = np.arange(len(years)) + self.target_steps - 1
+        enough_future = last_target < len(years)
+        future_in_split = np.zeros(len(years), dtype=bool)
         valid_future_positions = np.where(enough_future)[0]
-        future_years = self.years[last_target[valid_future_positions]]
+        future_years = years[last_target[valid_future_positions]]
         future_in_split[valid_future_positions] = future_years <= int(end_year)
         return np.where(target_in_split & enough_history & enough_future & future_in_split)[0].astype(np.int64)
 
@@ -408,8 +507,11 @@ class WalkerDataset(Dataset):
             return {}
 
         train_start, train_end = self.data_config["train_years"]
-        train_mask = (self.years >= int(train_start)) & (self.years <= int(train_end))
-        if not np.any(train_mask):
+        has_training_month = any(
+            np.any((payload["years"] >= int(train_start)) & (payload["years"] <= int(train_end)))
+            for payload in self.source_payloads
+        )
+        if not has_training_month:
             raise ValueError(f"No training months found for train_years={self.data_config['train_years']}")
 
         stats: dict[str, torch.Tensor] = {}
@@ -417,10 +519,25 @@ class WalkerDataset(Dataset):
             mean = np.empty((len(VARIABLES),), dtype=np.float32)
             std = np.empty((len(VARIABLES),), dtype=np.float32)
             for idx in range(len(VARIABLES)):
-                # nanmean/nanstd 会忽略陆地或缺测点。
-                values = self.data[train_mask, idx]
-                mean[idx] = np.nanmean(values, dtype=np.float64)
-                std[idx] = np.nanstd(values, dtype=np.float64)
+                total = 0.0
+                total_square = 0.0
+                count = 0
+                for payload in self.source_payloads:
+                    source_train_mask = (payload["years"] >= int(train_start)) & (payload["years"] <= int(train_end))
+                    values = np.asarray(payload["data"][source_train_mask, idx], dtype=np.float64)
+                    finite = np.isfinite(values)
+                    if not np.any(finite):
+                        continue
+                    valid_values = values[finite]
+                    total += float(valid_values.sum(dtype=np.float64))
+                    total_square += float((valid_values * valid_values).sum(dtype=np.float64))
+                    count += int(valid_values.size)
+                if count == 0:
+                    raise ValueError(f"No finite training values found for variable {VARIABLES[idx]}")
+                mean_value = total / count
+                variance = max(total_square / count - mean_value * mean_value, 0.0)
+                mean[idx] = mean_value
+                std[idx] = float(np.sqrt(variance))
                 if not np.isfinite(std[idx]) or std[idx] == 0:
                     std[idx] = 1.0
             stats["mean"] = torch.from_numpy(mean)
@@ -431,10 +548,18 @@ class WalkerDataset(Dataset):
             min_value = np.empty((len(VARIABLES),), dtype=np.float32)
             max_value = np.empty((len(VARIABLES),), dtype=np.float32)
             for idx in range(len(VARIABLES)):
-                # minmax 同样忽略 NaN，只统计有效物理值范围。
-                values = self.data[train_mask, idx]
-                min_value[idx] = np.nanmin(values)
-                max_value[idx] = np.nanmax(values)
+                source_mins = []
+                source_maxs = []
+                for payload in self.source_payloads:
+                    source_train_mask = (payload["years"] >= int(train_start)) & (payload["years"] <= int(train_end))
+                    values = payload["data"][source_train_mask, idx]
+                    if np.isfinite(values).any():
+                        source_mins.append(np.nanmin(values))
+                        source_maxs.append(np.nanmax(values))
+                if not source_mins:
+                    raise ValueError(f"No finite training values found for variable {VARIABLES[idx]}")
+                min_value[idx] = np.nanmin(np.asarray(source_mins, dtype=np.float32))
+                max_value[idx] = np.nanmax(np.asarray(source_maxs, dtype=np.float32))
                 if not np.isfinite(max_value[idx] - min_value[idx]) or max_value[idx] == min_value[idx]:
                     max_value[idx] = min_value[idx] + 1.0
             stats["min"] = torch.from_numpy(min_value)
@@ -461,6 +586,7 @@ class WalkerDataset(Dataset):
             "norm": self.norm,
             "variables": VARIABLES,
             "train_years": tuple(self.data_config["train_years"]),
+            "source_names": self.source_names,
         }
         for key, expected in expected_meta.items():
             if meta.get(key) != expected:
@@ -481,6 +607,7 @@ class WalkerDataset(Dataset):
                 "norm": self.norm,
                 "variables": VARIABLES,
                 "train_years": tuple(self.data_config["train_years"]),
+                "source_names": self.source_names,
             },
             "stats": {key: value.detach().cpu() for key, value in stats.items()},
         }
