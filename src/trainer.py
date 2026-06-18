@@ -335,6 +335,11 @@ class Trainer:
         self.detach_rollout = bool(self.training_config.get("detach_rollout", True))
         self.lead_weights = self._build_lead_weights()
         self.loss_weights = dict(self.training_config.get("loss_weights", {"field": 1.0}))
+        early_stopping_config = dict(self.training_config.get("early_stopping", {}))
+        self.early_stopping_enabled = bool(early_stopping_config.get("enabled", False))
+        self.early_stopping_patience = max(1, int(early_stopping_config.get("patience", 10)))
+        self.early_stopping_min_delta = float(early_stopping_config.get("min_delta", 0.0))
+        self.early_stopping_bad_epochs = 0
         self.log_interval = int(self.logging_config.get("log_interval", 50))
         self.save_dir = Path(self.logging_config.get("save_dir", "checkpoints"))
         if self.is_main:
@@ -445,6 +450,8 @@ class Trainer:
             "optimizer": self.optimizer.state_dict(),
             "scaler": self.scaler.state_dict(),
             "metrics": metrics,
+            "best_val_loss": self.best_val_loss,
+            "early_stopping_bad_epochs": self.early_stopping_bad_epochs,
             "config": self.config,
         }
         torch.save(checkpoint, path)
@@ -460,11 +467,48 @@ class Trainer:
         self.global_step = int(checkpoint.get("global_step", self.global_step))
         epoch = int(checkpoint.get("epoch", 0))
         metrics = dict(checkpoint.get("metrics", {}))
-        val_metrics = metrics.get("val")
-        if isinstance(val_metrics, dict) and "loss" in val_metrics:
-            self.best_val_loss = float(val_metrics["loss"])
+        self.best_val_loss = self._load_best_val_loss(checkpoint, metrics)
+        self.early_stopping_bad_epochs = int(checkpoint.get("early_stopping_bad_epochs", 0))
         self.start_epoch = epoch + 1
         return epoch, metrics
+
+    def _load_best_val_loss(self, checkpoint: dict[str, Any], metrics: dict[str, Any]) -> float:
+        """从 checkpoint 或同目录 best.pt 恢复历史最优验证 loss。"""
+        if "best_val_loss" in checkpoint:
+            return float(checkpoint["best_val_loss"])
+
+        best_path = self.save_dir / "best.pt"
+        if best_path.exists():
+            try:
+                best_checkpoint = torch.load(best_path, map_location="cpu")
+                best_metrics = dict(best_checkpoint.get("metrics", {}))
+                best_val = best_metrics.get("val")
+                if isinstance(best_val, dict) and "loss" in best_val:
+                    return float(best_val["loss"])
+            except Exception as exc:  # pragma: no cover - 只影响恢复 best 计数，不影响训练主体。
+                if self.is_main:
+                    print(f"warn: failed to read best checkpoint {best_path}: {exc}")
+
+        val_metrics = metrics.get("val")
+        if isinstance(val_metrics, dict) and "loss" in val_metrics:
+            return float(val_metrics["loss"])
+        return float("inf")
+
+    def _update_early_stopping(self, val_metrics: dict[str, float]) -> tuple[bool, bool]:
+        """更新 early stopping 状态，返回 (是否刷新 best, 是否停止)。"""
+        if not val_metrics or "loss" not in val_metrics:
+            return False, False
+
+        current = float(val_metrics["loss"])
+        improved = current < self.best_val_loss - self.early_stopping_min_delta
+        if improved:
+            self.best_val_loss = current
+            self.early_stopping_bad_epochs = 0
+            return True, False
+
+        self.early_stopping_bad_epochs += 1
+        should_stop = self.early_stopping_enabled and self.early_stopping_bad_epochs >= self.early_stopping_patience
+        return False, should_stop
 
     def train(self) -> None:
         """完整训练循环。"""
@@ -482,13 +526,25 @@ class Trainer:
                     message += f" val_loss={val_metrics['loss']:.6f}"
                 print(message)
 
+            is_best, should_stop = self._update_early_stopping(val_metrics)
             latest_path = self.save_dir / "latest.pt"
             self.save_checkpoint(latest_path, epoch, {"train": train_metrics, "val": val_metrics})
 
-            if val_metrics and val_metrics["loss"] < self.best_val_loss:
-                self.best_val_loss = val_metrics["loss"]
+            if is_best:
                 best_path = self.save_dir / "best.pt"
                 self.save_checkpoint(best_path, epoch, {"train": train_metrics, "val": val_metrics})
+            elif self.is_main and self.early_stopping_enabled and val_metrics:
+                print(
+                    "early_stopping "
+                    f"bad_epochs={self.early_stopping_bad_epochs}/{self.early_stopping_patience} "
+                    f"best_val_loss={self.best_val_loss:.6f} "
+                    f"min_delta={self.early_stopping_min_delta:.6g}"
+                )
+
+            if should_stop:
+                if self.is_main:
+                    print(f"early_stopping stop at epoch={epoch}")
+                break
 
     def _model_for_state(self) -> torch.nn.Module:
         """返回真正持有参数的模型；DDP 包装时需要取 .module。"""
