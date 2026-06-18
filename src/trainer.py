@@ -357,6 +357,7 @@ class Trainer:
 
         self.best_val_loss = float("inf")
         self.global_step = 0
+        self.start_epoch = 1
 
     def train_epoch(self, epoch: int) -> dict[str, float]:
         """训练一个 epoch。"""
@@ -457,11 +458,17 @@ class Trainer:
         if "scaler" in checkpoint:
             self.scaler.load_state_dict(checkpoint["scaler"])
         self.global_step = int(checkpoint.get("global_step", self.global_step))
-        return int(checkpoint.get("epoch", 0)), dict(checkpoint.get("metrics", {}))
+        epoch = int(checkpoint.get("epoch", 0))
+        metrics = dict(checkpoint.get("metrics", {}))
+        val_metrics = metrics.get("val")
+        if isinstance(val_metrics, dict) and "loss" in val_metrics:
+            self.best_val_loss = float(val_metrics["loss"])
+        self.start_epoch = epoch + 1
+        return epoch, metrics
 
     def train(self) -> None:
         """完整训练循环。"""
-        for epoch in range(1, self.epochs + 1):
+        for epoch in range(self.start_epoch, self.epochs + 1):
             sampler = getattr(self.train_loader, "sampler", None)
             if hasattr(sampler, "set_epoch"):
                 sampler.set_epoch(epoch)
