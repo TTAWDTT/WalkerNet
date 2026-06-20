@@ -59,25 +59,25 @@ def _update_stats(
     valid_mask: torch.Tensor,
 ) -> None:
     """按变量累计 masked RMSE/MAE/correlation 需要的统计量。"""
-    pred_cpu = pred.detach().cpu().double()
-    target_cpu = target.detach().cpu().double()
-    mask_cpu = valid_mask.detach().cpu().bool()
+    pred_work = pred.detach().double()
+    target_work = target.detach().double()
+    mask_work = valid_mask.detach().to(device=pred_work.device, dtype=torch.bool)
 
     for idx in range(len(VARIABLES)):
-        mask = mask_cpu[:, :, idx]
-        p = pred_cpu[:, :, idx][mask]
-        y = target_cpu[:, :, idx][mask]
+        mask = mask_work[:, :, idx]
+        p = pred_work[:, :, idx][mask]
+        y = target_work[:, :, idx][mask]
         if p.numel() == 0:
             continue
 
         diff = p - y
-        stats["sse"][idx] += (diff * diff).sum()
-        stats["sae"][idx] += diff.abs().sum()
-        stats["sum_pred"][idx] += p.sum()
-        stats["sum_target"][idx] += y.sum()
-        stats["sum_pred2"][idx] += (p * p).sum()
-        stats["sum_target2"][idx] += (y * y).sum()
-        stats["sum_cross"][idx] += (p * y).sum()
+        stats["sse"][idx] += (diff * diff).sum().cpu()
+        stats["sae"][idx] += diff.abs().sum().cpu()
+        stats["sum_pred"][idx] += p.sum().cpu()
+        stats["sum_target"][idx] += y.sum().cpu()
+        stats["sum_pred2"][idx] += (p * p).sum().cpu()
+        stats["sum_target2"][idx] += (y * y).sum().cpu()
+        stats["sum_cross"][idx] += (p * y).sum().cpu()
         stats["count"][idx] += p.numel()
 
 
