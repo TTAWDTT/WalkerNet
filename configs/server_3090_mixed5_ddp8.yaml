@@ -62,10 +62,21 @@ training:
     gradient: 0.05
     nino34: 0.4
     nino34_delta: 0.2
+  rollout_selection:
+    enabled: true
+    split: "val"
+    interval_epochs: 2
+    max_lead: 18
+    leads: [6, 9, 12, 18]
+    mode: "three_month_mean"
+    max_samples_per_source: 24
+    batch_size: 2
+    score: "mean_acc"
   early_stopping:
     enabled: true
+    monitor: "rollout_skill"
     patience: 6
-    min_delta: 1.0e-3
+    min_delta: 0.005
   seed: 42
 
 logging:
