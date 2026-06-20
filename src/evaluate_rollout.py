@@ -45,6 +45,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-lead", type=int, default=18)
     parser.add_argument("--leads", type=str, default="1,3,6,9,12,18")
     parser.add_argument("--output-dir", type=str, default="outputs/eval_rollout")
+    parser.add_argument(
+        "--source-names",
+        type=str,
+        default="",
+        help="可选，逗号分隔的 source 名称；为空时评测全部 source。",
+    )
     return parser.parse_args()
 
 
@@ -57,8 +63,22 @@ def _parse_leads(value: str, max_lead: int) -> list[int]:
     return leads
 
 
-def _valid_subset_positions(dataset: WalkerDataset, max_lead: int) -> list[int]:
+def _parse_source_names(value: str) -> set[str] | None:
+    names = {item.strip() for item in value.split(",") if item.strip()}
+    return names or None
+
+
+def _valid_subset_positions(
+    dataset: WalkerDataset,
+    max_lead: int,
+    source_names: set[str] | None = None,
+) -> list[int]:
     """只保留可以完整 rollout 到 max_lead 的 test 样本。"""
+    if source_names is not None:
+        unknown = source_names.difference(dataset.source_names)
+        if unknown:
+            raise ValueError(f"Unknown source_names={sorted(unknown)}, available={dataset.source_names}")
+
     positions: list[int] = []
     for pos, sample_index in enumerate(dataset.sample_indices):
         if np.ndim(sample_index) == 0:
@@ -67,6 +87,8 @@ def _valid_subset_positions(dataset: WalkerDataset, max_lead: int) -> list[int]:
         else:
             source_idx = int(sample_index[0])
             target_t = int(sample_index[1])
+        if source_names is not None and dataset.source_names[source_idx] not in source_names:
+            continue
         last_available_t = len(dataset.source_payloads[source_idx]["years"]) - 1
         if int(target_t) + max_lead - 1 <= last_available_t:
             positions.append(pos)
@@ -369,12 +391,13 @@ def main() -> None:
     args = parse_args()
     config = load_config(args.config)
     leads = _parse_leads(args.leads, args.max_lead)
+    source_names = _parse_source_names(args.source_names)
     device = torch.device(args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu")
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     dataset = WalkerDataset(config["data"]["path"], config, split=args.split)
-    positions = _valid_subset_positions(dataset, args.max_lead)
+    positions = _valid_subset_positions(dataset, args.max_lead, source_names=source_names)
     subset = Subset(dataset, positions)
     loader = DataLoader(
         subset,
@@ -394,6 +417,7 @@ def main() -> None:
     print(f"checkpoint_epoch={checkpoint.get('epoch')}")
     print(
         f"split={args.split} usable_samples={len(subset)} original_samples={len(dataset)} "
+        f"source_names={sorted(source_names) if source_names else 'ALL'} "
         f"max_lead={args.max_lead} leads={leads} batches={len(loader)} "
         f"trained_rollout_steps={trained_rollout_steps} device={device}"
     )
@@ -404,6 +428,7 @@ def main() -> None:
         "checkpoint": str(args.checkpoint),
         "checkpoint_epoch": int(checkpoint.get("epoch", -1)),
         "split": args.split,
+        "source_names": sorted(source_names) if source_names else None,
         "usable_samples": len(subset),
         "original_samples": len(dataset),
         "max_lead": args.max_lead,
