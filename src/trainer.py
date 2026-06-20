@@ -13,15 +13,18 @@ from pathlib import Path
 from typing import Any
 from contextlib import nullcontext
 
+import numpy as np
 import torch
 import torch.distributed as dist
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from torch.cuda.amp import autocast
 
 try:
     from .interfaces import FILL_VALUE
+    from .metrics import compute_nino34
 except ImportError:  # pragma: no cover
     from interfaces import FILL_VALUE
+    from metrics import compute_nino34
 
 
 def masked_mse_loss(
@@ -207,6 +210,33 @@ def forecast_loss(
     return loss
 
 
+def _tensor_corr(x: torch.Tensor, y: torch.Tensor) -> float:
+    """计算一维张量相关系数。"""
+    x = x.double().reshape(-1)
+    y = y.double().reshape(-1)
+    x = x - x.mean()
+    y = y - y.mean()
+    denom = torch.sqrt((x * x).sum() * (y * y).sum()).clamp_min(1e-12)
+    return float(((x * y).sum() / denom).item())
+
+
+def _tensor_rmse(x: torch.Tensor, y: torch.Tensor) -> float:
+    """计算一维张量 RMSE。"""
+    diff = x.double().reshape(-1) - y.double().reshape(-1)
+    return float(torch.sqrt(torch.mean(diff * diff)).item())
+
+
+def _compute_nino34_numpy(data: np.ndarray, lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
+    """从 ``(T, H, W)`` 的 tos 数据计算 Niño3.4 区域平均。"""
+    lat_mask = (lat >= -5.0) & (lat <= 5.0)
+    lon_mask = (lon >= 190.0) & (lon <= 240.0)
+    region = data[:, lat_mask, :][:, :, lon_mask]
+    lon_mean = np.nanmean(region, axis=2)
+    weights = np.cos(np.deg2rad(lat[lat_mask])).astype(np.float64)
+    weights = weights / weights.sum()
+    return np.nansum(lon_mean * weights[None, :], axis=1).astype(np.float32)
+
+
 def _masked_mse_5d(
     pred: torch.Tensor,
     target: torch.Tensor,
@@ -337,13 +367,19 @@ class Trainer:
         self.loss_weights = dict(self.training_config.get("loss_weights", {"field": 1.0}))
         early_stopping_config = dict(self.training_config.get("early_stopping", {}))
         self.early_stopping_enabled = bool(early_stopping_config.get("enabled", False))
+        self.early_stopping_monitor = str(early_stopping_config.get("monitor", "val_loss"))
         self.early_stopping_patience = max(1, int(early_stopping_config.get("patience", 10)))
         self.early_stopping_min_delta = float(early_stopping_config.get("min_delta", 0.0))
         self.early_stopping_bad_epochs = 0
+        self.rollout_selection_config = dict(self.training_config.get("rollout_selection", {}))
+        self.rollout_selection_enabled = bool(self.rollout_selection_config.get("enabled", False))
+        self.rollout_selection_loader: DataLoader | None = None
+        self.best_rollout_skill = float("-inf")
         self.log_interval = int(self.logging_config.get("log_interval", 50))
         self.save_dir = Path(self.logging_config.get("save_dir", "checkpoints"))
         if self.is_main:
             self.save_dir.mkdir(parents=True, exist_ok=True)
+            self.rollout_selection_loader = self._build_rollout_selection_loader()
 
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
@@ -451,6 +487,7 @@ class Trainer:
             "scaler": self.scaler.state_dict(),
             "metrics": metrics,
             "best_val_loss": self.best_val_loss,
+            "best_rollout_skill": self.best_rollout_skill,
             "early_stopping_bad_epochs": self.early_stopping_bad_epochs,
             "config": self.config,
         }
@@ -468,6 +505,7 @@ class Trainer:
         epoch = int(checkpoint.get("epoch", 0))
         metrics = dict(checkpoint.get("metrics", {}))
         self.best_val_loss = self._load_best_val_loss(checkpoint, metrics)
+        self.best_rollout_skill = self._load_best_rollout_skill(checkpoint, metrics)
         self.early_stopping_bad_epochs = int(checkpoint.get("early_stopping_bad_epochs", 0))
         self.start_epoch = epoch + 1
         return epoch, metrics
@@ -494,21 +532,64 @@ class Trainer:
             return float(val_metrics["loss"])
         return float("inf")
 
-    def _update_early_stopping(self, val_metrics: dict[str, float]) -> tuple[bool, bool]:
-        """更新 early stopping 状态，返回 (是否刷新 best, 是否停止)。"""
-        if not val_metrics or "loss" not in val_metrics:
-            return False, False
+    def _load_best_rollout_skill(self, checkpoint: dict[str, Any], metrics: dict[str, Any]) -> float:
+        """从 checkpoint 或历史指标中恢复最佳 rollout skill。"""
+        if "best_rollout_skill" in checkpoint:
+            return float(checkpoint["best_rollout_skill"])
 
-        current = float(val_metrics["loss"])
-        improved = current < self.best_val_loss - self.early_stopping_min_delta
-        if improved:
-            self.best_val_loss = current
+        rollout_metrics = metrics.get("rollout_selection")
+        if isinstance(rollout_metrics, dict) and "score" in rollout_metrics:
+            return float(rollout_metrics["score"])
+        return float("-inf")
+
+    def _update_early_stopping(
+        self,
+        val_metrics: dict[str, float],
+        rollout_metrics: dict[str, Any],
+    ) -> tuple[bool, bool, bool]:
+        """更新 best/early stopping 状态，返回 loss best、skill best、是否停止。"""
+        loss_improved = False
+        skill_improved = False
+        monitored_improved = False
+
+        if val_metrics and "loss" in val_metrics:
+            current_loss = float(val_metrics["loss"])
+            loss_improved = current_loss < self.best_val_loss
+            loss_improved_for_stop = current_loss < self.best_val_loss - self.early_stopping_min_delta
+            if loss_improved:
+                self.best_val_loss = current_loss
+        else:
+            loss_improved_for_stop = False
+
+        if rollout_metrics and "score" in rollout_metrics:
+            current_skill = float(rollout_metrics["score"])
+            skill_improved = current_skill > self.best_rollout_skill
+            skill_improved_for_stop = current_skill > self.best_rollout_skill + self.early_stopping_min_delta
+            if skill_improved:
+                self.best_rollout_skill = current_skill
+        else:
+            skill_improved_for_stop = False
+
+        monitor = self.early_stopping_monitor
+        if monitor == "val_loss":
+            monitored_improved = loss_improved_for_stop
+            has_metric = bool(val_metrics and "loss" in val_metrics)
+        elif monitor == "rollout_skill":
+            monitored_improved = skill_improved_for_stop
+            has_metric = bool(rollout_metrics and "score" in rollout_metrics)
+        else:
+            raise ValueError("training.early_stopping.monitor must be 'val_loss' or 'rollout_skill'")
+
+        if not has_metric:
+            return loss_improved, skill_improved, False
+
+        if monitored_improved:
             self.early_stopping_bad_epochs = 0
-            return True, False
+        else:
+            self.early_stopping_bad_epochs += 1
 
-        self.early_stopping_bad_epochs += 1
         should_stop = self.early_stopping_enabled and self.early_stopping_bad_epochs >= self.early_stopping_patience
-        return False, should_stop
+        return loss_improved, skill_improved, should_stop
 
     def train(self) -> None:
         """完整训练循环。"""
@@ -519,25 +600,42 @@ class Trainer:
 
             train_metrics = self.train_epoch(epoch)
             val_metrics = self.validate()
+            rollout_metrics = self.evaluate_rollout_selection(epoch)
 
             if self.is_main:
                 message = f"epoch={epoch} train_loss={train_metrics['loss']:.6f}"
                 if val_metrics:
                     message += f" val_loss={val_metrics['loss']:.6f}"
+                if rollout_metrics:
+                    acc_text = " ".join(
+                        f"acc@{lead}={rollout_metrics[f'acc@{lead}']:.4f}"
+                        for lead in rollout_metrics["leads"]
+                    )
+                    message += f" rollout_skill={rollout_metrics['score']:.4f} {acc_text}"
                 print(message)
 
-            is_best, should_stop = self._update_early_stopping(val_metrics)
+            is_best_loss, is_best_skill, should_stop = self._update_early_stopping(val_metrics, rollout_metrics)
             latest_path = self.save_dir / "latest.pt"
-            self.save_checkpoint(latest_path, epoch, {"train": train_metrics, "val": val_metrics})
+            all_metrics = {"train": train_metrics, "val": val_metrics, "rollout_selection": rollout_metrics}
+            self.save_checkpoint(latest_path, epoch, all_metrics)
 
-            if is_best:
-                best_path = self.save_dir / "best.pt"
-                self.save_checkpoint(best_path, epoch, {"train": train_metrics, "val": val_metrics})
-            elif self.is_main and self.early_stopping_enabled and val_metrics:
+            if is_best_loss:
+                self.save_checkpoint(self.save_dir / "best_loss.pt", epoch, all_metrics)
+                # 兼容旧脚本默认读取 best.pt 的习惯；新实验请优先使用 best_loss/best_skill。
+                self.save_checkpoint(self.save_dir / "best.pt", epoch, all_metrics)
+            if is_best_skill:
+                self.save_checkpoint(self.save_dir / "best_skill.pt", epoch, all_metrics)
+            if self.is_main and self.early_stopping_enabled:
+                best_text = (
+                    f"best_val_loss={self.best_val_loss:.6f}"
+                    if self.early_stopping_monitor == "val_loss"
+                    else f"best_rollout_skill={self.best_rollout_skill:.6f}"
+                )
                 print(
                     "early_stopping "
                     f"bad_epochs={self.early_stopping_bad_epochs}/{self.early_stopping_patience} "
-                    f"best_val_loss={self.best_val_loss:.6f} "
+                    f"monitor={self.early_stopping_monitor} "
+                    f"{best_text} "
                     f"min_delta={self.early_stopping_min_delta:.6g}"
                 )
 
@@ -545,6 +643,241 @@ class Trainer:
                 if self.is_main:
                     print(f"early_stopping stop at epoch={epoch}")
                 break
+
+    def _build_rollout_selection_loader(self) -> DataLoader | None:
+        """为 rank 0 构建 source-balanced 的 rollout skill 验证子集。"""
+        if not self.rollout_selection_enabled or self.val_loader is None:
+            return None
+
+        dataset = self.val_loader.dataset
+        if isinstance(dataset, Subset):
+            dataset = dataset.dataset
+        required_attrs = ("sample_indices", "source_names", "source_payloads", "data_config")
+        if not all(hasattr(dataset, name) for name in required_attrs):
+            raise TypeError("rollout_selection requires a WalkerDataset-like validation dataset")
+
+        max_lead = int(self.rollout_selection_config.get("max_lead", 18))
+        max_per_source = int(self.rollout_selection_config.get("max_samples_per_source", 24))
+        positions = self._rollout_selection_positions(dataset, max_lead, max_per_source)
+        if not positions:
+            raise ValueError("No validation samples can satisfy rollout_selection.max_lead")
+
+        batch_size = int(self.rollout_selection_config.get("batch_size", 2))
+        num_workers = int(self.rollout_selection_config.get("num_workers", 0))
+        loader = DataLoader(
+            Subset(dataset, positions),
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=self.device.type == "cuda",
+            persistent_workers=num_workers > 0,
+        )
+        print(
+            f"rollout_selection samples={len(positions)} "
+            f"max_lead={max_lead} batch_size={batch_size}",
+            flush=True,
+        )
+        return loader
+
+    def _rollout_selection_positions(self, dataset: Any, max_lead: int, max_per_source: int) -> list[int]:
+        """按 source 均匀抽取可完整验证到 max_lead 的样本位置。"""
+        split_years = dataset.data_config.get(f"{dataset.split}_years")
+        end_year = int(split_years[1]) if split_years is not None else None
+        by_source: dict[int, list[int]] = {idx: [] for idx in range(len(dataset.source_names))}
+
+        for pos, sample_index in enumerate(dataset.sample_indices):
+            source_idx = int(sample_index[0])
+            target_t = int(sample_index[1])
+            payload = dataset.source_payloads[source_idx]
+            final_t = target_t + max_lead - 1
+            if final_t >= len(payload["years"]):
+                continue
+            if end_year is not None and int(payload["years"][final_t]) > end_year:
+                continue
+            by_source[source_idx].append(pos)
+
+        positions: list[int] = []
+        for source_idx in sorted(by_source):
+            candidates = by_source[source_idx]
+            if max_per_source > 0 and len(candidates) > max_per_source:
+                pick = np.linspace(0, len(candidates) - 1, max_per_source, dtype=np.int64)
+                candidates = [candidates[int(i)] for i in pick]
+            positions.extend(candidates)
+        return positions
+
+    @torch.no_grad()
+    def evaluate_rollout_selection(self, epoch: int) -> dict[str, Any]:
+        """用验证集自由滚动 skill 选择 checkpoint。"""
+        if not self.is_main or self.rollout_selection_loader is None:
+            return {}
+
+        interval = max(1, int(self.rollout_selection_config.get("interval_epochs", 1)))
+        if epoch % interval != 0:
+            return {}
+
+        dataset = self.rollout_selection_loader.dataset
+        if isinstance(dataset, Subset):
+            dataset = dataset.dataset
+
+        max_lead = int(self.rollout_selection_config.get("max_lead", 18))
+        leads = [int(x) for x in self.rollout_selection_config.get("leads", [6, 9, 12, 18])]
+        mode = str(self.rollout_selection_config.get("mode", "three_month_mean"))
+        score_name = str(self.rollout_selection_config.get("score", "mean_acc"))
+        trained_rollout_steps = max(1, int(self.training_config.get("rollout_steps", 1)))
+
+        model_series, persistence_series, target_series = self._collect_rollout_nino_series(
+            dataset,
+            max_lead=max_lead,
+            trained_rollout_steps=trained_rollout_steps,
+        )
+        metrics = self._rollout_skill_metrics(model_series, persistence_series, target_series, leads, mode)
+        acc_values = [metrics[lead]["corr"] for lead in leads if lead in metrics]
+        if not acc_values:
+            raise ValueError(f"No rollout skill metrics were computed for leads={leads}, mode={mode}")
+        if score_name != "mean_acc":
+            raise ValueError("training.rollout_selection.score currently supports only 'mean_acc'")
+
+        result: dict[str, Any] = {
+            "score": float(sum(acc_values) / len(acc_values)),
+            "mode": mode,
+            "score_name": score_name,
+            "leads": leads,
+            "max_lead": max_lead,
+            "num_samples": int(next(iter(target_series.values())).numel()),
+        }
+        for lead in leads:
+            row = metrics[lead]
+            result[f"acc@{lead}"] = float(row["corr"])
+            result[f"rmse@{lead}"] = float(row["rmse"])
+            result[f"persistence_acc@{lead}"] = float(row["persistence_corr"])
+            result[f"persistence_rmse@{lead}"] = float(row["persistence_rmse"])
+        return result
+
+    def _collect_rollout_nino_series(
+        self,
+        dataset: Any,
+        max_lead: int,
+        trained_rollout_steps: int,
+    ) -> tuple[dict[int, torch.Tensor], dict[int, torch.Tensor], dict[int, torch.Tensor]]:
+        """收集 1..max_lead 的 Niño3.4 anomaly 序列。"""
+        self.model.eval()
+        model_nino: dict[int, list[torch.Tensor]] = {lead: [] for lead in range(1, max_lead + 1)}
+        persistence_nino: dict[int, list[torch.Tensor]] = {lead: [] for lead in range(1, max_lead + 1)}
+        target_nino: dict[int, list[torch.Tensor]] = {lead: [] for lead in range(1, max_lead + 1)}
+        climatology = self._compute_source_nino34_climatology(dataset).to(device=self.device, dtype=torch.float32)
+        lat = torch.as_tensor(dataset.lat, dtype=torch.float32, device=self.device)
+        lon = torch.as_tensor(dataset.lon, dtype=torch.float32, device=self.device)
+
+        for batch in self.rollout_selection_loader:
+            window = batch["x"].to(self.device)
+            persistence_phys = dataset.denormalize(window[:, -1:].contiguous())
+            source_index = batch.get("source_index")
+            if source_index is None:
+                source_index = torch.zeros(window.shape[0], dtype=torch.long)
+            source_index = source_index.to(device=self.device, dtype=torch.long)
+            base_target_t = batch["time_index"].to(device=self.device, dtype=torch.long)
+
+            for step in range(1, max_lead + 1):
+                target_t = base_target_t + step - 1
+                target_month = self._target_months(dataset, source_index, target_t)
+                rollout_step = torch.full(
+                    (window.shape[0],),
+                    min(step - 1, trained_rollout_steps - 1),
+                    dtype=torch.long,
+                    device=self.device,
+                )
+                pred_norm = self.model(window, target_month, rollout_step=rollout_step)
+                pred_phys = dataset.denormalize(pred_norm)
+                target_phys = self._target_phys(dataset, source_index, target_t)
+
+                clim = climatology[source_index, target_month].detach().cpu()
+                model_raw = compute_nino34(pred_phys[:, 0, 0], lat, lon).detach().cpu()
+                persistence_raw = compute_nino34(persistence_phys[:, 0, 0], lat, lon).detach().cpu()
+                target_raw = compute_nino34(target_phys[:, 0, 0], lat, lon).detach().cpu()
+                model_nino[step].append(model_raw - clim)
+                persistence_nino[step].append(persistence_raw - clim)
+                target_nino[step].append(target_raw - clim)
+
+                next_frame = self._mask_next_frame(pred_norm, batch["valid_mask"].to(self.device))
+                window = torch.cat([window[:, 1:], next_frame], dim=1)
+
+        return (
+            {lead: torch.cat(values) for lead, values in model_nino.items()},
+            {lead: torch.cat(values) for lead, values in persistence_nino.items()},
+            {lead: torch.cat(values) for lead, values in target_nino.items()},
+        )
+
+    def _rollout_skill_metrics(
+        self,
+        model: dict[int, torch.Tensor],
+        persistence: dict[int, torch.Tensor],
+        target: dict[int, torch.Tensor],
+        leads: list[int],
+        mode: str,
+    ) -> dict[int, dict[str, float]]:
+        """计算 monthly 或 3-month mean 的 Niño3.4 anomaly skill。"""
+        rows: dict[int, dict[str, float]] = {}
+        for lead in leads:
+            if mode == "monthly":
+                model_values = model[lead]
+                persistence_values = persistence[lead]
+                target_values = target[lead]
+            elif mode == "three_month_mean":
+                if lead < 3:
+                    continue
+                model_values = (model[lead - 2] + model[lead - 1] + model[lead]) / 3.0
+                persistence_values = (persistence[lead - 2] + persistence[lead - 1] + persistence[lead]) / 3.0
+                target_values = (target[lead - 2] + target[lead - 1] + target[lead]) / 3.0
+            else:
+                raise ValueError("training.rollout_selection.mode must be 'monthly' or 'three_month_mean'")
+
+            rows[lead] = {
+                "corr": _tensor_corr(model_values, target_values),
+                "rmse": _tensor_rmse(model_values, target_values),
+                "persistence_corr": _tensor_corr(persistence_values, target_values),
+                "persistence_rmse": _tensor_rmse(persistence_values, target_values),
+            }
+        return rows
+
+    @staticmethod
+    def _compute_source_nino34_climatology(dataset: Any) -> torch.Tensor:
+        """用训练年份为每个 source 计算 Niño3.4 月气候态。"""
+        train_start, train_end = dataset.data_config["train_years"]
+        climatology = np.zeros((len(dataset.source_payloads), 13), dtype=np.float32)
+        for source_idx, payload in enumerate(dataset.source_payloads):
+            years = payload["years"]
+            months = payload["months"]
+            train_mask = (years >= int(train_start)) & (years <= int(train_end))
+            tos = np.asarray(payload["data"][:, 0])
+            nino = _compute_nino34_numpy(tos, np.asarray(payload["lat"]), np.asarray(payload["lon"]))
+            for month in range(1, 13):
+                month_mask = train_mask & (months == month)
+                climatology[source_idx, month] = float(np.nanmean(nino[month_mask]))
+        return torch.from_numpy(climatology)
+
+    @staticmethod
+    def _target_months(dataset: Any, source_indices: torch.Tensor, target_indices: torch.Tensor) -> torch.Tensor:
+        """按 source/target_t 读取目标月份。"""
+        source_np = source_indices.detach().cpu().numpy()
+        target_np = target_indices.detach().cpu().numpy()
+        months = [
+            int(dataset.source_payloads[int(source_idx)]["months"][int(target_t)])
+            for source_idx, target_t in zip(source_np, target_np)
+        ]
+        return torch.as_tensor(months, dtype=torch.long, device=target_indices.device)
+
+    def _target_phys(self, dataset: Any, source_indices: torch.Tensor, target_indices: torch.Tensor) -> torch.Tensor:
+        """读取未来目标场的物理量版本。"""
+        source_np = source_indices.detach().cpu().numpy()
+        target_np = target_indices.detach().cpu().numpy()
+        raw = np.stack(
+            [
+                np.asarray(dataset.source_payloads[int(source_idx)]["data"][int(target_t)], dtype=np.float32)
+                for source_idx, target_t in zip(source_np, target_np)
+            ],
+            axis=0,
+        )
+        return torch.from_numpy(raw).float().to(self.device)[:, None]
 
     def _model_for_state(self) -> torch.nn.Module:
         """返回真正持有参数的模型；DDP 包装时需要取 .module。"""
