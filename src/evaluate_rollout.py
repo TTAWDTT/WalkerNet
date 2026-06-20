@@ -21,7 +21,7 @@ from torch.utils.data import DataLoader, Subset
 from .dataset import WalkerDataset
 from .evaluate import (
     _build_comparison,
-    _compute_nino34_climatology,
+    _compute_nino34_numpy,
     _empty_stats,
     _finalize_stats,
     _maybe_plot_nino,
@@ -59,25 +59,69 @@ def _parse_leads(value: str, max_lead: int) -> list[int]:
 
 def _valid_subset_positions(dataset: WalkerDataset, max_lead: int) -> list[int]:
     """只保留可以完整 rollout 到 max_lead 的 test 样本。"""
-    last_available_t = len(dataset.years) - 1
     positions: list[int] = []
-    for pos, target_t in enumerate(dataset.sample_indices):
+    for pos, sample_index in enumerate(dataset.sample_indices):
+        if np.ndim(sample_index) == 0:
+            source_idx = 0
+            target_t = int(sample_index)
+        else:
+            source_idx = int(sample_index[0])
+            target_t = int(sample_index[1])
+        last_available_t = len(dataset.source_payloads[source_idx]["years"]) - 1
         if int(target_t) + max_lead - 1 <= last_available_t:
             positions.append(pos)
     return positions
 
 
+def _target_months(dataset: WalkerDataset, source_indices: torch.Tensor, target_indices: torch.Tensor) -> torch.Tensor:
+    """按 source 读取每个样本 target_t 对应的月份。"""
+    source_np = source_indices.detach().cpu().numpy()
+    target_np = target_indices.detach().cpu().numpy()
+    months = [
+        int(dataset.source_payloads[int(source_idx)]["months"][int(target_t)])
+        for source_idx, target_t in zip(source_np, target_np)
+    ]
+    return torch.as_tensor(months, dtype=torch.long, device=target_indices.device)
+
+
 def _target_tensors(
     dataset: WalkerDataset,
+    source_indices: torch.Tensor,
     target_indices: torch.Tensor,
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """读取未来目标场，返回 normalized 和 physical 两个版本。"""
-    raw = np.array(dataset.data[target_indices.detach().cpu().numpy()], copy=True)
+    source_np = source_indices.detach().cpu().numpy()
+    target_np = target_indices.detach().cpu().numpy()
+    raw = np.stack(
+        [
+            np.asarray(dataset.source_payloads[int(source_idx)]["data"][int(target_t)], dtype=np.float32)
+            for source_idx, target_t in zip(source_np, target_np)
+        ],
+        axis=0,
+    )
     target_phys = torch.from_numpy(raw).float().to(device)[:, None]
     target_norm = dataset._normalize_tensor(target_phys)  # noqa: SLF001 - 评测内部复用 Dataset 归一化
     target_norm = torch.nan_to_num(target_norm, nan=0.0, posinf=0.0, neginf=0.0)
     return target_norm, target_phys
+
+
+def _compute_source_nino34_climatology(dataset: WalkerDataset) -> torch.Tensor:
+    """为每个 source 分别计算训练年份 Niño3.4 月气候态，shape=(S, 13)。"""
+    data_config = dataset.data_config
+    train_start, train_end = data_config["train_years"]
+    climatology = np.zeros((len(dataset.source_payloads), 13), dtype=np.float32)
+
+    for source_idx, payload in enumerate(dataset.source_payloads):
+        years = payload["years"]
+        months = payload["months"]
+        train_mask = (years >= int(train_start)) & (years <= int(train_end))
+        tos = np.asarray(payload["data"][:, 0])
+        nino = _compute_nino34_numpy(tos, np.asarray(payload["lat"]), np.asarray(payload["lon"]))
+        for month in range(1, 13):
+            month_mask = train_mask & (months == month)
+            climatology[source_idx, month] = float(np.nanmean(nino[month_mask]))
+    return torch.from_numpy(climatology)
 
 
 def _init_lead_stats(leads: list[int]) -> dict[int, dict[str, dict[str, torch.Tensor]]]:
@@ -229,18 +273,22 @@ def evaluate_rollout(
 
     lat = torch.as_tensor(dataset.lat, dtype=torch.float32, device=device)
     lon = torch.as_tensor(dataset.lon, dtype=torch.float32, device=device)
-    climatology = _compute_nino34_climatology(dataset).to(device=device, dtype=torch.float32)
+    climatology = _compute_source_nino34_climatology(dataset).to(device=device, dtype=torch.float32)
 
     for batch_idx, batch in enumerate(loader, start=1):
         window = batch["x"].to(device)
         persistence_norm = window[:, -1:].contiguous()
         persistence_phys = dataset.denormalize(persistence_norm)
         valid_mask = batch["valid_mask"].to(device)
+        source_index = batch.get("source_index")
+        if source_index is None:
+            source_index = torch.zeros(window.shape[0], dtype=torch.long)
+        source_index = source_index.to(device=device, dtype=torch.long)
         base_target_t = batch["time_index"].to(device=device, dtype=torch.long)
 
         for step in range(1, max_lead + 1):
             target_t = base_target_t + step - 1
-            target_month = torch.as_tensor(dataset.months[target_t.detach().cpu().numpy()], device=device, dtype=torch.long)
+            target_month = _target_months(dataset, source_index, target_t)
             # 训练时 rollout_step 从 0 开始计数；超过训练步数的远期评测复用最后一个已训练 step。
             rollout_step = torch.full(
                 (window.shape[0],),
@@ -250,7 +298,7 @@ def evaluate_rollout(
             )
             pred_norm = model(window, target_month, rollout_step=rollout_step)
             pred_phys = dataset.denormalize(pred_norm)
-            target_norm, target_phys = _target_tensors(dataset, target_t, device)
+            target_norm, target_phys = _target_tensors(dataset, source_index, target_t, device)
 
             if step in lead_stats:
                 _update_stats(lead_stats[step]["model_norm"], pred_norm, target_norm, valid_mask[:, None])
@@ -268,7 +316,7 @@ def evaluate_rollout(
                     valid_mask[:, None],
                 )
 
-            clim = climatology[target_month].detach().cpu()
+            clim = climatology[source_index, target_month].detach().cpu()
             model_raw = compute_nino34(pred_phys[:, 0, 0], lat, lon).detach().cpu()
             persistence_raw = compute_nino34(persistence_phys[:, 0, 0], lat, lon).detach().cpu()
             target_raw = compute_nino34(target_phys[:, 0, 0], lat, lon).detach().cpu()
