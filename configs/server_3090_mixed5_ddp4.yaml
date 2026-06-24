@@ -51,17 +51,20 @@ training:
   amp: true
   grad_accum_steps: 4
   grad_clip: 1.0
-  rollout_steps: 12
+  rollout_steps: 18
   detach_rollout: true
-  lead_weights: [1.0, 1.0, 1.0, 0.9, 0.9, 0.8, 0.8, 0.8, 0.7, 0.7, 0.6, 0.6]
-  loss: "area_weighted_field_residual_gradient_nino_delta"
+  lead_weights: [1.0, 1.0, 1.0, 0.95, 0.95, 0.9, 0.9, 0.9, 0.85, 0.85, 0.8, 0.8, 0.75, 0.75, 0.7, 0.7, 0.65, 0.65]
+  loss: "area_weighted_field_residual_gradient_tropical_pacific_nino"
   loss_weights:
     area_weighted: true
     field: 1.0
     residual: 0.2
     gradient: 0.05
+    tropical_pacific: 0.25
     nino34: 0.4
     nino34_delta: 0.2
+    nino34_pattern_corr: 0.05
+    nino34_pattern_variance: 0.05
   rollout_selection:
     enabled: true
     split: "val"
@@ -71,7 +74,8 @@ training:
     mode: "three_month_mean"
     max_samples_per_source: 24
     batch_size: 2
-    score: "mean_acc"
+    score: "weighted_mean_acc"
+    score_weights: [0.15, 0.2, 0.3, 0.35]
   early_stopping:
     enabled: true
     monitor: "rollout_skill"
@@ -81,5 +85,5 @@ training:
 
 logging:
   log_interval: 50
-  save_dir: "/mnt/sda/WalkerNet/checkpoints_mixed5_ddp4"
+  save_dir: "/mnt/sda/WalkerNet/checkpoints_mixed5_enso18_ddp4"
   use_tensorboard: true

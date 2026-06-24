@@ -167,6 +167,30 @@ def nino34_pattern_variance_loss(pred: torch.Tensor, target: torch.Tensor, valid
     return ((pred_var - target_var) / target_var).square().mean()
 
 
+def tropical_pacific_mse_loss(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    valid_mask: torch.Tensor,
+    area_weighted: bool = False,
+) -> torch.Tensor:
+    """热带太平洋四变量区域 loss。
+
+    ENSO 不是只看一个指数；它依赖热带太平洋的海温、海面高度和风应力耦合。
+    这里仍然计算四变量场误差，只是把热带太平洋这块“重点黑板”单独加权。
+    """
+    pred_region, target_region, mask_region = _region_tensors(
+        pred,
+        target,
+        valid_mask,
+        lat_bounds=(-20.0, 20.0),
+        lon_bounds=(120.0, 290.0),
+        variable_idx=None,
+    )
+    if pred_region.numel() == 0:
+        return pred.new_zeros(())
+    return _masked_mse_5d(pred_region, target_region, mask_region, area_weighted=area_weighted)
+
+
 def forecast_loss(
     pred: torch.Tensor,
     target: torch.Tensor,
@@ -180,6 +204,7 @@ def forecast_loss(
     field_weight = float(weights.get("field", 1.0))
     residual_weight = float(weights.get("residual", 0.0))
     gradient_weight = float(weights.get("gradient", 0.0))
+    tropical_pacific_weight = float(weights.get("tropical_pacific", 0.0))
     nino_weight = float(weights.get("nino34", 0.0))
     nino_delta_weight = float(weights.get("nino34_delta", 0.0))
     nino_corr_weight = float(weights.get("nino34_pattern_corr", 0.0))
@@ -199,6 +224,13 @@ def forecast_loss(
         )
     if gradient_weight:
         loss = loss + gradient_weight * masked_gradient_mse_loss(pred, target, valid_mask, area_weighted=area_weighted)
+    if tropical_pacific_weight:
+        loss = loss + tropical_pacific_weight * tropical_pacific_mse_loss(
+            pred,
+            target,
+            valid_mask,
+            area_weighted=area_weighted,
+        )
     if nino_weight:
         loss = loss + nino_weight * nino34_region_mse_loss(pred, target, valid_mask)
     if nino_delta_weight:
@@ -312,6 +344,38 @@ def _nino34_region_tensors(
     view_shape = [1] * pred_region.ndim
     view_shape[-2] = weights.numel()
     return pred_region, target_region, mask_region, weights.view(*view_shape)
+
+
+def _region_tensors(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    valid_mask: torch.Tensor,
+    lat_bounds: tuple[float, float],
+    lon_bounds: tuple[float, float],
+    variable_idx: int | None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """按经纬度裁剪区域；variable_idx=None 表示保留全部变量。"""
+    H, W = pred.shape[-2:]
+    lat = torch.linspace(-89.5, 89.5, H, device=pred.device, dtype=pred.dtype)
+    lon = torch.linspace(0.5, 359.5, W, device=pred.device, dtype=pred.dtype)
+    lat_mask = (lat >= lat_bounds[0]) & (lat <= lat_bounds[1])
+    lon_mask = (lon >= lon_bounds[0]) & (lon <= lon_bounds[1])
+    if not bool(lat_mask.any()) or not bool(lon_mask.any()):
+        empty = pred.new_empty((0,))
+        return empty, empty, empty.to(dtype=torch.bool)
+
+    if variable_idx is None:
+        pred_region = pred[..., lat_mask, :][..., lon_mask]
+        target_region = target[..., lat_mask, :][..., lon_mask]
+        mask_region = valid_mask[:, None][..., lat_mask, :][..., lon_mask].to(device=pred.device)
+        return pred_region, target_region, mask_region
+
+    pred_region = pred[:, :, variable_idx : variable_idx + 1][..., lat_mask, :][..., lon_mask]
+    target_region = target[:, :, variable_idx : variable_idx + 1][..., lat_mask, :][..., lon_mask]
+    mask_region = valid_mask[:, None, variable_idx : variable_idx + 1][..., lat_mask, :][..., lon_mask].to(
+        device=pred.device
+    )
+    return pred_region, target_region, mask_region
 
 
 def _scale_residual_delta(delta: torch.Tensor, weights: dict[str, Any]) -> torch.Tensor:
@@ -734,11 +798,19 @@ class Trainer:
         acc_values = [metrics[lead]["corr"] for lead in leads if lead in metrics]
         if not acc_values:
             raise ValueError(f"No rollout skill metrics were computed for leads={leads}, mode={mode}")
-        if score_name != "mean_acc":
-            raise ValueError("training.rollout_selection.score currently supports only 'mean_acc'")
+        if score_name == "mean_acc":
+            score = float(sum(acc_values) / len(acc_values))
+        elif score_name == "weighted_mean_acc":
+            score = self._weighted_rollout_score(metrics, leads)
+        elif score_name == "lead18_acc":
+            score = float(metrics[18]["corr"])
+        else:
+            raise ValueError(
+                "training.rollout_selection.score must be 'mean_acc', 'weighted_mean_acc', or 'lead18_acc'"
+            )
 
         result: dict[str, Any] = {
-            "score": float(sum(acc_values) / len(acc_values)),
+            "score": score,
             "mode": mode,
             "score_name": score_name,
             "leads": leads,
@@ -752,6 +824,25 @@ class Trainer:
             result[f"persistence_acc@{lead}"] = float(row["persistence_corr"])
             result[f"persistence_rmse@{lead}"] = float(row["persistence_rmse"])
         return result
+
+    def _weighted_rollout_score(self, metrics: dict[int, dict[str, float]], leads: list[int]) -> float:
+        """按配置给长 lead 更高权重，避免短 lead 掩盖 18 个月表现。"""
+        raw_weights = self.rollout_selection_config.get("score_weights")
+        if raw_weights is None:
+            raw_weights = [1.0] * len(leads)
+
+        if isinstance(raw_weights, dict):
+            weights = [float(raw_weights.get(str(lead), raw_weights.get(lead, 0.0))) for lead in leads]
+        else:
+            weights = [float(value) for value in raw_weights]
+            if len(weights) != len(leads):
+                raise ValueError("training.rollout_selection.score_weights length must match leads")
+
+        weight_tensor = torch.tensor(weights, dtype=torch.float64)
+        if float(weight_tensor.sum().item()) <= 0.0:
+            raise ValueError("training.rollout_selection.score_weights must sum to a positive value")
+        acc_tensor = torch.tensor([float(metrics[lead]["corr"]) for lead in leads], dtype=torch.float64)
+        return float((acc_tensor * (weight_tensor / weight_tensor.sum())).sum().item())
 
     def _collect_rollout_nino_series(
         self,
