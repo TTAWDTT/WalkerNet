@@ -74,8 +74,7 @@ training:
     mode: "three_month_mean"
     max_samples_per_source: 24
     batch_size: 2
-    score: "weighted_mean_acc"
-    score_weights: [0.15, 0.2, 0.3, 0.35]
+    score: "mean_acc"
   early_stopping:
     enabled: true
     monitor: "rollout_skill"
