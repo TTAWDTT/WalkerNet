@@ -798,19 +798,11 @@ class Trainer:
         acc_values = [metrics[lead]["corr"] for lead in leads if lead in metrics]
         if not acc_values:
             raise ValueError(f"No rollout skill metrics were computed for leads={leads}, mode={mode}")
-        if score_name == "mean_acc":
-            score = float(sum(acc_values) / len(acc_values))
-        elif score_name == "weighted_mean_acc":
-            score = self._weighted_rollout_score(metrics, leads)
-        elif score_name == "lead18_acc":
-            score = float(metrics[18]["corr"])
-        else:
-            raise ValueError(
-                "training.rollout_selection.score must be 'mean_acc', 'weighted_mean_acc', or 'lead18_acc'"
-            )
+        if score_name != "mean_acc":
+            raise ValueError("training.rollout_selection.score currently supports only 'mean_acc'")
 
         result: dict[str, Any] = {
-            "score": score,
+            "score": float(sum(acc_values) / len(acc_values)),
             "mode": mode,
             "score_name": score_name,
             "leads": leads,
@@ -824,25 +816,6 @@ class Trainer:
             result[f"persistence_acc@{lead}"] = float(row["persistence_corr"])
             result[f"persistence_rmse@{lead}"] = float(row["persistence_rmse"])
         return result
-
-    def _weighted_rollout_score(self, metrics: dict[int, dict[str, float]], leads: list[int]) -> float:
-        """按配置给长 lead 更高权重，避免短 lead 掩盖 18 个月表现。"""
-        raw_weights = self.rollout_selection_config.get("score_weights")
-        if raw_weights is None:
-            raw_weights = [1.0] * len(leads)
-
-        if isinstance(raw_weights, dict):
-            weights = [float(raw_weights.get(str(lead), raw_weights.get(lead, 0.0))) for lead in leads]
-        else:
-            weights = [float(value) for value in raw_weights]
-            if len(weights) != len(leads):
-                raise ValueError("training.rollout_selection.score_weights length must match leads")
-
-        weight_tensor = torch.tensor(weights, dtype=torch.float64)
-        if float(weight_tensor.sum().item()) <= 0.0:
-            raise ValueError("training.rollout_selection.score_weights must sum to a positive value")
-        acc_tensor = torch.tensor([float(metrics[lead]["corr"]) for lead in leads], dtype=torch.float64)
-        return float((acc_tensor * (weight_tensor / weight_tensor.sum())).sum().item())
 
     def _collect_rollout_nino_series(
         self,
