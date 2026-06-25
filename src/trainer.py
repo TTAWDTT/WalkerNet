@@ -426,6 +426,8 @@ class Trainer:
         self.grad_clip = self.training_config.get("grad_clip")
         self.amp_enabled = bool(self.training_config.get("amp", False)) and self.device.type == "cuda"
         self.rollout_steps = max(1, int(self.training_config.get("rollout_steps", 1)))
+        self.active_rollout_steps = self.rollout_steps
+        self.rollout_curriculum = list(self.training_config.get("rollout_curriculum", []))
         self.detach_rollout = bool(self.training_config.get("detach_rollout", True))
         self.lead_weights = self._build_lead_weights()
         self.loss_weights = dict(self.training_config.get("loss_weights", {"field": 1.0}))
@@ -467,6 +469,7 @@ class Trainer:
     def train_epoch(self, epoch: int) -> dict[str, float]:
         """训练一个 epoch。"""
         self.model.train()
+        self.active_rollout_steps = self._rollout_steps_for_epoch(epoch)
         total_loss = 0.0
         num_batches = 0
         optimizer_steps = 0
@@ -506,7 +509,8 @@ class Trainer:
                 avg = total_loss / max(num_batches, 1)
                 print(
                     f"epoch={epoch} step={step}/{len(self.train_loader)} "
-                    f"optimizer_steps={optimizer_steps} train_loss={avg:.6f}"
+                    f"optimizer_steps={optimizer_steps} rollout_steps={self.active_rollout_steps} "
+                    f"train_loss={avg:.6f}"
                 )
 
         total_loss, num_batches = self._reduce_loss_stats(total_loss, num_batches)
@@ -787,7 +791,7 @@ class Trainer:
         leads = [int(x) for x in self.rollout_selection_config.get("leads", [6, 9, 12, 18])]
         mode = str(self.rollout_selection_config.get("mode", "three_month_mean"))
         score_name = str(self.rollout_selection_config.get("score", "mean_acc"))
-        trained_rollout_steps = max(1, int(self.training_config.get("rollout_steps", 1)))
+        trained_rollout_steps = max(1, int(getattr(self, "active_rollout_steps", self.rollout_steps)))
 
         model_series, persistence_series, target_series = self._collect_rollout_nino_series(
             dataset,
@@ -981,7 +985,7 @@ class Trainer:
             raise ValueError(f"targets must be (B, K, 4, H, W), got {targets.shape}")
 
         available_steps = targets.shape[1]
-        steps = min(self.rollout_steps, available_steps)
+        steps = min(self.active_rollout_steps, available_steps)
         target_months = batch.get("target_months")
         total = window.new_zeros(())
         lead_weights = self.lead_weights[:steps].to(device=window.device, dtype=window.dtype)
@@ -1037,7 +1041,7 @@ class Trainer:
             raise ValueError(f"targets must be (B, K, 4, H, W), got {targets.shape}")
 
         available_steps = targets.shape[1]
-        steps = min(self.rollout_steps, available_steps)
+        steps = min(self.active_rollout_steps, available_steps)
         target_months = batch.get("target_months")
         lead_weights = self.lead_weights[:steps].to(device=window.device, dtype=window.dtype)
         total_for_logging = window.new_zeros(())
@@ -1097,6 +1101,23 @@ class Trainer:
             values = torch.cat([values, pad])
         values = values[: self.rollout_steps]
         return values / values.sum().clamp_min(torch.finfo(values.dtype).eps)
+
+    def _rollout_steps_for_epoch(self, epoch: int) -> int:
+        """按课程表决定当前 epoch 实际训练几步 rollout。
+
+        配置示例：
+            rollout_curriculum:
+              - until_epoch: 21
+                steps: 12
+              - until_epoch: 25
+                steps: 15
+              - steps: 18
+        """
+        for item in self.rollout_curriculum:
+            until_epoch = item.get("until_epoch")
+            if until_epoch is None or epoch <= int(until_epoch):
+                return max(1, min(self.rollout_steps, int(item["steps"])))
+        return self.rollout_steps
 
     @staticmethod
     def _advance_month(target_month: torch.Tensor, step_idx: int) -> torch.Tensor:
