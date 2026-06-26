@@ -167,6 +167,25 @@ def nino34_pattern_variance_loss(pred: torch.Tensor, target: torch.Tensor, valid
     return ((pred_var - target_var) / target_var).square().mean()
 
 
+def nino34_structure_loss(pred: torch.Tensor, target: torch.Tensor, valid_mask: torch.Tensor) -> torch.Tensor:
+    """约束 Niño3.4 区域内部冷暖结构，而不是只约束区域平均值。
+
+    做法：先分别减去预测/目标在 Niño3.4 区域的加权平均，再对去均值后的
+    tos 空间分布计算 masked MSE。这样保留 ``nino34`` 指数约束的同时，
+    也要求区域内部的冷暖形态不要塌成一片。
+    """
+    pred_region, target_region, mask_region, weights = _nino34_region_tensors(pred, target, valid_mask)
+    if pred_region.numel() == 0:
+        return pred.new_zeros(())
+
+    pred_anom = pred_region - _weighted_region_mean(pred_region, mask_region, weights)[..., None, None]
+    target_anom = target_region - _weighted_region_mean(target_region, mask_region, weights)[..., None, None]
+    mask_f = mask_region.to(device=pred.device, dtype=pred.dtype)
+    weighted_mask = mask_f * weights
+    denom = weighted_mask.sum().clamp_min(torch.finfo(pred.dtype).eps)
+    return ((pred_anom - target_anom).square() * weighted_mask).sum() / denom
+
+
 def tropical_pacific_mse_loss(
     pred: torch.Tensor,
     target: torch.Tensor,
@@ -209,6 +228,7 @@ def forecast_loss(
     nino_delta_weight = float(weights.get("nino34_delta", 0.0))
     nino_corr_weight = float(weights.get("nino34_pattern_corr", 0.0))
     nino_var_weight = float(weights.get("nino34_pattern_variance", 0.0))
+    nino_structure_weight = float(weights.get("nino34_structure", 0.0))
     area_weighted = bool(weights.get("area_weighted", False))
 
     if field_weight:
@@ -239,6 +259,8 @@ def forecast_loss(
         loss = loss + nino_corr_weight * nino34_pattern_corr_loss(pred, target, valid_mask)
     if nino_var_weight:
         loss = loss + nino_var_weight * nino34_pattern_variance_loss(pred, target, valid_mask)
+    if nino_structure_weight:
+        loss = loss + nino_structure_weight * nino34_structure_loss(pred, target, valid_mask)
     return loss
 
 
