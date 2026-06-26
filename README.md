@@ -5,54 +5,50 @@
 <h1 align="center">WalkerNet</h1>
 
 <p align="center">
-  全球海气物理场预测 · ENSO 技巧评估 · PyTorch 研究代码库
+  面向全球海气物理场的自回归预测模型，用预测场评估 ENSO 技巧。
 </p>
 
 <p align="center">
   <img alt="Task" src="https://img.shields.io/badge/task-global%20field%20forecasting-006D77">
-  <img alt="Target" src="https://img.shields.io/badge/eval-Ni%C3%B1o3.4%20%2F%20ENSO-14213D">
+  <img alt="Eval" src="https://img.shields.io/badge/eval-Ni%C3%B1o3.4%20ACC-14213D">
   <img alt="Grid" src="https://img.shields.io/badge/grid-1%C2%B0%20%7C%20180%C3%97360-2EC4B6">
-  <img alt="Data" src="https://img.shields.io/badge/data-CESM2%20remapped-FFB703">
-  <img alt="Model" src="https://img.shields.io/badge/model-interface%20ready-lightgrey">
+  <img alt="Data" src="https://img.shields.io/badge/data-CESM2%20%2B%20CMIP6%20mixed-FFB703">
+  <img alt="Framework" src="https://img.shields.io/badge/framework-PyTorch-EE4C2C">
 </p>
 
 ---
 
 ## 项目目标
 
-WalkerNet 用历史全球物理场预测下一月全球场，并从预测的 `tos` 中计算 Niño3.4 指数，用于 ENSO 相关评估。
-
-当前任务是单步预测：
+WalkerNet 的目标是：
 
 ```text
-输入 x: B x L x 4 x 180 x 360
-输出 y: B x 1 x 4 x 180 x 360
+用过去 12 个月的全球海气物理场，预测未来 1 个月的全球场；
+再把预测场自回归接回输入窗口，滚动得到 1-18 个月预报；
+最后从预测 tos 场计算 Niño3.4 anomaly ACC / RMSE。
 ```
 
-默认配置使用过去 `12` 个月预测接下来 `1` 个月。
+模型训练坚持 **field-first**：模型不直接输出 ENSO 指数，而是先预报完整物理场，再从场里计算指数。
 
-更长 lead time 通过 autoregressive rollout 实现。
+## 张量约定
 
-## 变量约定
+输入输出固定为：
 
-所有张量的变量维度固定为：
+```text
+x:      (B, 12, 4, 180, 360)
+y_pred: (B,  1, 4, 180, 360)
+```
+
+四个变量顺序固定：
 
 | Channel | Variable | Meaning |
 |---:|---|---|
-| 0 | `tos` | Sea surface temperature |
-| 1 | `zos` | Sea surface height above geoid |
-| 2 | `tauu` | Zonal wind stress |
-| 3 | `tauv` | Meridional wind stress |
+| 0 | `tos` | 海表温度 |
+| 1 | `zos` | 海面高度 |
+| 2 | `tauu` | 纬向风应力 |
+| 3 | `tauv` | 经向风应力 |
 
-对应代码约定见 `src/interfaces.py`：
-
-```python
-VARIABLES = ("tos", "zos", "tauu", "tauv")
-```
-
-## 网格约定
-
-原始数据已经通过 CDO 重网格到 1° 全球规则网格：
+网格统一为 1° 全球规则网格：
 
 ```text
 H = 180
@@ -63,102 +59,139 @@ lon =   0.5 ... 359.5
 
 ## 模型接口
 
-模型侧只需要遵守这个最小接口：
+模型实现需要遵守：
 
 ```python
 y_pred = model(x, target_month, rollout_step=None)
 ```
 
-| Name | Shape | Type | Note |
-|---|---|---|---|
-| `x` | `(B, L, 4, 180, 360)` | `float32` | 归一化后的历史窗口 |
-| `target_month` | `(B,)` | `int64` | 预测目标月份，取值 `1-12` |
-| `rollout_step` | `(B,)` or `None` | `int64` | 自回归步数，单步训练可不传 |
-| `y_pred` | `(B, 1, 4, 180, 360)` | `float32` | 下一月预测结果 |
+| Name | Shape | Note |
+|---|---|---|
+| `x` | `(B, 12, 4, 180, 360)` | 归一化后的历史窗口 |
+| `target_month` | `(B,)` | 目标月份，取值 `1-12` |
+| `rollout_step` | `(B,)` 或 `None` | 第几次自回归滚动 |
+| `y_pred` | `(B, 1, 4, 180, 360)` | 下一月预测场 |
 
-## 架构方向
+## 当前训练策略
 
-模型侧参考 `docs/architecture.md`，当前实现包括：
+当前主线实验使用 5 个 source 混合训练：
 
-1. 显式 time-variable patch embedding
-2. Patch 内 time-variable fusion，用于融合历史月份与变量 token
-3. Spatial attention，用于捕捉全球空间遥相关
-4. TMoE，使用 target month 做月份条件路由
-5. Coupled variable decoder，联合解码 4 个变量
-6. Rollout step embedding，用于自回归多步预测时注入 lead-time 信息
+```text
+CESM2
+EC-Earth3
+GFDL-ESM4
+IPSL-CM6A-LR
+MPI-ESM1-2-HR
+```
 
-## 数据准备
+一个样本内部始终来自同一个 source，不同样本会混合 shuffle。
 
-原始 CESM2 示例数据不直接进入训练，需要先用 CDO 重网格。
+rollout curriculum：
 
-WSL/Linux：
+```text
+epoch <= 22: 12-step rollout
+epoch <= 26: 15-step rollout
+epoch >  26: 18-step rollout
+```
+
+每个 lead 同等重要：
+
+```text
+L_total = mean(L_1, L_2, ..., L_K)
+```
+
+单个 lead 的 loss：
+
+```text
+L_k =
+1.0 * L_field
++ 0.1 * L_tropical_pacific
++ 0.3 * L_nino34
++ 0.1 * L_nino34_structure
+```
+
+含义：
+
+| Loss | 作用 |
+|---|---|
+| `L_field` | 四变量全球场误差，主目标 |
+| `L_tropical_pacific` | 热带太平洋四变量场误差 |
+| `L_nino34` | 从预测 `tos` 计算 Niño3.4 区域平均并约束 |
+| `L_nino34_structure` | 约束 Niño3.4 区域内部冷暖结构 |
+
+## 常用命令
+
+单卡训练：
+
+```bash
+python -m src.train --config configs/server_3090_mixed5.yaml
+```
+
+DDP 训练：
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+python -m torch.distributed.run --nproc_per_node=8 \
+  -m src.train \
+  --config configs/server_3090_mixed5_ddp8.yaml \
+  --num-workers 2
+```
+
+只加载模型权重作为新实验起点：
+
+```bash
+python -m src.train \
+  --config configs/server_3090_mixed5.yaml \
+  --init-checkpoint /path/to/best_skill.pt
+```
+
+完整恢复训练状态：
+
+```bash
+python -m src.train \
+  --config configs/server_3090_mixed5.yaml \
+  --resume /path/to/latest.pt
+```
+
+## 数据处理
+
+原始数据需要先重网格到 1°：
 
 ```bash
 bash scripts/remap_to_1x1.sh
 ```
 
-Windows PowerShell：
-
-```powershell
-wsl -d Ubuntu-24.04 -- bash /mnt/d/Github/WalkerNet/scripts/remap_to_1x1.sh
-```
-
-输出目录：
-
-```text
-data_1x1/
-  tos_1x1.nc
-  zos_1x1.nc
-  tauu_1x1.nc
-  tauv_1x1.nc
-```
-
-检查数据：
+检查重网格结果：
 
 ```bash
 python scripts/check_remapped_data.py --data-dir data_1x1
 ```
 
-> `data_example/` 和 `data_1x1/` 都是大文件目录，不应提交到 GitHub。
+大文件目录不应提交到 GitHub，例如：
+
+```text
+data_1x1/
+cmip6_1x1/
+cache/
+outputs/
+checkpoints*/
+```
 
 ## 代码结构
 
 ```text
-configs/
-  default.yaml
-  grid_1x1_180x360.txt
-
-scripts/
-  remap_to_1x1.sh
-  check_remapped_data.py
-
-src/
-  interfaces.py
-  dataset.py
-  metrics.py
-  trainer.py
-  train.py
-  utils.py
-  model.py
+configs/          训练配置
+docs/             架构与实验记录
+scripts/          数据处理、检查与服务器辅助脚本
+src/dataset.py    数据集与多 source 读取
+src/model.py      WalkerNet 模型
+src/trainer.py    rollout 训练、loss、checkpoint
+src/evaluate*.py  评测脚本
 ```
 
-## 当前进度
+## 当前状态
 
-- [x] 统一变量接口：`tos / zos / tauu / tauv`
-- [x] 使用 CDO 将原始数据重网格到 `180 x 360`
-- [x] 实现 `WalkerDataset`
-- [x] 实现基础 metrics
-- [x] 实现 masked MSE 与 Trainer 骨架
-- [x] 实现训练入口 `src/train.py`
-- [x] 实现 `src/model.py`
-- [x] 跑通 synthetic tensor smoke test
-- [ ] 跑通真实数据最小训练
-- [ ] 加入完整 ENSO 评估实验
-
-## 运行入口
-
-训练入口：
-
-```bash
-python -m src.train --config configs/default.yaml
-```
+- 已支持 5-source 混合训练。
+- 已支持 12 -> 15 -> 18 的 rollout curriculum。
+- 已支持 field-first 的 Niño3.4 anomaly ACC/RMSE 评测。
+- 当前推荐实验从历史 `best_skill.pt` 使用 `--init-checkpoint` 开始，而不是恢复旧 optimizer。
