@@ -119,6 +119,36 @@ L_k =
 | `L_nino34` | 从预测 `tos` 计算 Niño3.4 区域平均并约束 |
 | `L_nino34_structure` | 约束 Niño3.4 区域内部冷暖结构 |
 
+## Rollout Skill 口径
+
+训练中保存 `best_skill.pt` 使用的是验证集上的 `rollout_skill`，它不是 loss，而是 Niño3.4 anomaly ACC 的简化选择指标。
+
+当前配置：
+
+```yaml
+rollout_selection:
+  leads: [6, 9, 12, 18]
+  mode: "three_month_mean"
+  score: "mean_acc"
+```
+
+计算流程：
+
+```text
+1. 从验证样本滚动预测到 18 个月，得到完整预测场。
+2. 从每个月预测 tos 场中计算 Niño3.4 区域平均。
+3. 减去对应 source、对应月份的 Niño3.4 气候态，得到 anomaly。
+4. 对指定 lead 使用三个月滑动平均：
+   lead 6  = mean(lead 4, 5, 6)
+   lead 9  = mean(lead 7, 8, 9)
+   lead 12 = mean(lead 10, 11, 12)
+   lead 18 = mean(lead 16, 17, 18)
+5. 分别计算 acc@6 / acc@9 / acc@12 / acc@18。
+6. rollout_skill = mean(acc@6, acc@9, acc@12, acc@18)。
+```
+
+因此，`rollout_skill` 主要用于训练过程中快速选择 checkpoint；正式报告仍应同时查看每个 lead 的 ACC、RMSE 和空间场评估。
+
 ## 常用命令
 
 单卡训练：
