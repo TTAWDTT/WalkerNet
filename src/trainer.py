@@ -458,6 +458,7 @@ class Trainer:
         self.early_stopping_monitor = str(early_stopping_config.get("monitor", "val_loss"))
         self.early_stopping_patience = max(1, int(early_stopping_config.get("patience", 10)))
         self.early_stopping_min_delta = float(early_stopping_config.get("min_delta", 0.0))
+        self.early_stopping_start_epoch = max(1, int(early_stopping_config.get("start_epoch", 1)))
         self.early_stopping_bad_epochs = 0
         self.rollout_selection_config = dict(self.training_config.get("rollout_selection", {}))
         self.rollout_selection_enabled = bool(self.rollout_selection_config.get("enabled", False))
@@ -636,6 +637,7 @@ class Trainer:
         self,
         val_metrics: dict[str, float],
         rollout_metrics: dict[str, Any],
+        epoch: int,
     ) -> tuple[bool, bool, bool]:
         """更新 best/early stopping 状态，返回 loss best、skill best、是否停止。"""
         loss_improved = False
@@ -673,6 +675,9 @@ class Trainer:
         if not has_metric:
             return loss_improved, skill_improved, False
 
+        if epoch < self.early_stopping_start_epoch:
+            return loss_improved, skill_improved, False
+
         if monitored_improved:
             self.early_stopping_bad_epochs = 0
         else:
@@ -704,7 +709,7 @@ class Trainer:
                     message += f" rollout_skill={rollout_metrics['score']:.4f} {acc_text}"
                 print(message)
 
-            is_best_loss, is_best_skill, should_stop = self._update_early_stopping(val_metrics, rollout_metrics)
+            is_best_loss, is_best_skill, should_stop = self._update_early_stopping(val_metrics, rollout_metrics, epoch)
             latest_path = self.save_dir / "latest.pt"
             all_metrics = {"train": train_metrics, "val": val_metrics, "rollout_selection": rollout_metrics}
             self.save_checkpoint(latest_path, epoch, all_metrics)
@@ -726,7 +731,8 @@ class Trainer:
                     f"bad_epochs={self.early_stopping_bad_epochs}/{self.early_stopping_patience} "
                     f"monitor={self.early_stopping_monitor} "
                     f"{best_text} "
-                    f"min_delta={self.early_stopping_min_delta:.6g}"
+                    f"min_delta={self.early_stopping_min_delta:.6g} "
+                    f"start_epoch={self.early_stopping_start_epoch}"
                 )
 
             if should_stop:
