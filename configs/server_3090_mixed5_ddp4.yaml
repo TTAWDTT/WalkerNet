@@ -67,6 +67,7 @@ training:
     tropical_pacific: 0.1
     nino34: 0.3
     nino34_structure: 0.1
+    nino34_batch_corr: 0.1
   rollout_selection:
     enabled: true
     split: "val"
@@ -87,5 +88,5 @@ training:
 
 logging:
   log_interval: 50
-  save_dir: "/mnt/sda/WalkerNet/checkpoints_mixed5_enso18_simple_loss_slow_ddp4"
+  save_dir: "/mnt/sda/WalkerNet/checkpoints_mixed5_enso18_simple_loss_corr_ddp4"
   use_tensorboard: true

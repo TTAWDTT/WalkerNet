@@ -186,6 +186,40 @@ def nino34_structure_loss(pred: torch.Tensor, target: torch.Tensor, valid_mask: 
     return ((pred_anom - target_anom).square() * weighted_mask).sum() / denom
 
 
+def nino34_batch_corr_loss(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    valid_mask: torch.Tensor,
+    distributed: bool = False,
+    rank: int = 0,
+    world_size: int = 1,
+) -> torch.Tensor:
+    """约束 batch 内 Niño3.4 时间序列相关，作为 ACC 的可训练近似。
+
+    正式评测使用 Niño3.4 anomaly ACC；训练时每卡 batch 可能只有 1，
+    所以 DDP 下先跨 rank 聚合 Niño3.4 标量，再计算相关损失。聚合时
+    其它 rank 的值作为常量，本 rank 的值保留梯度，DDP 会再汇总梯度。
+    """
+    pred_index = _nino34_index(pred, valid_mask)
+    target_index = _nino34_index(target, valid_mask)
+    if pred_index.numel() == 0:
+        return pred.new_zeros(())
+
+    pred_values = _gather_1d_with_local_grad(pred_index, distributed, rank, world_size)
+    target_values = _gather_1d_with_local_grad(target_index, distributed, rank, world_size)
+    if pred_values.numel() < 2:
+        return pred.new_zeros(())
+
+    pred_anom = pred_values - pred_values.mean()
+    target_anom = target_values - target_values.mean()
+    numerator = (pred_anom * target_anom).sum()
+    denom = torch.sqrt(pred_anom.square().sum() * target_anom.square().sum()).clamp_min(
+        torch.finfo(pred.dtype).eps
+    )
+    corr = numerator / denom
+    return 1.0 - corr
+
+
 def tropical_pacific_mse_loss(
     pred: torch.Tensor,
     target: torch.Tensor,
@@ -216,6 +250,9 @@ def forecast_loss(
     x_last: torch.Tensor,
     valid_mask: torch.Tensor,
     weights: dict[str, float],
+    distributed: bool = False,
+    rank: int = 0,
+    world_size: int = 1,
 ) -> torch.Tensor:
     """组合单个 lead 的 field/residual/gradient/Niño 区域 loss。"""
     loss = pred.new_zeros(())
@@ -229,6 +266,7 @@ def forecast_loss(
     nino_corr_weight = float(weights.get("nino34_pattern_corr", 0.0))
     nino_var_weight = float(weights.get("nino34_pattern_variance", 0.0))
     nino_structure_weight = float(weights.get("nino34_structure", 0.0))
+    nino_batch_corr_weight = float(weights.get("nino34_batch_corr", 0.0))
     area_weighted = bool(weights.get("area_weighted", False))
 
     if field_weight:
@@ -261,6 +299,15 @@ def forecast_loss(
         loss = loss + nino_var_weight * nino34_pattern_variance_loss(pred, target, valid_mask)
     if nino_structure_weight:
         loss = loss + nino_structure_weight * nino34_structure_loss(pred, target, valid_mask)
+    if nino_batch_corr_weight:
+        loss = loss + nino_batch_corr_weight * nino34_batch_corr_loss(
+            pred,
+            target,
+            valid_mask,
+            distributed=distributed,
+            rank=rank,
+            world_size=world_size,
+        )
     return loss
 
 
@@ -318,6 +365,23 @@ def _weighted_region_mean(values: torch.Tensor, mask: torch.Tensor, lat_weights:
     weighted = values * mask_f * lat_weights
     denom = (mask_f * lat_weights).sum(dim=(-2, -1)).clamp_min(torch.finfo(values.dtype).eps)
     return weighted.sum(dim=(-2, -1)) / denom
+
+
+def _gather_1d_with_local_grad(
+    values: torch.Tensor,
+    distributed: bool,
+    rank: int,
+    world_size: int,
+) -> torch.Tensor:
+    """跨 rank 聚合一维张量，同时保留本 rank 片段的梯度。"""
+    values = values.reshape(-1)
+    if not distributed or world_size <= 1:
+        return values
+
+    gathered = [torch.zeros_like(values) for _ in range(world_size)]
+    dist.all_gather(gathered, values.detach())
+    gathered[rank] = values
+    return torch.cat(gathered, dim=0)
 
 
 def _nino34_index(field: torch.Tensor, valid_mask: torch.Tensor) -> torch.Tensor:
@@ -1039,6 +1103,9 @@ class Trainer:
                 x_last,
                 valid_mask,
                 self.loss_weights,
+                distributed=self.is_distributed,
+                rank=self.rank,
+                world_size=self.world_size,
             )
 
             if step_idx + 1 < steps:
@@ -1096,6 +1163,9 @@ class Trainer:
                     x_last,
                     valid_mask,
                     self.loss_weights,
+                    distributed=self.is_distributed,
+                    rank=self.rank,
+                    world_size=self.world_size,
                 )
                 scaled_loss = lead_loss / self.grad_accum_steps
 
