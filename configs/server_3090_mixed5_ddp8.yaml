@@ -46,16 +46,16 @@ model:
 training:
   epochs: 100
   batch_size: 1
-  lr: 1.0e-4
+  lr: 3.0e-5
   weight_decay: 1.0e-2
   amp: true
   grad_accum_steps: 2
   grad_clip: 1.0
   rollout_steps: 18
   rollout_curriculum:
-    - until_epoch: 22
+    - until_epoch: 3
       steps: 12
-    - until_epoch: 26
+    - until_epoch: 7
       steps: 15
     - steps: 18
   detach_rollout: true
@@ -80,11 +80,12 @@ training:
   early_stopping:
     enabled: true
     monitor: "rollout_skill"
-    patience: 6
-    min_delta: 0.005
+    patience: 8
+    min_delta: 0.003
+    start_epoch: 8
   seed: 42
 
 logging:
   log_interval: 50
-  save_dir: "/mnt/sda/WalkerNet/checkpoints_mixed5_enso18_simple_loss_ddp8"
+  save_dir: "/mnt/sda/WalkerNet/checkpoints_mixed5_enso18_simple_loss_slow_ddp8"
   use_tensorboard: true
