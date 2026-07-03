@@ -3,7 +3,7 @@ status: active
 question: >
   Can CNOP-like optimized perturbations on the last input month of TOS/ZOS
   induce ENSO-like Niño3.4 growth in an already trained WalkerNet rollout model?
-current_phase: bootstrap_and_implementation
+current_phase: results_synthesis
 created_at: 2026-07-03
 latest_update: 2026-07-03
 hypotheses:
@@ -17,5 +17,8 @@ hypotheses:
 experiments:
   - id: E1
     hypothesis: H1
-    status: planned
+    status: complete
     description: Select ten neutral Jan-Dec cases, solve bounded TOS/ZOS CNOP, and plot perturbation/outcome maps.
+    result: >
+      Completed patch-grid CNOP experiment on 10 neutral cases. All cases showed
+      positive Nino3.4 growth; CNOP max 3-month Nino3.4 ranged from 0.863 to 1.879.

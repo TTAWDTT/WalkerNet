@@ -13,3 +13,11 @@
   - Use a 12-month autoregressive rollout as the nonlinear forecast operator.
   - Objective: maximize the 12-month target year's Niño3.4 three-month mean anomaly.
   - Constraint: projected gradient optimization under variable-wise normalized RMS bounds.
+- Implemented `scripts/compute_tos_zos_cnop.py`.
+- Smoke test with full-grid perturbations succeeded numerically but produced high-frequency/checkerboard perturbation structures.
+- Revised the main method to optimize perturbations on a patch grid and upsample to the full grid.
+- Main patch-grid experiment completed on 10 neutral cases:
+  - observed neutral score range: 0.126-0.252;
+  - baseline max 3-month Niño3.4 range: -0.606 to 0.430;
+  - CNOP max 3-month Niño3.4 range: 0.863 to 1.879;
+  - all 10 cases were pushed into positive ENSO-like response.
