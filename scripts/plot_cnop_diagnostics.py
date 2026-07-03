@@ -22,6 +22,7 @@ from matplotlib.patches import Rectangle
 VARIABLE_NAMES = ("TOS", "ZOS")
 NINO34_BOX = (190.0, 240.0, -5.0, 5.0)
 PERTURB_BOX = (120.0, 290.0, -20.0, 20.0)
+MAP_VIEW_BOX = (90.0, 320.0, -35.0, 35.0)
 
 
 @dataclass(frozen=True)
@@ -172,11 +173,18 @@ def add_region_box(ax: plt.Axes, bounds: tuple[float, float, float, float], colo
     ax.add_patch(rect)
 
 
-def setup_map_axis(ax: plt.Axes) -> None:
-    ax.set_xlim(110, 300)
-    ax.set_ylim(-25, 25)
-    ax.set_xticks([120, 160, 200, 240, 280])
-    ax.set_yticks([-20, -10, 0, 10, 20])
+def setup_map_axis(ax: plt.Axes, *, wide: bool = False) -> None:
+    if wide:
+        lon_min, lon_max, lat_min, lat_max = MAP_VIEW_BOX
+        ax.set_xlim(lon_min, lon_max)
+        ax.set_ylim(lat_min, lat_max)
+        ax.set_xticks([100, 140, 180, 220, 260, 300])
+        ax.set_yticks([-30, -20, -10, 0, 10, 20, 30])
+    else:
+        ax.set_xlim(110, 300)
+        ax.set_ylim(-25, 25)
+        ax.set_xticks([120, 160, 200, 240, 280])
+        ax.set_yticks([-20, -10, 0, 10, 20])
     ax.set_xlabel("Longitude (E)")
     ax.set_ylabel("Latitude")
     ax.grid(True)
@@ -193,6 +201,14 @@ def mask_outside_perturb_domain(field: np.ndarray, lat: np.ndarray, lon: np.ndar
     return masked
 
 
+def mask_outside_view(field: np.ndarray, lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
+    """保留更宽视野内的场，避免画出与太平洋诊断无关的区域。"""
+
+    masked = np.array(field, dtype=np.float64, copy=True)
+    masked[~region_mask(lat, lon, MAP_VIEW_BOX)] = np.nan
+    return masked
+
+
 def plot_diverging_map(
     ax: plt.Axes,
     lon: np.ndarray,
@@ -201,13 +217,19 @@ def plot_diverging_map(
     title: str,
     unit: str,
     cmap: str,
+    *,
+    mask_domain: bool = True,
+    wide: bool = False,
+    vmax: float | None = None,
 ) -> mpl.cm.ScalarMappable:
-    field = mask_outside_perturb_domain(field, lat, lon)
-    vmax = float(np.nanpercentile(np.abs(field[region_mask(lat, lon, PERTURB_BOX)]), 98))
+    field = mask_outside_perturb_domain(field, lat, lon) if mask_domain else mask_outside_view(field, lat, lon)
+    color_region = PERTURB_BOX if mask_domain else MAP_VIEW_BOX
+    if vmax is None:
+        vmax = float(np.nanpercentile(np.abs(field[region_mask(lat, lon, color_region)]), 98))
     vmax = max(vmax, 1.0e-6)
     norm = TwoSlopeNorm(vcenter=0.0, vmin=-vmax, vmax=vmax)
     mesh = ax.pcolormesh(lon, lat, field, shading="auto", cmap=cmap, norm=norm)
-    setup_map_axis(ax)
+    setup_map_axis(ax, wide=wide)
     ax.set_title(title, loc="left", pad=7, fontweight="bold")
     cbar = plt.colorbar(mesh, ax=ax, shrink=0.82, pad=0.018)
     cbar.set_label(unit)
@@ -395,6 +417,110 @@ def plot_precursor_figure(cases: list[CaseData], lat: np.ndarray, lon: np.ndarra
     return rows
 
 
+def plot_case_atlas(
+    cases: list[CaseData],
+    lat: np.ndarray,
+    lon: np.ndarray,
+    output_dir: Path,
+    dpi: int,
+    *,
+    variable_index: int,
+    variable_name: str,
+    cmap: str,
+) -> None:
+    """把每一个 case 的扰动都画出来，并使用统一色标方便横向比较。"""
+
+    sorted_cases = sorted(cases, key=lambda item: item.gain_max_3m, reverse=True)
+    fields = np.stack([case.delta_phys[variable_index] for case in sorted_cases], axis=0)
+    perturb = region_mask(lat, lon, PERTURB_BOX)
+    vmax = float(np.nanpercentile(np.abs(fields[:, perturb]), 98))
+    vmax = max(vmax, 1.0e-6)
+    norm = TwoSlopeNorm(vcenter=0.0, vmin=-vmax, vmax=vmax)
+
+    fig, axes = plt.subplots(5, 2, figsize=(13.0, 14.5), layout="constrained", sharex=True, sharey=True)
+    for ax, case, field in zip(axes.ravel(), sorted_cases, fields, strict=True):
+        field = mask_outside_view(field, lat, lon)
+        mesh = ax.pcolormesh(lon, lat, field, shading="auto", cmap=cmap, norm=norm)
+        setup_map_axis(ax, wide=True)
+        ax.set_title(
+            f"{case.source} {case.year}   gain {case.gain_max_3m:.2f}   {case.baseline_max_3m:+.2f}->{case.cnop_max_3m:.2f}",
+            loc="left",
+            pad=5,
+            fontsize=8.8,
+            fontweight="bold",
+        )
+
+    fig.suptitle(
+        f"{variable_name} CNOP perturbation atlas: all neutral cases",
+        fontsize=14,
+        fontweight="bold",
+    )
+    cbar = fig.colorbar(mesh, ax=axes.ravel().tolist(), shrink=0.72, pad=0.012)
+    cbar.set_label(f"{variable_name} perturbation, shared scale")
+
+    stem = f"cnop_{variable_name.lower()}_case_atlas"
+    for suffix in ("png", "pdf"):
+        fig.savefig(output_dir / f"{stem}.{suffix}", dpi=dpi)
+    plt.close(fig)
+
+
+def plot_factor_comparison(rows: list[dict[str, float | str | int]], output_dir: Path, dpi: int) -> None:
+    """用矩阵图比较每个 case 的扰动因子。"""
+
+    sorted_rows = sorted(rows, key=lambda item: float(item["gain_max_3m"]), reverse=True)
+    factor_keys = ["tos_Nino34", "tos_WestEqPac", "tos_CentralEastEqPac", "tos_eq_gradient", "zos_east_west_tilt"]
+    factor_labels = ["TOS\nNiño3.4", "TOS\nwest eq.", "TOS\ncentral/east", "TOS\neast-west", "ZOS\neast-west tilt"]
+    raw = np.asarray([[float(row[key]) for key in factor_keys] for row in sorted_rows], dtype=np.float64)
+    scale = np.nanmax(np.abs(raw), axis=0)
+    scale[scale == 0] = 1.0
+    normalized = raw / scale[None, :]
+    gains = np.asarray([float(row["gain_max_3m"]) for row in sorted_rows])
+    cnop = np.asarray([float(row["cnop_max_3m"]) for row in sorted_rows])
+    labels = [f"{row['source']} {row['year']}" for row in sorted_rows]
+
+    fig = plt.figure(figsize=(12.8, 7.4), layout="constrained")
+    gs = fig.add_gridspec(1, 3, width_ratios=(1.45, 0.38, 0.38))
+    ax_heat = fig.add_subplot(gs[0, 0])
+    ax_gain = fig.add_subplot(gs[0, 1], sharey=ax_heat)
+    ax_cnop = fig.add_subplot(gs[0, 2], sharey=ax_heat)
+
+    image = ax_heat.imshow(normalized, cmap="RdBu_r", vmin=-1, vmax=1, aspect="auto")
+    ax_heat.set_yticks(np.arange(len(labels)))
+    ax_heat.set_yticklabels(labels)
+    ax_heat.set_xticks(np.arange(len(factor_labels)))
+    ax_heat.set_xticklabels(factor_labels)
+    ax_heat.set_title("A  Perturbation-factor matrix", loc="left", pad=8, fontweight="bold")
+    ax_heat.tick_params(axis="x", length=0)
+    ax_heat.tick_params(axis="y", length=0)
+    for row_idx in range(raw.shape[0]):
+        for col_idx in range(raw.shape[1]):
+            color = "white" if abs(normalized[row_idx, col_idx]) > 0.62 else "#111827"
+            ax_heat.text(col_idx, row_idx, f"{raw[row_idx, col_idx]:+.2f}", ha="center", va="center", fontsize=7.2, color=color)
+    ax_heat.set_xticks(np.arange(-0.5, raw.shape[1], 1), minor=True)
+    ax_heat.set_yticks(np.arange(-0.5, raw.shape[0], 1), minor=True)
+    ax_heat.grid(which="minor", color="white", linewidth=1.1)
+    cbar = fig.colorbar(image, ax=ax_heat, shrink=0.82, pad=0.012)
+    cbar.set_label("Column-normalized sign and strength")
+
+    y = np.arange(len(labels))
+    ax_gain.barh(y, gains, color="#0072B2", alpha=0.88)
+    ax_gain.set_title("B  Gain", loc="left", pad=8, fontweight="bold")
+    ax_gain.set_xlabel("Gain")
+    ax_gain.grid(True, axis="x")
+    ax_gain.tick_params(axis="y", labelleft=False, length=0)
+
+    ax_cnop.barh(y, cnop, color="#D55E00", alpha=0.88)
+    ax_cnop.axvline(0.5, color="#7F1D1D", linestyle="--", linewidth=1.0)
+    ax_cnop.set_title("C  CNOP", loc="left", pad=8, fontweight="bold")
+    ax_cnop.set_xlabel("Max 3m Niño3.4")
+    ax_cnop.grid(True, axis="x")
+    ax_cnop.tick_params(axis="y", labelleft=False, length=0)
+
+    for suffix in ("png", "pdf"):
+        fig.savefig(output_dir / f"cnop_factor_comparison.{suffix}", dpi=dpi)
+    plt.close(fig)
+
+
 def write_precursor_tables(rows: list[dict[str, float | str | int]], output_dir: Path) -> None:
     csv_path = output_dir / "cnop_precursor_indices.csv"
     fieldnames = list(rows[0].keys())
@@ -423,6 +549,8 @@ def write_precursor_tables(rows: list[dict[str, float | str | int]], output_dir:
         "",
         "## 读图要点",
         "",
+        "- `cnop_tos_case_atlas` 和 `cnop_zos_case_atlas` 把每个 case 的扰动单独画出，且使用统一色标，适合检查个例差异。",
+        "- `cnop_factor_comparison` 把每个 case 的区域扰动因子放在同一张矩阵里，适合比较 TOS 与 ZOS 谁更稳定。",
         "- 如果 Niño3.4 与中东太平洋 TOS 为正，说明最优扰动直接预热 ENSO 关键区。",
         "- 如果西太平洋与中东太平洋存在反号或明显梯度，说明扰动更像在调整东西向海温梯度。",
         "- ZOS 东西向倾斜可作为上层海洋状态/热跃层变化的替代线索，但它不是真实热含量。",
@@ -442,6 +570,9 @@ def main() -> None:
     cases, lat, lon = load_cases(input_dir)
     plot_main_figure(cases, lat, lon, output_dir, args.dpi)
     rows = plot_precursor_figure(cases, lat, lon, output_dir, args.dpi)
+    plot_case_atlas(cases, lat, lon, output_dir, args.dpi, variable_index=0, variable_name="TOS", cmap="RdBu_r")
+    plot_case_atlas(cases, lat, lon, output_dir, args.dpi, variable_index=1, variable_name="ZOS", cmap="BrBG")
+    plot_factor_comparison(rows, output_dir, args.dpi)
     write_precursor_tables(rows, output_dir)
     print(f"Wrote CNOP diagnostics to {output_dir}")
 

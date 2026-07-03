@@ -145,6 +145,12 @@ figures/cnop_composite_diagnostics.png
 figures/cnop_composite_diagnostics.pdf
 figures/cnop_precursor_diagnostics.png
 figures/cnop_precursor_diagnostics.pdf
+figures/cnop_tos_case_atlas.png
+figures/cnop_tos_case_atlas.pdf
+figures/cnop_zos_case_atlas.png
+figures/cnop_zos_case_atlas.pdf
+figures/cnop_factor_comparison.png
+figures/cnop_factor_comparison.pdf
 figures/cnop_precursor_indices.csv
 figures/cnop_precursor_analysis.md
 ```

@@ -69,6 +69,9 @@ outputs/cnop_tos_zos_patch_0703/cnop_gain_summary.png
 outputs/cnop_tos_zos_patch_0703/best_case_cnop_maps_and_nino.png
 outputs/cnop_tos_zos_patch_0703/figures/cnop_composite_diagnostics.png
 outputs/cnop_tos_zos_patch_0703/figures/cnop_precursor_diagnostics.png
+outputs/cnop_tos_zos_patch_0703/figures/cnop_tos_case_atlas.png
+outputs/cnop_tos_zos_patch_0703/figures/cnop_zos_case_atlas.png
+outputs/cnop_tos_zos_patch_0703/figures/cnop_factor_comparison.png
 outputs/cnop_tos_zos_patch_0703/figures/cnop_precursor_indices.csv
 outputs/cnop_tos_zos_patch_0703/figures/cnop_precursor_analysis.md
 ```
@@ -77,6 +80,9 @@ outputs/cnop_tos_zos_patch_0703/figures/cnop_precursor_analysis.md
 
 - `cnop_composite_diagnostics.png/pdf`：展示 TOS/ZOS 合成 CNOP 扰动、baseline/CNOP Niño3.4 月序列，以及各 case 的 gain。
 - `cnop_precursor_diagnostics.png/pdf`：展示 TOS 扰动稳健性、符号一致性、区域前兆指数，以及 baseline 与 gain 的关系。
+- `cnop_tos_case_atlas.png/pdf`：逐个展示 10 个 neutral case 的 TOS 扰动，使用统一色标和更宽经纬度视野。
+- `cnop_zos_case_atlas.png/pdf`：逐个展示 10 个 neutral case 的 ZOS 扰动，便于检查 ZOS 带状/倾斜结构是否稳定。
+- `cnop_factor_comparison.png/pdf`：把每个 case 的 TOS Niño3.4、TOS 西太平洋、TOS 中东太平洋、TOS 东西向对比、ZOS 东西向倾斜放在同一张矩阵中比较。
 
 ## 方法修正记录
 
