@@ -29,6 +29,8 @@ Composite diagnostics show that the dominant precursor is a robust TOS pattern, 
 
 This suggests WalkerNet's CNOP direction mainly acts by preconditioning the equatorial Pacific SST gradient toward an El Nino-like response. ZOS contributes a weaker upper-ocean-state proxy signal, but it should not be interpreted as true heat content or thermocline depth.
 
+The per-case atlases confirm that this conclusion is not only a composite artifact. Nearly all TOS perturbations show positive central/eastern equatorial Pacific anomalies under a shared color scale. ZOS fields are more case-dependent, but many cases still show an equatorial band or east-west tilt-like structure.
+
 ## Initial Method
 
 For each neutral target year `Y`:
