@@ -39,6 +39,10 @@ class CaseData:
     cnop_nino: np.ndarray
     baseline_3m: np.ndarray
     cnop_3m: np.ndarray
+    top_delta_phys: np.ndarray | None = None
+    top_cnop_3m: np.ndarray | None = None
+    top_gain_max_3m: np.ndarray | None = None
+    top_start_idx: np.ndarray | None = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -119,6 +123,10 @@ def load_cases(input_dir: Path) -> tuple[list[CaseData], np.ndarray, np.ndarray]
         data = np.load(path)
         lat = np.asarray(data["lat"], dtype=np.float64)
         lon = np.asarray(data["lon"], dtype=np.float64)
+        top_delta_phys = np.asarray(data["top_delta_phys"], dtype=np.float64) if "top_delta_phys" in data.files else None
+        top_cnop_3m = np.asarray(data["top_cnop_3m"], dtype=np.float64) if "top_cnop_3m" in data.files else None
+        top_gain_max_3m = np.asarray(data["top_gain_max_3m"], dtype=np.float64) if "top_gain_max_3m" in data.files else None
+        top_start_idx = np.asarray(data["top_start_idx"], dtype=np.int32) if "top_start_idx" in data.files else None
         cases.append(
             CaseData(
                 source=source,
@@ -131,6 +139,10 @@ def load_cases(input_dir: Path) -> tuple[list[CaseData], np.ndarray, np.ndarray]
                 cnop_nino=np.asarray(data["cnop_nino"], dtype=np.float64),
                 baseline_3m=np.asarray(data["baseline_3m"], dtype=np.float64),
                 cnop_3m=np.asarray(data["cnop_3m"], dtype=np.float64),
+                top_delta_phys=top_delta_phys,
+                top_cnop_3m=top_cnop_3m,
+                top_gain_max_3m=top_gain_max_3m,
+                top_start_idx=top_start_idx,
             )
         )
 
@@ -521,6 +533,50 @@ def plot_factor_comparison(rows: list[dict[str, float | str | int]], output_dir:
     plt.close(fig)
 
 
+def plot_best_case_topk(cases: list[CaseData], lat: np.ndarray, lon: np.ndarray, output_dir: Path, dpi: int) -> None:
+    """如果结果包含 top-k CNOP，画出最强 case 的多个局部最优扰动。"""
+
+    available = [
+        case
+        for case in cases
+        if case.top_delta_phys is not None and case.top_delta_phys.size > 0 and case.top_gain_max_3m is not None
+    ]
+    if not available:
+        return
+
+    case = max(available, key=lambda item: item.gain_max_3m)
+    top_delta = case.top_delta_phys
+    assert top_delta is not None
+    k = min(top_delta.shape[0], 5)
+    fields = top_delta[:k]
+    vmax_tos = max(float(np.nanpercentile(np.abs(fields[:, 0][..., region_mask(lat, lon, PERTURB_BOX)]), 98)), 1.0e-6)
+    vmax_zos = max(float(np.nanpercentile(np.abs(fields[:, 1][..., region_mask(lat, lon, PERTURB_BOX)]), 98)), 1.0e-6)
+
+    fig, axes = plt.subplots(2, k, figsize=(3.2 * k, 6.2), layout="constrained", sharex=True, sharey=True)
+    if k == 1:
+        axes = np.asarray(axes).reshape(2, 1)
+    for col in range(k):
+        gain = float(case.top_gain_max_3m[col]) if case.top_gain_max_3m is not None else float("nan")
+        start = int(case.top_start_idx[col]) if case.top_start_idx is not None else col
+        tos = mask_outside_view(fields[col, 0], lat, lon)
+        zos = mask_outside_view(fields[col, 1], lat, lon)
+        axes[0, col].pcolormesh(lon, lat, tos, shading="auto", cmap="RdBu_r", norm=TwoSlopeNorm(0, -vmax_tos, vmax_tos))
+        axes[1, col].pcolormesh(lon, lat, zos, shading="auto", cmap="BrBG", norm=TwoSlopeNorm(0, -vmax_zos, vmax_zos))
+        axes[0, col].set_title(f"rank {col + 1}  start {start}  gain {gain:.2f}", loc="left", fontsize=8.5, fontweight="bold")
+        for row in range(2):
+            setup_map_axis(axes[row, col], wide=True)
+            if col > 0:
+                axes[row, col].set_ylabel("")
+        axes[0, col].set_xlabel("")
+    axes[0, 0].text(0.0, 1.06, "TOS", transform=axes[0, 0].transAxes, fontsize=10, fontweight="bold")
+    axes[1, 0].text(0.0, 1.06, "ZOS", transform=axes[1, 0].transAxes, fontsize=10, fontweight="bold")
+    fig.suptitle(f"Top-{k} local CNOP candidates: {case.source} {case.year}", fontsize=13, fontweight="bold")
+
+    for suffix in ("png", "pdf"):
+        fig.savefig(output_dir / f"cnop_best_case_topk_candidates.{suffix}", dpi=dpi)
+    plt.close(fig)
+
+
 def write_precursor_tables(rows: list[dict[str, float | str | int]], output_dir: Path) -> None:
     csv_path = output_dir / "cnop_precursor_indices.csv"
     fieldnames = list(rows[0].keys())
@@ -551,6 +607,7 @@ def write_precursor_tables(rows: list[dict[str, float | str | int]], output_dir:
         "",
         "- `cnop_tos_case_atlas` 和 `cnop_zos_case_atlas` 把每个 case 的扰动单独画出，且使用统一色标，适合检查个例差异。",
         "- `cnop_factor_comparison` 把每个 case 的区域扰动因子放在同一张矩阵里，适合比较 TOS 与 ZOS 谁更稳定。",
+        "- 如果重新运行 CNOP 时启用多初值，`cnop_best_case_topk_candidates` 会展示最强 case 的多个局部最优扰动。",
         "- 如果 Niño3.4 与中东太平洋 TOS 为正，说明最优扰动直接预热 ENSO 关键区。",
         "- 如果西太平洋与中东太平洋存在反号或明显梯度，说明扰动更像在调整东西向海温梯度。",
         "- ZOS 东西向倾斜可作为上层海洋状态/热跃层变化的替代线索，但它不是真实热含量。",
@@ -573,6 +630,7 @@ def main() -> None:
     plot_case_atlas(cases, lat, lon, output_dir, args.dpi, variable_index=0, variable_name="TOS", cmap="RdBu_r")
     plot_case_atlas(cases, lat, lon, output_dir, args.dpi, variable_index=1, variable_name="ZOS", cmap="BrBG")
     plot_factor_comparison(rows, output_dir, args.dpi)
+    plot_best_case_topk(cases, lat, lon, output_dir, args.dpi)
     write_precursor_tables(rows, output_dir)
     print(f"Wrote CNOP diagnostics to {output_dir}")
 

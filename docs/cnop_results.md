@@ -90,6 +90,8 @@ outputs/cnop_tos_zos_patch_0703/figures/cnop_precursor_analysis.md
 
 另一次 `0.5σ` 半径 smoke test 能把 Niño3.4 推到极大值，说明模型对该方向非常敏感，但该半径容易变成“模型敏感性利用”，因此主结果采用 `0.1σ`。
 
+后续方法升级为多初值 top-k CNOP 搜索：每个 case 默认从 16 个初值出发做 projected Adam，保存目标函数最强的 5 个局部 CNOP 候选，并支持对 top-k 进行 projected L-BFGS 精修。当前 `outputs/cnop_tos_zos_patch_0703` 的图来自升级前的 top-1 结果；如需比较“同一个 case 的多个最优扰动”，需要用新脚本重新运行 CNOP，输出中会包含 `top_delta_phys` 与 `cnop_candidate_summary.csv`。
+
 ## 当前结论
 
 在 WalkerNet 这个训练好的非线性预报算子上，已经可以稳定求出 TOS/ZOS CNOP-like 扰动。该扰动施加在前一年 12 月输入场上，可以把本来 neutral 的目标年预报推向 El Niño-like 状态。

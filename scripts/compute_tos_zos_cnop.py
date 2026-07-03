@@ -71,6 +71,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--horizon", type=int, default=12, help="Rollout months for the CNOP objective.")
     parser.add_argument("--steps", type=int, default=80, help="Projected-gradient optimization steps per case.")
     parser.add_argument("--lr", type=float, default=0.08)
+    parser.add_argument("--num-starts", type=int, default=16, help="Number of initial perturbations optimized per case.")
+    parser.add_argument("--top-k", type=int, default=5, help="Number of locally optimal CNOP candidates saved per case.")
+    parser.add_argument("--random-init-scale", type=float, default=0.02, help="Normalized random perturbation scale for nonzero starts.")
+    parser.add_argument("--lbfgs-steps", type=int, default=0, help="Optional projected L-BFGS refinement iterations for top-k candidates.")
+    parser.add_argument("--lbfgs-lr", type=float, default=0.5)
     parser.add_argument("--epsilon-tos", type=float, default=0.1, help="Normalized RMS radius for TOS perturbation.")
     parser.add_argument("--epsilon-zos", type=float, default=0.1, help="Normalized RMS radius for ZOS perturbation.")
     parser.add_argument("--max-abs", type=float, default=2.0, help="Elementwise normalized perturbation clip.")
@@ -349,6 +354,277 @@ def cnop_objective(nino_anom: torch.Tensor, temperature: float) -> torch.Tensor:
     return temp * torch.logsumexp(rolling / temp, dim=0)
 
 
+def initialize_delta_param(
+    shape: tuple[int, int, int, int],
+    x0: torch.Tensor,
+    mask: torch.Tensor,
+    eps: tuple[float, float],
+    args: argparse.Namespace,
+    target_hw: tuple[int, int],
+    start_idx: int,
+    seed: int,
+) -> torch.Tensor:
+    """初始化一个候选扰动；start 0 从零开始，其余 start 随机初始化。"""
+
+    delta_param = torch.zeros(shape, dtype=x0.dtype, device=x0.device)
+    if start_idx > 0 and float(args.random_init_scale) > 0:
+        generator = torch.Generator(device=x0.device)
+        generator.manual_seed(int(seed))
+        delta_param.normal_(mean=0.0, std=float(args.random_init_scale), generator=generator)
+    project_delta_param(delta_param, mask, eps, float(args.max_abs), target_hw, args.perturb_grid)
+    return delta_param.requires_grad_(True)
+
+
+def evaluate_delta(
+    model: torch.nn.Module,
+    dataset: WalkerDataset,
+    case: NeutralCase,
+    x0: torch.Tensor,
+    delta: torch.Tensor,
+    mask: torch.Tensor,
+    climatology: torch.Tensor,
+    args: argparse.Namespace,
+    trained_rollout_steps: int,
+    lat: torch.Tensor,
+    lon: torch.Tensor,
+    baseline_3m: torch.Tensor,
+    use_checkpoint: bool,
+) -> dict[str, Any]:
+    """对一个完整分辨率扰动计算目标值和 Niño3.4 响应。"""
+
+    x_pert = apply_delta(x0, delta, mask)
+    nino = rollout_nino_anomaly(
+        model,
+        dataset,
+        case,
+        x_pert,
+        climatology,
+        args.horizon,
+        trained_rollout_steps,
+        lat,
+        lon,
+        use_amp=args.amp,
+        use_checkpoint=use_checkpoint,
+    )
+    rolling = three_month_mean(nino)
+    objective = cnop_objective(nino, args.objective_temperature)
+    return {
+        "nino": nino,
+        "three_month": rolling,
+        "objective": objective,
+        "max_3m": rolling.max(),
+        "mean_3m": rolling.mean(),
+        "gain_max_3m": rolling.max() - baseline_3m.max(),
+    }
+
+
+def optimize_single_start(
+    model: torch.nn.Module,
+    dataset: WalkerDataset,
+    case: NeutralCase,
+    x0: torch.Tensor,
+    mask: torch.Tensor,
+    climatology: torch.Tensor,
+    args: argparse.Namespace,
+    trained_rollout_steps: int,
+    lat: torch.Tensor,
+    lon: torch.Tensor,
+    baseline_3m: torch.Tensor,
+    target_hw: tuple[int, int],
+    param_hw: tuple[int, int],
+    eps: tuple[float, float],
+    start_idx: int,
+    seed: int,
+) -> dict[str, Any]:
+    """从一个初值出发做 projected Adam，上山寻找一个局部 CNOP。"""
+
+    delta_param = initialize_delta_param(
+        (1, 2, param_hw[0], param_hw[1]),
+        x0,
+        mask,
+        eps,
+        args,
+        target_hw,
+        start_idx,
+        seed,
+    )
+    optimizer = torch.optim.Adam([delta_param], lr=float(args.lr))
+    history: list[dict[str, float]] = []
+
+    for step in range(1, int(args.steps) + 1):
+        optimizer.zero_grad(set_to_none=True)
+        delta = expand_delta(delta_param, target_hw, args.perturb_grid)
+        metrics = evaluate_delta(
+            model,
+            dataset,
+            case,
+            x0,
+            delta,
+            mask,
+            climatology,
+            args,
+            trained_rollout_steps,
+            lat,
+            lon,
+            baseline_3m,
+            use_checkpoint=args.checkpoint_rollout,
+        )
+        penalty = smoothness_penalty(delta, mask) * float(args.smoothness_weight)
+        loss = -metrics["objective"] + penalty
+        loss.backward()
+        optimizer.step()
+        project_delta_param(delta_param, mask, eps, float(args.max_abs), target_hw, args.perturb_grid)
+
+        if step == 1 or step == int(args.steps) or step % max(1, int(args.steps) // 10) == 0:
+            history.append(
+                {
+                    "step": float(step),
+                    "objective": float(metrics["objective"].detach().cpu().item()),
+                    "max_3m": float(metrics["max_3m"].detach().cpu().item()),
+                    "mean_3m": float(metrics["mean_3m"].detach().cpu().item()),
+                    "loss": float(loss.detach().cpu().item()),
+                }
+            )
+
+    with torch.no_grad():
+        final_delta = expand_delta(delta_param, target_hw, args.perturb_grid) * mask.to(dtype=x0.dtype)
+        final_metrics = evaluate_delta(
+            model,
+            dataset,
+            case,
+            x0,
+            final_delta,
+            mask,
+            climatology,
+            args,
+            trained_rollout_steps,
+            lat,
+            lon,
+            baseline_3m,
+            use_checkpoint=False,
+        )
+
+    return {
+        "start_idx": start_idx,
+        "seed": seed,
+        "delta_norm": final_delta.detach().cpu().numpy()[0],
+        "delta_param": delta_param.detach(),
+        "delta_phys": normalized_delta_to_physical(dataset, final_delta.detach())[0],
+        "final_nino": final_metrics["nino"].detach().cpu().numpy(),
+        "final_3m": final_metrics["three_month"].detach().cpu().numpy(),
+        "objective": float(final_metrics["objective"].detach().cpu().item()),
+        "cnop_max_3m": float(final_metrics["max_3m"].detach().cpu().item()),
+        "gain_max_3m": float(final_metrics["gain_max_3m"].detach().cpu().item()),
+        "history": history,
+    }
+
+
+def refine_with_lbfgs(
+    model: torch.nn.Module,
+    dataset: WalkerDataset,
+    case: NeutralCase,
+    x0: torch.Tensor,
+    mask: torch.Tensor,
+    climatology: torch.Tensor,
+    args: argparse.Namespace,
+    trained_rollout_steps: int,
+    lat: torch.Tensor,
+    lon: torch.Tensor,
+    baseline_3m: torch.Tensor,
+    target_hw: tuple[int, int],
+    eps: tuple[float, float],
+    initial_delta_param: torch.Tensor,
+) -> torch.Tensor:
+    """用 projected L-BFGS 对 Adam 找到的候选扰动做局部精修。"""
+
+    delta_param = initial_delta_param.detach().clone().requires_grad_(True)
+    optimizer = torch.optim.LBFGS(
+        [delta_param],
+        lr=float(args.lbfgs_lr),
+        max_iter=int(args.lbfgs_steps),
+        line_search_fn="strong_wolfe",
+    )
+
+    def closure() -> torch.Tensor:
+        optimizer.zero_grad(set_to_none=True)
+        delta = expand_delta(delta_param, target_hw, args.perturb_grid)
+        metrics = evaluate_delta(
+            model,
+            dataset,
+            case,
+            x0,
+            delta,
+            mask,
+            climatology,
+            args,
+            trained_rollout_steps,
+            lat,
+            lon,
+            baseline_3m,
+            use_checkpoint=args.checkpoint_rollout,
+        )
+        penalty = smoothness_penalty(delta, mask) * float(args.smoothness_weight)
+        loss = -metrics["objective"] + penalty
+        loss.backward()
+        return loss
+
+    optimizer.step(closure)
+    project_delta_param(delta_param, mask, eps, float(args.max_abs), target_hw, args.perturb_grid)
+    return delta_param.detach()
+
+
+def candidate_from_delta_param(
+    model: torch.nn.Module,
+    dataset: WalkerDataset,
+    case: NeutralCase,
+    x0: torch.Tensor,
+    mask: torch.Tensor,
+    climatology: torch.Tensor,
+    args: argparse.Namespace,
+    trained_rollout_steps: int,
+    lat: torch.Tensor,
+    lon: torch.Tensor,
+    baseline_3m: torch.Tensor,
+    target_hw: tuple[int, int],
+    delta_param: torch.Tensor,
+    template: dict[str, Any],
+) -> dict[str, Any]:
+    """精修后重新评估候选扰动，并继承 start/history 元信息。"""
+
+    with torch.no_grad():
+        full_delta = expand_delta(delta_param, target_hw, args.perturb_grid) * mask.to(dtype=x0.dtype)
+        metrics = evaluate_delta(
+            model,
+            dataset,
+            case,
+            x0,
+            full_delta,
+            mask,
+            climatology,
+            args,
+            trained_rollout_steps,
+            lat,
+            lon,
+            baseline_3m,
+            use_checkpoint=False,
+        )
+    candidate = dict(template)
+    candidate.update(
+        {
+            "delta_norm": full_delta.detach().cpu().numpy()[0],
+            "delta_param": delta_param.detach(),
+            "delta_phys": normalized_delta_to_physical(dataset, full_delta.detach())[0],
+            "final_nino": metrics["nino"].detach().cpu().numpy(),
+            "final_3m": metrics["three_month"].detach().cpu().numpy(),
+            "objective": float(metrics["objective"].detach().cpu().item()),
+            "cnop_max_3m": float(metrics["max_3m"].detach().cpu().item()),
+            "gain_max_3m": float(metrics["gain_max_3m"].detach().cpu().item()),
+            "refined_with_lbfgs": True,
+        }
+    )
+    return candidate
+
+
 def optimize_case(
     model: torch.nn.Module,
     dataset: WalkerDataset,
@@ -385,6 +661,7 @@ def optimize_case(
             use_amp=args.amp,
             use_checkpoint=False,
         )
+        baseline_3m = three_month_mean(baseline_nino)
 
     target_hw = (x0.shape[-2], x0.shape[-1])
     if args.perturb_grid == "patch":
@@ -392,83 +669,104 @@ def optimize_case(
         param_hw = (math.ceil(target_hw[0] / patch_size), math.ceil(target_hw[1] / patch_size))
     else:
         param_hw = target_hw
-    delta_param = torch.zeros((1, 2, param_hw[0], param_hw[1]), dtype=x0.dtype, device=device, requires_grad=True)
-    optimizer = torch.optim.Adam([delta_param], lr=float(args.lr))
     eps = (float(args.epsilon_tos), float(args.epsilon_zos))
-    history: list[dict[str, float]] = []
+    num_starts = max(1, int(args.num_starts))
+    top_k = max(1, min(int(args.top_k), num_starts))
+    candidates: list[dict[str, Any]] = []
 
-    for step in range(1, int(args.steps) + 1):
-        optimizer.zero_grad(set_to_none=True)
-        delta = expand_delta(delta_param, target_hw, args.perturb_grid)
-        x_pert = apply_delta(x0, delta, mask)
-        nino = rollout_nino_anomaly(
+    for start_idx in range(num_starts):
+        start_seed = int(args.seed) + case.source_idx * 100_000 + case.target_t * 10 + start_idx
+        candidate = optimize_single_start(
             model,
             dataset,
             case,
-            x_pert,
+            x0,
+            mask,
             climatology,
-            args.horizon,
+            args,
             trained_rollout_steps,
             lat,
             lon,
-            use_amp=args.amp,
-            use_checkpoint=args.checkpoint_rollout,
+            baseline_3m,
+            target_hw,
+            param_hw,
+            eps,
+            start_idx,
+            start_seed,
         )
-        objective = cnop_objective(nino, args.objective_temperature)
-        penalty = smoothness_penalty(delta, mask) * float(args.smoothness_weight)
-        loss = -objective + penalty
-        loss.backward()
-        optimizer.step()
-        project_delta_param(delta_param, mask, eps, float(args.max_abs), target_hw, args.perturb_grid)
+        candidates.append(candidate)
+        print(
+            f"  start {start_idx + 1}/{num_starts}: "
+            f"objective={candidate['objective']:.4f} "
+            f"cnop_max_3m={candidate['cnop_max_3m']:.4f} "
+            f"gain={candidate['gain_max_3m']:.4f}",
+            flush=True,
+        )
 
-        if step == 1 or step == int(args.steps) or step % max(1, int(args.steps) // 10) == 0:
-            with torch.no_grad():
-                rolling = three_month_mean(nino)
-                history.append(
-                    {
-                        "step": float(step),
-                        "objective": float(objective.detach().cpu().item()),
-                        "max_3m": float(rolling.max().detach().cpu().item()),
-                        "mean_3m": float(rolling.mean().detach().cpu().item()),
-                        "loss": float(loss.detach().cpu().item()),
-                    }
+    candidates = sorted(candidates, key=lambda item: (item["objective"], item["cnop_max_3m"]), reverse=True)
+    top_candidates = candidates[:top_k]
+    if int(args.lbfgs_steps) > 0:
+        refined_candidates: list[dict[str, Any]] = []
+        for candidate in top_candidates:
+            refined_param = refine_with_lbfgs(
+                model,
+                dataset,
+                case,
+                x0,
+                mask,
+                climatology,
+                args,
+                trained_rollout_steps,
+                lat,
+                lon,
+                baseline_3m,
+                target_hw,
+                eps,
+                candidate["delta_param"],
+            )
+            refined_candidates.append(
+                candidate_from_delta_param(
+                    model,
+                    dataset,
+                    case,
+                    x0,
+                    mask,
+                    climatology,
+                    args,
+                    trained_rollout_steps,
+                    lat,
+                    lon,
+                    baseline_3m,
+                    target_hw,
+                    refined_param,
+                    candidate,
                 )
+            )
+        other_candidates = candidates[top_k:]
+        candidates = sorted(refined_candidates + other_candidates, key=lambda item: (item["objective"], item["cnop_max_3m"]), reverse=True)
+        top_candidates = candidates[:top_k]
+    for rank, candidate in enumerate(top_candidates, start=1):
+        candidate["rank"] = rank
+    best = top_candidates[0]
 
-    with torch.no_grad():
-        final_delta = expand_delta(delta_param, target_hw, args.perturb_grid) * mask.to(dtype=x0.dtype)
-        final_x = apply_delta(x0, final_delta, mask)
-        final_nino = rollout_nino_anomaly(
-            model,
-            dataset,
-            case,
-            final_x,
-            climatology,
-            args.horizon,
-            trained_rollout_steps,
-            lat,
-            lon,
-            use_amp=args.amp,
-            use_checkpoint=False,
-        )
-        baseline_3m = three_month_mean(baseline_nino)
-        final_3m = three_month_mean(final_nino)
-
-    delta_np = final_delta.detach().cpu().numpy()[0]
-    delta_phys = normalized_delta_to_physical(dataset, final_delta.detach())[0]
     return {
         "case": case,
         "x0": x0.detach().cpu().numpy()[0],
-        "delta_norm": delta_np,
-        "delta_phys": delta_phys,
+        "delta_norm": best["delta_norm"],
+        "delta_phys": best["delta_phys"],
         "baseline_nino": baseline_nino.detach().cpu().numpy(),
-        "final_nino": final_nino.detach().cpu().numpy(),
+        "final_nino": best["final_nino"],
         "baseline_3m": baseline_3m.detach().cpu().numpy(),
-        "final_3m": final_3m.detach().cpu().numpy(),
-        "history": history,
+        "final_3m": best["final_3m"],
+        "history": best["history"],
+        "candidates": candidates,
+        "top_candidates": top_candidates,
         "mask_count": int(mask.sum().detach().cpu().item()),
         "baseline_max_3m": float(baseline_3m.max().detach().cpu().item()),
-        "cnop_max_3m": float(final_3m.max().detach().cpu().item()),
-        "gain_max_3m": float((final_3m.max() - baseline_3m.max()).detach().cpu().item()),
+        "cnop_max_3m": best["cnop_max_3m"],
+        "gain_max_3m": best["gain_max_3m"],
+        "best_start_idx": best["start_idx"],
+        "best_objective": best["objective"],
     }
 
 
@@ -492,10 +790,19 @@ def normalized_delta_to_physical(dataset: WalkerDataset, delta: torch.Tensor) ->
 def write_case_npz(output_dir: Path, result: dict[str, Any], dataset: WalkerDataset) -> Path:
     case: NeutralCase = result["case"]
     path = output_dir / f"case_{case.source_name}_{case.target_year}.npz"
+    top_candidates = result.get("top_candidates", [])
     np.savez_compressed(
         path,
         delta_norm=result["delta_norm"],
         delta_phys=result["delta_phys"],
+        top_delta_norm=np.stack([item["delta_norm"] for item in top_candidates], axis=0) if top_candidates else np.empty((0, 2, 0, 0)),
+        top_delta_phys=np.stack([item["delta_phys"] for item in top_candidates], axis=0) if top_candidates else np.empty((0, 2, 0, 0)),
+        top_cnop_nino=np.stack([item["final_nino"] for item in top_candidates], axis=0) if top_candidates else np.empty((0,)),
+        top_cnop_3m=np.stack([item["final_3m"] for item in top_candidates], axis=0) if top_candidates else np.empty((0,)),
+        top_objective=np.asarray([item["objective"] for item in top_candidates], dtype=np.float32),
+        top_cnop_max_3m=np.asarray([item["cnop_max_3m"] for item in top_candidates], dtype=np.float32),
+        top_gain_max_3m=np.asarray([item["gain_max_3m"] for item in top_candidates], dtype=np.float32),
+        top_start_idx=np.asarray([item["start_idx"] for item in top_candidates], dtype=np.int32),
         baseline_nino=result["baseline_nino"],
         cnop_nino=result["final_nino"],
         baseline_3m=result["baseline_3m"],
@@ -504,6 +811,21 @@ def write_case_npz(output_dir: Path, result: dict[str, Any], dataset: WalkerData
         lon=np.asarray(dataset.source_payloads[case.source_idx]["lon"]),
     )
     return path
+
+
+def serializable_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
+    """去掉大数组和 Tensor，只保留便于 JSON/CSV 记录的候选元信息。"""
+
+    return {
+        "rank": candidate.get("rank"),
+        "start_idx": candidate["start_idx"],
+        "seed": candidate["seed"],
+        "objective": candidate["objective"],
+        "cnop_max_3m": candidate["cnop_max_3m"],
+        "gain_max_3m": candidate["gain_max_3m"],
+        "refined_with_lbfgs": bool(candidate.get("refined_with_lbfgs", False)),
+        "history": candidate.get("history", []),
+    }
 
 
 def write_summary_csv(output_dir: Path, results: list[dict[str, Any]]) -> Path:
@@ -519,6 +841,8 @@ def write_summary_csv(output_dir: Path, results: list[dict[str, Any]]) -> Path:
                 "baseline_max_3m",
                 "cnop_max_3m",
                 "gain_max_3m",
+                "best_start_idx",
+                "best_objective",
                 "mask_count",
             ]
         )
@@ -533,9 +857,49 @@ def write_summary_csv(output_dir: Path, results: list[dict[str, Any]]) -> Path:
                     result["baseline_max_3m"],
                     result["cnop_max_3m"],
                     result["gain_max_3m"],
+                    result["best_start_idx"],
+                    result["best_objective"],
                     result["mask_count"],
                 ]
             )
+    return path
+
+
+def write_candidate_summary_csv(output_dir: Path, results: list[dict[str, Any]]) -> Path:
+    path = output_dir / "cnop_candidate_summary.csv"
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(
+            [
+                "source",
+                "target_year",
+                "rank",
+                "start_idx",
+                "seed",
+                "objective",
+                "baseline_max_3m",
+                "cnop_max_3m",
+                "gain_max_3m",
+                "refined_with_lbfgs",
+            ]
+        )
+        for result in results:
+            case: NeutralCase = result["case"]
+            for candidate in result.get("top_candidates", []):
+                writer.writerow(
+                    [
+                        case.source_name,
+                        case.target_year,
+                        candidate.get("rank"),
+                        candidate["start_idx"],
+                        candidate["seed"],
+                        candidate["objective"],
+                        result["baseline_max_3m"],
+                        candidate["cnop_max_3m"],
+                        candidate["gain_max_3m"],
+                        bool(candidate.get("refined_with_lbfgs", False)),
+                    ]
+                )
     return path
 
 
@@ -616,6 +980,11 @@ def write_method_json(output_dir: Path, args: argparse.Namespace, checkpoint: di
         "horizon": args.horizon,
         "steps": args.steps,
         "lr": args.lr,
+        "num_starts": args.num_starts,
+        "top_k": args.top_k,
+        "random_init_scale": args.random_init_scale,
+        "lbfgs_steps": args.lbfgs_steps,
+        "lbfgs_lr": args.lbfgs_lr,
         "epsilon_tos": args.epsilon_tos,
         "epsilon_zos": args.epsilon_zos,
         "max_abs": args.max_abs,
@@ -689,18 +1058,25 @@ def main() -> None:
             json.dumps(result["history"], indent=2),
             encoding="utf-8",
         )
+        (output_dir / f"case_{case.source_name}_{case.target_year}_candidates.json").write_text(
+            json.dumps([serializable_candidate(item) for item in result["top_candidates"]], indent=2),
+            encoding="utf-8",
+        )
         print(
             f"case {case.source_name} {case.target_year}: "
             f"baseline_max_3m={result['baseline_max_3m']:.4f} "
             f"cnop_max_3m={result['cnop_max_3m']:.4f} "
-            f"gain={result['gain_max_3m']:.4f}",
+            f"gain={result['gain_max_3m']:.4f} "
+            f"best_start={result['best_start_idx']}",
             flush=True,
         )
         results.append(result)
 
     summary_path = write_summary_csv(output_dir, results)
+    candidate_summary_path = write_candidate_summary_csv(output_dir, results)
     maybe_plot_results(output_dir, results, dataset)
     print(f"wrote {summary_path}", flush=True)
+    print(f"wrote {candidate_summary_path}", flush=True)
     print(f"wrote figures to {output_dir}", flush=True)
 
 
