@@ -92,6 +92,19 @@ outputs/cnop_tos_zos_patch_0703/figures/cnop_precursor_analysis.md
 
 后续方法升级为多初值 top-k CNOP 搜索：每个 case 默认从 16 个初值出发做 projected Adam，保存目标函数最强的 5 个局部 CNOP 候选，并支持对 top-k 进行 projected L-BFGS 精修。当前 `outputs/cnop_tos_zos_patch_0703` 的图来自升级前的 top-1 结果；如需比较“同一个 case 的多个最优扰动”，需要用新脚本重新运行 CNOP，输出中会包含 `top_delta_phys` 与 `cnop_candidate_summary.csv`。
 
+按“扰动二范数限制为初始 TOS/ZOS 场二范数 10%，并最大化第 12 个月 Niño3.4 扰动前后差值”的定义，已对 `IPSL-CM6A-LR 1880` 做真模型 smoke 实验：
+
+```text
+constraint_mode = relative_initial_l2
+relative_l2_fraction = 0.1
+objective_mode = lead_delta
+objective_lead = 12
+num_starts = 8
+steps = 40
+```
+
+结果显示最强候选的第 12 个月 Niño3.4 从 `-0.3489` 推到 `3.1160`，`lead_delta = 3.4649`；TOS 与 ZOS 的物理二范数比例均校验为 `0.1`。该约束明显宽于此前 `0.1σ RMS` 约束，因此响应强度也更大。
+
 ## 当前结论
 
 在 WalkerNet 这个训练好的非线性预报算子上，已经可以稳定求出 TOS/ZOS CNOP-like 扰动。该扰动施加在前一年 12 月输入场上，可以把本来 neutral 的目标年预报推向 El Niño-like 状态。
