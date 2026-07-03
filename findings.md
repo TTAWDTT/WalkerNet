@@ -31,6 +31,8 @@ This suggests WalkerNet's CNOP direction mainly acts by preconditioning the equa
 
 The per-case atlases confirm that this conclusion is not only a composite artifact. Nearly all TOS perturbations show positive central/eastern equatorial Pacific anomalies under a shared color scale. ZOS fields are more case-dependent, but many cases still show an equatorial band or east-west tilt-like structure.
 
+The optimization protocol now treats CNOP as a multi-solution search problem. Each case can be optimized from multiple initial perturbations, ranked by the softmax Nino3.4 objective, and saved as top-k local CNOP candidates. This avoids overclaiming that a single Adam trajectory has found the unique CNOP.
+
 ## Initial Method
 
 For each neutral target year `Y`:

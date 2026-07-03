@@ -98,12 +98,30 @@ J(delta) = tau * logsumexp([N_3, ..., N_12] / tau)
 
 ## 优化方法
 
-使用 PyTorch autograd 直接穿过 WalkerNet rollout 链：
+使用 PyTorch autograd 直接穿过 WalkerNet rollout 链。当前脚本不再只从单个零扰动初值出发，而是默认做多初值搜索：
 
 ```text
-delta <- Adam ascent on J(delta)
-delta <- project(delta)
+for each neutral case:
+    for start in 1..num_starts:
+        delta_start <- zero or random perturbation
+        delta <- Adam ascent on J(delta)
+        delta <- project(delta)
+    keep top-k local CNOP candidates
+    optionally refine top-k with projected L-BFGS
 ```
+
+默认参数：
+
+```text
+num_starts = 16
+top_k = 5
+random_init_scale = 0.02
+lbfgs_steps = 0
+```
+
+也就是说，默认保存每个 case 中目标函数最强的 5 个局部最优扰动。`lbfgs_steps` 默认为 0，是因为 L-BFGS 精修更贵，建议先用多初值 Adam 找候选，再对 top-k 做小步数精修实验。
+
+这样做的原因是 CNOP 目标函数是非线性、多峰的。单个扰动只能称为一个局部 CNOP-like 解；多初值 top-k 可以检查同一个 case 是否存在多种不同触发路径。
 
 为节省显存：
 
@@ -120,8 +138,10 @@ cnop_summary.csv
 method.json
 case_{source}_{year}.npz
 case_{source}_{year}_history.json
+case_{source}_{year}_candidates.json
 cnop_gain_summary.png
 best_case_cnop_maps_and_nino.png
+cnop_candidate_summary.csv
 ```
 
 其中 `best_case_cnop_maps_and_nino.png` 展示：
@@ -130,6 +150,21 @@ best_case_cnop_maps_and_nino.png
 2. 最强 case 的 ZOS CNOP 空间图；
 3. baseline 与 CNOP 后 monthly Niño3.4 anomaly；
 4. baseline 与 CNOP 后三个月平均 Niño3.4 anomaly。
+
+`case_{source}_{year}.npz` 仍保留旧字段 `delta_norm/delta_phys/cnop_nino/cnop_3m`，它们对应 top-1 最优扰动；同时新增：
+
+```text
+top_delta_norm
+top_delta_phys
+top_cnop_nino
+top_cnop_3m
+top_objective
+top_cnop_max_3m
+top_gain_max_3m
+top_start_idx
+```
+
+这些字段用于比较同一个 case 的多个局部 CNOP 候选。
 
 完成 CNOP 后，可以用下面的诊断脚本生成更适合汇报和论文草图的合成图：
 
