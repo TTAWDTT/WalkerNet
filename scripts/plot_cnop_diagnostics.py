@@ -450,7 +450,7 @@ def plot_case_atlas(
     norm = TwoSlopeNorm(vcenter=0.0, vmin=-vmax, vmax=vmax)
 
     fig, axes = plt.subplots(5, 2, figsize=(13.0, 14.5), layout="constrained", sharex=True, sharey=True)
-    for ax, case, field in zip(axes.ravel(), sorted_cases, fields, strict=True):
+    for ax, case, field in zip(axes.ravel(), sorted_cases, fields):
         field = mask_outside_view(field, lat, lon)
         mesh = ax.pcolormesh(lon, lat, field, shading="auto", cmap=cmap, norm=norm)
         setup_map_axis(ax, wide=True)
