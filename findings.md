@@ -19,6 +19,16 @@ The CNOP max 3-month Niño3.4 anomaly ranged from 0.863 to 1.879. The largest ga
 
 An exploratory full-grid perturbation produced high-frequency/checkerboard patterns, so the main method now optimizes a low-resolution patch grid and upsamples it. This keeps the perturbation more interpretable while preserving the induced ENSO response.
 
+Composite diagnostics show that the dominant precursor is a robust TOS pattern, not an isolated single-case texture. Across the 10 neutral cases, the optimized perturbation consistently warms the Nino3.4 / central-eastern equatorial Pacific region while the western equatorial Pacific is weaker or negative. The mean regional indices are:
+
+- Nino3.4 TOS perturbation: +1.2826.
+- Western equatorial Pacific TOS perturbation: -0.1701.
+- Central/eastern equatorial Pacific TOS perturbation: +1.0858.
+- TOS east-west contrast: +1.2560.
+- ZOS east-west tilt proxy: +0.0727.
+
+This suggests WalkerNet's CNOP direction mainly acts by preconditioning the equatorial Pacific SST gradient toward an El Nino-like response. ZOS contributes a weaker upper-ocean-state proxy signal, but it should not be interpreted as true heat content or thermocline depth.
+
 ## Initial Method
 
 For each neutral target year `Y`:
@@ -33,4 +43,5 @@ For each neutral target year `Y`:
 
 - What perturbation norm is physically reasonable for `zos` in this model?
 - Should perturbations be restricted to the tropical Pacific or allowed globally?
-- Do optimized perturbations produce coherent precursor patterns or only exploit model artifacts?
+- How sensitive are the precursor patterns to the perturbation radius (`0.05`, `0.1`, `0.2`)?
+- Does the same TOS-dominant precursor appear for negative CNOP / La Nina targets?

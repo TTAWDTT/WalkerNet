@@ -131,6 +131,24 @@ best_case_cnop_maps_and_nino.png
 3. baseline 与 CNOP 后 monthly Niño3.4 anomaly；
 4. baseline 与 CNOP 后三个月平均 Niño3.4 anomaly。
 
+完成 CNOP 后，可以用下面的诊断脚本生成更适合汇报和论文草图的合成图：
+
+```bash
+python scripts/plot_cnop_diagnostics.py \
+    --input-dir outputs/cnop_tos_zos_patch_0703
+```
+
+该脚本额外输出：
+
+```text
+figures/cnop_composite_diagnostics.png
+figures/cnop_composite_diagnostics.pdf
+figures/cnop_precursor_diagnostics.png
+figures/cnop_precursor_diagnostics.pdf
+figures/cnop_precursor_indices.csv
+figures/cnop_precursor_analysis.md
+```
+
 ## 注意事项
 
 这是“模型内 CNOP”，即对 WalkerNet 这个非线性预报算子的最优扰动，不等价于真实气候系统的严格 CNOP。若扰动图出现尖峰或不物理结构，需要继续加入更严格的物理约束、平滑约束或更小扰动半径敏感性实验。
