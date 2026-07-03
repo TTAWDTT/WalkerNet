@@ -78,6 +78,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lbfgs-lr", type=float, default=0.5)
     parser.add_argument("--epsilon-tos", type=float, default=0.1, help="Normalized RMS radius for TOS perturbation.")
     parser.add_argument("--epsilon-zos", type=float, default=0.1, help="Normalized RMS radius for ZOS perturbation.")
+    parser.add_argument(
+        "--constraint-mode",
+        type=str,
+        default="normalized_rms",
+        choices=("normalized_rms", "relative_initial_l2"),
+        help="Perturbation norm constraint. relative_initial_l2 uses physical ||delta||_2 <= fraction * ||initial field||_2.",
+    )
+    parser.add_argument("--relative-l2-fraction", type=float, default=0.1)
     parser.add_argument("--max-abs", type=float, default=2.0, help="Elementwise normalized perturbation clip.")
     parser.add_argument("--neutral-threshold", type=float, default=0.5)
     parser.add_argument("--domain", type=str, default="tropical_pacific", choices=("tropical_pacific", "global"))
@@ -85,6 +93,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--perturb-patch-size", type=int, default=4)
     parser.add_argument("--lat-bounds", type=str, default="-20,20")
     parser.add_argument("--lon-bounds", type=str, default="120,290")
+    parser.add_argument(
+        "--objective-mode",
+        type=str,
+        default="softmax_3m",
+        choices=("softmax_3m", "lead_delta"),
+        help="softmax_3m maximizes target-year 3-month Nino3.4; lead_delta maximizes perturbed minus baseline Nino3.4 at objective_lead.",
+    )
+    parser.add_argument("--objective-lead", type=int, default=12, help="1-based forecast lead used by objective-mode=lead_delta.")
     parser.add_argument("--objective-temperature", type=float, default=0.25)
     parser.add_argument("--smoothness-weight", type=float, default=0.001)
     parser.set_defaults(amp=True, checkpoint_rollout=True)
@@ -323,16 +339,31 @@ def project_delta_param(
     max_abs: float,
     target_hw: tuple[int, int],
     perturb_grid: str,
+    args: argparse.Namespace,
+    dataset: WalkerDataset | None = None,
+    x0: torch.Tensor | None = None,
 ) -> None:
     """Project perturbation parameters using the full-resolution perturbation norm."""
     with torch.no_grad():
         full_delta = expand_delta(delta_param, target_hw, perturb_grid)
         mask_f = mask.to(dtype=delta_param.dtype)
-        for idx, radius in enumerate(eps):
-            denom = mask_f[:, idx].sum().clamp_min(1.0)
-            rms = torch.sqrt((full_delta[:, idx].square() * mask_f[:, idx]).sum() / denom)
-            if float(rms.item()) > radius:
-                delta_param[:, idx].mul_(radius / rms)
+        if args.constraint_mode == "relative_initial_l2":
+            if dataset is None or x0 is None:
+                raise ValueError("relative_initial_l2 constraint requires dataset and x0")
+            delta_phys = normalized_delta_to_physical_tensor(dataset, full_delta)
+            x0_phys = dataset.denormalize(x0)[:, -1, :2]
+            for idx in range(2):
+                delta_norm = torch.sqrt((delta_phys[:, idx].square() * mask_f[:, idx]).sum())
+                initial_norm = torch.sqrt((x0_phys[:, idx].square() * mask_f[:, idx]).sum()).clamp_min(1.0e-6)
+                radius = float(args.relative_l2_fraction) * initial_norm
+                if float(delta_norm.item()) > float(radius.item()):
+                    delta_param[:, idx].mul_(radius / delta_norm)
+        else:
+            for idx, radius in enumerate(eps):
+                denom = mask_f[:, idx].sum().clamp_min(1.0)
+                rms = torch.sqrt((full_delta[:, idx].square() * mask_f[:, idx]).sum() / denom)
+                if float(rms.item()) > radius:
+                    delta_param[:, idx].mul_(radius / rms)
         delta_param.clamp_(min=-max_abs, max=max_abs)
 
 
@@ -345,12 +376,16 @@ def smoothness_penalty(delta: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     return ((dx.square() * mx).sum() + (dy.square() * my).sum()) / (mx.sum() + my.sum()).clamp_min(1.0)
 
 
-def cnop_objective(nino_anom: torch.Tensor, temperature: float) -> torch.Tensor:
-    """Soft maximum over target-year 3-month Nino3.4 anomaly."""
+def cnop_objective(nino_anom: torch.Tensor, baseline_nino: torch.Tensor, args: argparse.Namespace) -> torch.Tensor:
+    """Return the selected CNOP objective."""
+    if args.objective_mode == "lead_delta":
+        lead_idx = min(max(int(args.objective_lead), 1), int(args.horizon)) - 1
+        return nino_anom[lead_idx] - baseline_nino[lead_idx]
+
     rolling = three_month_mean(nino_anom)
     if rolling.numel() == 0:
         rolling = nino_anom
-    temp = max(float(temperature), 1e-6)
+    temp = max(float(args.objective_temperature), 1e-6)
     return temp * torch.logsumexp(rolling / temp, dim=0)
 
 
@@ -360,6 +395,7 @@ def initialize_delta_param(
     mask: torch.Tensor,
     eps: tuple[float, float],
     args: argparse.Namespace,
+    dataset: WalkerDataset,
     target_hw: tuple[int, int],
     start_idx: int,
     seed: int,
@@ -371,7 +407,7 @@ def initialize_delta_param(
         generator = torch.Generator(device=x0.device)
         generator.manual_seed(int(seed))
         delta_param.normal_(mean=0.0, std=float(args.random_init_scale), generator=generator)
-    project_delta_param(delta_param, mask, eps, float(args.max_abs), target_hw, args.perturb_grid)
+    project_delta_param(delta_param, mask, eps, float(args.max_abs), target_hw, args.perturb_grid, args, dataset=dataset, x0=x0)
     return delta_param.requires_grad_(True)
 
 
@@ -387,6 +423,7 @@ def evaluate_delta(
     trained_rollout_steps: int,
     lat: torch.Tensor,
     lon: torch.Tensor,
+    baseline_nino: torch.Tensor,
     baseline_3m: torch.Tensor,
     use_checkpoint: bool,
 ) -> dict[str, Any]:
@@ -407,11 +444,14 @@ def evaluate_delta(
         use_checkpoint=use_checkpoint,
     )
     rolling = three_month_mean(nino)
-    objective = cnop_objective(nino, args.objective_temperature)
+    objective = cnop_objective(nino, baseline_nino, args)
+    lead_idx = min(max(int(args.objective_lead), 1), int(args.horizon)) - 1
     return {
         "nino": nino,
         "three_month": rolling,
         "objective": objective,
+        "lead_nino": nino[lead_idx],
+        "lead_delta": nino[lead_idx] - baseline_nino[lead_idx],
         "max_3m": rolling.max(),
         "mean_3m": rolling.mean(),
         "gain_max_3m": rolling.max() - baseline_3m.max(),
@@ -429,6 +469,7 @@ def optimize_single_start(
     trained_rollout_steps: int,
     lat: torch.Tensor,
     lon: torch.Tensor,
+    baseline_nino: torch.Tensor,
     baseline_3m: torch.Tensor,
     target_hw: tuple[int, int],
     param_hw: tuple[int, int],
@@ -444,6 +485,7 @@ def optimize_single_start(
         mask,
         eps,
         args,
+        dataset,
         target_hw,
         start_idx,
         seed,
@@ -466,6 +508,7 @@ def optimize_single_start(
             trained_rollout_steps,
             lat,
             lon,
+            baseline_nino,
             baseline_3m,
             use_checkpoint=args.checkpoint_rollout,
         )
@@ -473,13 +516,14 @@ def optimize_single_start(
         loss = -metrics["objective"] + penalty
         loss.backward()
         optimizer.step()
-        project_delta_param(delta_param, mask, eps, float(args.max_abs), target_hw, args.perturb_grid)
+        project_delta_param(delta_param, mask, eps, float(args.max_abs), target_hw, args.perturb_grid, args, dataset=dataset, x0=x0)
 
         if step == 1 or step == int(args.steps) or step % max(1, int(args.steps) // 10) == 0:
             history.append(
                 {
                     "step": float(step),
                     "objective": float(metrics["objective"].detach().cpu().item()),
+                    "lead_delta": float(metrics["lead_delta"].detach().cpu().item()),
                     "max_3m": float(metrics["max_3m"].detach().cpu().item()),
                     "mean_3m": float(metrics["mean_3m"].detach().cpu().item()),
                     "loss": float(loss.detach().cpu().item()),
@@ -500,6 +544,7 @@ def optimize_single_start(
             trained_rollout_steps,
             lat,
             lon,
+            baseline_nino,
             baseline_3m,
             use_checkpoint=False,
         )
@@ -513,6 +558,8 @@ def optimize_single_start(
         "final_nino": final_metrics["nino"].detach().cpu().numpy(),
         "final_3m": final_metrics["three_month"].detach().cpu().numpy(),
         "objective": float(final_metrics["objective"].detach().cpu().item()),
+        "lead_nino": float(final_metrics["lead_nino"].detach().cpu().item()),
+        "lead_delta": float(final_metrics["lead_delta"].detach().cpu().item()),
         "cnop_max_3m": float(final_metrics["max_3m"].detach().cpu().item()),
         "gain_max_3m": float(final_metrics["gain_max_3m"].detach().cpu().item()),
         "history": history,
@@ -530,6 +577,7 @@ def refine_with_lbfgs(
     trained_rollout_steps: int,
     lat: torch.Tensor,
     lon: torch.Tensor,
+    baseline_nino: torch.Tensor,
     baseline_3m: torch.Tensor,
     target_hw: tuple[int, int],
     eps: tuple[float, float],
@@ -560,6 +608,7 @@ def refine_with_lbfgs(
             trained_rollout_steps,
             lat,
             lon,
+            baseline_nino,
             baseline_3m,
             use_checkpoint=args.checkpoint_rollout,
         )
@@ -569,7 +618,7 @@ def refine_with_lbfgs(
         return loss
 
     optimizer.step(closure)
-    project_delta_param(delta_param, mask, eps, float(args.max_abs), target_hw, args.perturb_grid)
+    project_delta_param(delta_param, mask, eps, float(args.max_abs), target_hw, args.perturb_grid, args, dataset=dataset, x0=x0)
     return delta_param.detach()
 
 
@@ -584,6 +633,7 @@ def candidate_from_delta_param(
     trained_rollout_steps: int,
     lat: torch.Tensor,
     lon: torch.Tensor,
+    baseline_nino: torch.Tensor,
     baseline_3m: torch.Tensor,
     target_hw: tuple[int, int],
     delta_param: torch.Tensor,
@@ -605,6 +655,7 @@ def candidate_from_delta_param(
             trained_rollout_steps,
             lat,
             lon,
+            baseline_nino,
             baseline_3m,
             use_checkpoint=False,
         )
@@ -617,6 +668,8 @@ def candidate_from_delta_param(
             "final_nino": metrics["nino"].detach().cpu().numpy(),
             "final_3m": metrics["three_month"].detach().cpu().numpy(),
             "objective": float(metrics["objective"].detach().cpu().item()),
+            "lead_nino": float(metrics["lead_nino"].detach().cpu().item()),
+            "lead_delta": float(metrics["lead_delta"].detach().cpu().item()),
             "cnop_max_3m": float(metrics["max_3m"].detach().cpu().item()),
             "gain_max_3m": float(metrics["gain_max_3m"].detach().cpu().item()),
             "refined_with_lbfgs": True,
@@ -687,6 +740,7 @@ def optimize_case(
             trained_rollout_steps,
             lat,
             lon,
+            baseline_nino,
             baseline_3m,
             target_hw,
             param_hw,
@@ -698,6 +752,7 @@ def optimize_case(
         print(
             f"  start {start_idx + 1}/{num_starts}: "
             f"objective={candidate['objective']:.4f} "
+            f"lead_delta={candidate['lead_delta']:.4f} "
             f"cnop_max_3m={candidate['cnop_max_3m']:.4f} "
             f"gain={candidate['gain_max_3m']:.4f}",
             flush=True,
@@ -719,6 +774,7 @@ def optimize_case(
                 trained_rollout_steps,
                 lat,
                 lon,
+                baseline_nino,
                 baseline_3m,
                 target_hw,
                 eps,
@@ -736,6 +792,7 @@ def optimize_case(
                     trained_rollout_steps,
                     lat,
                     lon,
+                    baseline_nino,
                     baseline_3m,
                     target_hw,
                     refined_param,
@@ -748,6 +805,7 @@ def optimize_case(
     for rank, candidate in enumerate(top_candidates, start=1):
         candidate["rank"] = rank
     best = top_candidates[0]
+    lead_idx = min(max(int(args.objective_lead), 1), int(args.horizon)) - 1
 
     return {
         "case": case,
@@ -763,6 +821,9 @@ def optimize_case(
         "top_candidates": top_candidates,
         "mask_count": int(mask.sum().detach().cpu().item()),
         "baseline_max_3m": float(baseline_3m.max().detach().cpu().item()),
+        "baseline_lead_nino": float(baseline_nino[lead_idx].detach().cpu().item()),
+        "cnop_lead_nino": best["lead_nino"],
+        "lead_delta": best["lead_delta"],
         "cnop_max_3m": best["cnop_max_3m"],
         "gain_max_3m": best["gain_max_3m"],
         "best_start_idx": best["start_idx"],
@@ -772,18 +833,23 @@ def optimize_case(
 
 def normalized_delta_to_physical(dataset: WalkerDataset, delta: torch.Tensor) -> np.ndarray:
     """Convert normalized TOS/ZOS perturbation to physical units."""
+    return normalized_delta_to_physical_tensor(dataset, delta).detach().cpu().numpy()
+
+
+def normalized_delta_to_physical_tensor(dataset: WalkerDataset, delta: torch.Tensor) -> torch.Tensor:
+    """Convert normalized TOS/ZOS perturbation to physical units as a tensor."""
     if dataset.norm == "none":
-        return delta.detach().cpu().numpy()
+        return delta
     if dataset.norm == "zscore":
         std = dataset._std[:2].to(device=delta.device, dtype=delta.dtype)  # noqa: SLF001
         std = std.view(1, 2, *([1] * (delta.ndim - 2)))
-        return (delta * std).detach().cpu().numpy()
+        return delta * std
     if dataset.norm == "minmax":
         min_value = dataset._min[:2].to(device=delta.device, dtype=delta.dtype)  # noqa: SLF001
         max_value = dataset._max[:2].to(device=delta.device, dtype=delta.dtype)  # noqa: SLF001
         scale = max_value - min_value
         scale = scale.view(1, 2, *([1] * (delta.ndim - 2)))
-        return (delta * scale).detach().cpu().numpy()
+        return delta * scale
     raise ValueError(f"Unsupported normalization: {dataset.norm}")
 
 
@@ -800,6 +866,8 @@ def write_case_npz(output_dir: Path, result: dict[str, Any], dataset: WalkerData
         top_cnop_nino=np.stack([item["final_nino"] for item in top_candidates], axis=0) if top_candidates else np.empty((0,)),
         top_cnop_3m=np.stack([item["final_3m"] for item in top_candidates], axis=0) if top_candidates else np.empty((0,)),
         top_objective=np.asarray([item["objective"] for item in top_candidates], dtype=np.float32),
+        top_lead_nino=np.asarray([item["lead_nino"] for item in top_candidates], dtype=np.float32),
+        top_lead_delta=np.asarray([item["lead_delta"] for item in top_candidates], dtype=np.float32),
         top_cnop_max_3m=np.asarray([item["cnop_max_3m"] for item in top_candidates], dtype=np.float32),
         top_gain_max_3m=np.asarray([item["gain_max_3m"] for item in top_candidates], dtype=np.float32),
         top_start_idx=np.asarray([item["start_idx"] for item in top_candidates], dtype=np.int32),
@@ -821,6 +889,8 @@ def serializable_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
         "start_idx": candidate["start_idx"],
         "seed": candidate["seed"],
         "objective": candidate["objective"],
+        "lead_nino": candidate["lead_nino"],
+        "lead_delta": candidate["lead_delta"],
         "cnop_max_3m": candidate["cnop_max_3m"],
         "gain_max_3m": candidate["gain_max_3m"],
         "refined_with_lbfgs": bool(candidate.get("refined_with_lbfgs", False)),
@@ -839,6 +909,9 @@ def write_summary_csv(output_dir: Path, results: list[dict[str, Any]]) -> Path:
                 "target_t",
                 "observed_max_3m_abs",
                 "baseline_max_3m",
+                "baseline_lead_nino",
+                "cnop_lead_nino",
+                "lead_delta",
                 "cnop_max_3m",
                 "gain_max_3m",
                 "best_start_idx",
@@ -855,6 +928,9 @@ def write_summary_csv(output_dir: Path, results: list[dict[str, Any]]) -> Path:
                     case.target_t,
                     case.observed_max_3m_abs,
                     result["baseline_max_3m"],
+                    result["baseline_lead_nino"],
+                    result["cnop_lead_nino"],
+                    result["lead_delta"],
                     result["cnop_max_3m"],
                     result["gain_max_3m"],
                     result["best_start_idx"],
@@ -877,6 +953,9 @@ def write_candidate_summary_csv(output_dir: Path, results: list[dict[str, Any]])
                 "start_idx",
                 "seed",
                 "objective",
+                "baseline_lead_nino",
+                "cnop_lead_nino",
+                "lead_delta",
                 "baseline_max_3m",
                 "cnop_max_3m",
                 "gain_max_3m",
@@ -894,6 +973,9 @@ def write_candidate_summary_csv(output_dir: Path, results: list[dict[str, Any]])
                         candidate["start_idx"],
                         candidate["seed"],
                         candidate["objective"],
+                        result["baseline_lead_nino"],
+                        candidate["lead_nino"],
+                        candidate["lead_delta"],
                         result["baseline_max_3m"],
                         candidate["cnop_max_3m"],
                         candidate["gain_max_3m"],
@@ -987,6 +1069,8 @@ def write_method_json(output_dir: Path, args: argparse.Namespace, checkpoint: di
         "lbfgs_lr": args.lbfgs_lr,
         "epsilon_tos": args.epsilon_tos,
         "epsilon_zos": args.epsilon_zos,
+        "constraint_mode": args.constraint_mode,
+        "relative_l2_fraction": args.relative_l2_fraction,
         "max_abs": args.max_abs,
         "domain": args.domain,
         "perturb_grid": args.perturb_grid,
@@ -996,7 +1080,9 @@ def write_method_json(output_dir: Path, args: argparse.Namespace, checkpoint: di
         "amp": args.amp,
         "checkpoint_rollout": args.checkpoint_rollout,
         "smoothness_weight": args.smoothness_weight,
-        "objective": "softmax over target-year 3-month mean Nino3.4 anomaly",
+        "objective_mode": args.objective_mode,
+        "objective_lead": args.objective_lead,
+        "objective": "lead_delta maximizes perturbed-minus-baseline Nino3.4 at objective_lead; softmax_3m maximizes target-year 3-month mean Nino3.4 anomaly",
         "selected_cases": [
             {
                 "source": case.source_name,

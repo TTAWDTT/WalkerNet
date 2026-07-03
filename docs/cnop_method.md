@@ -74,6 +74,22 @@ smoothness_weight = 0.001
 
 这里的 0.1 表示训练归一化后的 0.1 个标准差量级。脚本每一步优化后都会把扰动投影回约束集合。
 
+也可以使用更接近经典 CNOP 表述的相对二范数约束：
+
+```bash
+--constraint-mode relative_initial_l2 \
+--relative-l2-fraction 0.1
+```
+
+此时在物理量空间、扰动允许区域内分别满足：
+
+```text
+||delta_tos||_2 <= 0.1 * ||tos_initial||_2
+||delta_zos||_2 <= 0.1 * ||zos_initial||_2
+```
+
+其中 `tos_initial/zos_initial` 指输入窗口第 12 个月的初始场。
+
 ## 目标函数
 
 对扰动后的输入做 12 个月 rollout：
@@ -95,6 +111,21 @@ J(delta) = tau * logsumexp([N_3, ..., N_12] / tau)
 ```
 
 默认 `tau = 0.25`。这样比直接 `max` 更平滑，适合梯度优化。
+
+如果希望按“第 12 个月扰动前后 Niño3.4 指数差”定义 CNOP，可以使用：
+
+```bash
+--objective-mode lead_delta \
+--objective-lead 12
+```
+
+此时目标函数变为：
+
+```text
+J(delta) = Nino3.4_12(F(x + delta)) - Nino3.4_12(F(x))
+```
+
+其中 `F(x)` 是未加扰动的 baseline rollout，`F(x + delta)` 是加扰动后的 rollout。
 
 ## 优化方法
 
@@ -159,6 +190,8 @@ top_delta_phys
 top_cnop_nino
 top_cnop_3m
 top_objective
+top_lead_nino
+top_lead_delta
 top_cnop_max_3m
 top_gain_max_3m
 top_start_idx
