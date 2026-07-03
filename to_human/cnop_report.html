@@ -15,6 +15,7 @@
     .grid { display: grid; grid-template-columns: 1fr; gap: 22px; max-width: 1200px; }
     img { width: 100%; border: 1px solid #d8e1e8; }
     code { background: #eef5f8; padding: 2px 5px; border-radius: 4px; }
+    .note { background: #f6fafc; border-left: 4px solid #0b6b8f; padding: 14px 18px; margin: 18px 0; }
   </style>
 </head>
 <body>
@@ -52,10 +53,25 @@
     </tbody>
   </table>
 
+  <h2>扰动因子与前兆信号</h2>
+  <div class="note">
+    <p>
+      合成诊断显示，当前 CNOP 的主导因子是 TOS：Niño3.4 与中东赤道太平洋出现稳定正扰动，
+      西太平洋赤道区域较弱或偏负，整体形成“东暖西弱”的赤道海温梯度调整。
+      ZOS 也存在正的东西向倾斜信号，可作为上层海洋状态代理，但一致性弱于 TOS，不能直接等同于真实热含量。
+    </p>
+    <p>
+      区域平均上，Niño3.4 TOS 扰动为 <code>+1.2826</code>，
+      中东赤道太平洋 TOS 为 <code>+1.0858</code>，
+      西太平洋赤道 TOS 为 <code>-0.1701</code>，
+      ZOS 东西向倾斜指标为 <code>+0.0727</code>。
+    </p>
+  </div>
+
   <h2>图</h2>
   <div class="grid">
-    <img src="../outputs/cnop_tos_zos_patch_0703/cnop_gain_summary.png" alt="CNOP gain summary">
-    <img src="../outputs/cnop_tos_zos_patch_0703/best_case_cnop_maps_and_nino.png" alt="Best CNOP case maps">
+    <img src="../outputs/cnop_tos_zos_patch_0703/figures/cnop_composite_diagnostics.png" alt="CNOP composite diagnostics">
+    <img src="../outputs/cnop_tos_zos_patch_0703/figures/cnop_precursor_diagnostics.png" alt="CNOP precursor diagnostics">
   </div>
 </body>
 </html>

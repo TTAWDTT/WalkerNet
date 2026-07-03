@@ -44,6 +44,16 @@ smoothness_weight = 0.001
 4. 最大 gain 出现在 `GFDL-ESM4 1930`，从 `-0.606` 推到 `1.114`，gain 为 `1.721`。
 5. `GFDL-ESM4 1995` 的最终强度最高，达到 `1.688`。
 
+## 扰动因子与前兆诊断
+
+重新绘制合成图后，CNOP 的主要结构比单个 case 图更清楚：
+
+1. **TOS 是主导因子。** 10 个 neutral case 的合成扰动在 Niño3.4 与中东赤道太平洋呈稳定正值，Niño3.4 区域平均 TOS 扰动为 `+1.2826`，中东赤道太平洋为 `+1.0858`。
+2. **关键前兆像“东暖西弱”的赤道海温梯度调整。** 西太平洋赤道区域平均 TOS 扰动为 `-0.1701`，而中东太平洋明显为正，东西向对比为 `+1.2560`。这说明最优扰动不是简单全海盆升温，而是在 ENSO 敏感区加强东/中太平洋暖异常。
+3. **ZOS 提供上层海洋状态线索，但不如 TOS 稳。** ZOS 东西向倾斜指标平均为 `+0.0727`，可以理解为 WalkerNet 内部利用了海面高度/上层海洋状态代理来配合海温响应；但该信号跨 case 的一致性弱于 TOS，不能把它等同于真实热含量或严格热跃层深度。
+4. **扰动空间形态具有跨 case 一致性。** `|mean| / spread` 与 sign-agreement 图显示，Niño3.4 盒及其附近的正 TOS 扰动并不是单个年份偶然纹理，而是多个 neutral case 共同指向的敏感方向。
+5. **gain 大小还受 baseline 初态影响。** baseline 越偏负的 case 往往有更大的可增长空间，例如 `GFDL-ESM4 1930` 从 `-0.606` 被推到 `1.114`，gain 最大；而最终强度最高的是 baseline 已经偏正的 `MPI-ESM1-2-HR 2003`。
+
 ## 图像输出
 
 服务器输出目录：
@@ -57,7 +67,16 @@ smoothness_weight = 0.001
 ```text
 outputs/cnop_tos_zos_patch_0703/cnop_gain_summary.png
 outputs/cnop_tos_zos_patch_0703/best_case_cnop_maps_and_nino.png
+outputs/cnop_tos_zos_patch_0703/figures/cnop_composite_diagnostics.png
+outputs/cnop_tos_zos_patch_0703/figures/cnop_precursor_diagnostics.png
+outputs/cnop_tos_zos_patch_0703/figures/cnop_precursor_indices.csv
+outputs/cnop_tos_zos_patch_0703/figures/cnop_precursor_analysis.md
 ```
+
+新图说明：
+
+- `cnop_composite_diagnostics.png/pdf`：展示 TOS/ZOS 合成 CNOP 扰动、baseline/CNOP Niño3.4 月序列，以及各 case 的 gain。
+- `cnop_precursor_diagnostics.png/pdf`：展示 TOS 扰动稳健性、符号一致性、区域前兆指数，以及 baseline 与 gain 的关系。
 
 ## 方法修正记录
 
@@ -75,4 +94,3 @@ outputs/cnop_tos_zos_patch_0703/best_case_cnop_maps_and_nino.png
 2. 做扰动半径敏感性实验，例如 `0.05, 0.1, 0.2`。
 3. 增加更物理的空间平滑或能量约束。
 4. 检查 CNOP 模式是否跨 source 一致。
-
