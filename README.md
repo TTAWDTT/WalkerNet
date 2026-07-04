@@ -149,6 +149,84 @@ rollout_selection:
 
 因此，`rollout_skill` 主要用于训练过程中快速选择 checkpoint；正式报告仍应同时查看每个 lead 的 ACC、RMSE 和空间场评估。
 
+## 当前 Niño3.4 测试结果
+
+以下结果来自 `best_skill.pt` 在 test split 上的 rollout 评测，评测样本数为 305，最大 lead 为 24 个月。模型训练课程最长到 18 个月，因此 lead 24 属于额外外推检验。
+
+月尺度 Niño3.4 anomaly：
+
+| Lead（月） | Model ACC | Model RMSE | Persistence ACC | Persistence RMSE |
+|---:|---:|---:|---:|---:|
+| 3 | 0.915 | 0.520 | 0.653 | 1.164 |
+| 6 | 0.834 | 0.769 | 0.411 | 1.515 |
+| 9 | 0.755 | 1.007 | 0.106 | 1.747 |
+| 12 | 0.701 | 1.177 | -0.276 | 1.920 |
+| 18 | 0.636 | 1.346 | -0.363 | 2.338 |
+| 24 | 0.465 | 1.493 | -0.420 | 2.056 |
+
+三个月滑动平均 Niño3.4 anomaly：
+
+| Lead（月） | Model ACC | Model RMSE | Persistence ACC | Persistence RMSE |
+|---:|---:|---:|---:|---:|
+| 3 | 0.958 | 0.363 | 0.807 | 0.808 |
+| 6 | 0.873 | 0.658 | 0.504 | 1.384 |
+| 9 | 0.789 | 0.904 | 0.231 | 1.622 |
+| 12 | 0.729 | 1.098 | -0.152 | 1.803 |
+| 18 | 0.663 | 1.294 | -0.393 | 2.323 |
+| 24 | 0.504 | 1.461 | -0.446 | 2.073 |
+
+## CNOP 敏感扰动示例
+
+当前 CNOP 实验使用已经训练好的 `best_skill.pt`，在同一个中性样本
+`IPSL-CM6A-LR 1880` 上优化输入窗口第 12 个月的 `tos/zos` 扰动。
+约束采用物理量 L2 范数：
+
+```text
+||delta_tos||_2 <= 3% * ||initial_tos||_2
+||delta_zos||_2 <= 3% * ||initial_zos||_2
+```
+
+目标函数为最大化 lead-12 Niño3.4 anomaly 的变化量：
+
+```text
+J(delta) = Nino3.4_12(F(x + delta)) - Nino3.4_12(F(x))
+```
+
+该样本的 3% 约束结果：
+
+| Item | Value |
+|---|---:|
+| baseline lead-12 Niño3.4 | -0.349 |
+| CNOP lead-12 Niño3.4 | 0.510 |
+| lead-12 gain | 0.859 |
+| baseline max 3-month mean | -0.032 |
+| CNOP max 3-month mean | 0.610 |
+
+CNOP 本体，即实际加在输入第 12 个月上的 `delta_tos / delta_zos`：
+
+<p align="center">
+  <img src="./docs/assets/cnop_3pct_initial_perturbation.jpg" alt="CNOP initial perturbation" width="880">
+</p>
+
+真值、原始预报、叠加 CNOP 后预报、二者差值的 lead-12 对比：
+
+<p align="center">
+  <img src="./docs/assets/cnop_3pct_truth_comparison.jpg" alt="CNOP forecast comparison with observed truth" width="980">
+</p>
+
+同一初始场、同一目标函数下的多个局地最优扰动。rank 1-3 形态高度接近，
+说明当前设置下优化主要收敛到同一个主导敏感模态：
+
+<p align="center">
+  <img src="./docs/assets/cnop_3pct_multi_optima.jpg" alt="Multiple CNOP local optima" width="880">
+</p>
+
+`F(x + delta) - F(x)` 的逐月响应演化：
+
+<p align="center">
+  <img src="./docs/assets/cnop_3pct_response_evolution.jpg" alt="CNOP response evolution" width="980">
+</p>
+
 ## 常用命令
 
 单卡训练：
