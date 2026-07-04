@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FormatStrFormatter
 from matplotlib.colors import LinearSegmentedColormap
 import numpy as np
 import torch
@@ -61,6 +63,21 @@ ZOS_CMAP = LinearSegmentedColormap.from_list(
 )
 
 
+@dataclass
+class CaseProducts:
+    """一个 CNOP 候选扰动对应的全部可视化材料。"""
+
+    perturbation: np.ndarray
+    baseline: np.ndarray
+    perturbed: np.ndarray
+    response: np.ndarray
+    lat: np.ndarray
+    lon: np.ndarray
+    labels: list[str]
+    source: str
+    year: int
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Plot paper-style CNOP response figure.")
     parser.add_argument("--config", type=Path, required=True)
@@ -83,9 +100,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--arrow-scale", type=float, default=4.5)
     parser.add_argument("--tos-vmax", type=float, default=2.6)
     parser.add_argument("--zos-vmax", type=float, default=0.08)
+    parser.add_argument("--perturb-tos-vmax", type=float, default=0.0, help="0 means auto percentile.")
+    parser.add_argument("--perturb-zos-vmax", type=float, default=0.0, help="0 means auto percentile.")
     parser.add_argument("--contour-levels", type=int, default=23)
     parser.add_argument("--zero-contour", action="store_true", default=True)
     parser.add_argument("--trained-rollout-steps", type=int, default=0)
+    parser.add_argument("--skip-response", action="store_true")
+    parser.add_argument("--skip-perturbation", action="store_true")
+    parser.add_argument("--skip-comparison", action="store_true")
     return parser.parse_args()
 
 
@@ -201,6 +223,21 @@ def contour_map(
     return mappable
 
 
+def plain_contour_map(
+    ax: plt.Axes,
+    lon: np.ndarray,
+    lat: np.ndarray,
+    field: np.ndarray,
+    levels: np.ndarray,
+    cmap: str | LinearSegmentedColormap,
+    extend: str = "both",
+):
+    kwargs = {"levels": levels, "cmap": cmap, "extend": extend}
+    if HAS_CARTOPY:
+        kwargs["transform"] = ccrs.PlateCarree()
+    return ax.contourf(lon, lat, field, **kwargs)
+
+
 def quiver_map(
     ax: plt.Axes,
     lon: np.ndarray,
@@ -238,7 +275,7 @@ def quiver_map(
     )
 
 
-def build_response(
+def build_case_products(
     config_path: Path,
     checkpoint_path: Path,
     cnop_dir: Path,
@@ -249,7 +286,7 @@ def build_response(
     device_name: str,
     horizon: int,
     trained_rollout_steps_arg: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str], str, int]:
+) -> CaseProducts:
     device = torch.device(device_name if torch.cuda.is_available() or device_name == "cpu" else "cpu")
     config = load_config(config_path)
     dataset = WalkerDataset(config["data"]["path"], config, split=split)
@@ -263,6 +300,7 @@ def build_response(
     x0 = make_case_input(dataset, case, device)
     delta = torch.from_numpy(delta_norm).to(device=device, dtype=x0.dtype).unsqueeze(0)
     x_pert = apply_delta(x0, delta, torch.ones_like(delta, dtype=torch.bool))
+    perturbation = (dataset.denormalize(x_pert)[:, -1, :2] - dataset.denormalize(x0)[:, -1, :2])[0].detach().cpu().numpy()
     baseline = rollout_fields(model, dataset, case, x0, horizon, trained_rollout_steps)
     perturbed = rollout_fields(model, dataset, case, x_pert, horizon, trained_rollout_steps)
     response = (perturbed - baseline).numpy()
@@ -271,7 +309,17 @@ def build_response(
     lat = np.asarray(payload["lat"], dtype=np.float64)
     lon = np.asarray(payload["lon"], dtype=np.float64)
     labels = month_labels(case, dataset, horizon)
-    return response, lat, lon, labels, source, year
+    return CaseProducts(
+        perturbation=perturbation,
+        baseline=baseline.numpy(),
+        perturbed=perturbed.numpy(),
+        response=response,
+        lat=lat,
+        lon=lon,
+        labels=labels,
+        source=source,
+        year=year,
+    )
 
 
 def lowpass_response(response: np.ndarray, scalar_sigma: float, vector_sigma: float) -> np.ndarray:
@@ -281,6 +329,165 @@ def lowpass_response(response: np.ndarray, scalar_sigma: float, vector_sigma: fl
             sigma = vector_sigma if var_idx in (2, 3) else scalar_sigma
             plot_response[month_idx, var_idx] = smooth_field(response[month_idx, var_idx], sigma)
     return plot_response
+
+
+def symmetric_vmax(field: np.ndarray, fallback: float, percentile: float = 98.0) -> float:
+    if fallback > 0:
+        return float(fallback)
+    return max(float(np.nanpercentile(np.abs(field), percentile)), 1.0e-8)
+
+
+def plot_perturbation_figure(
+    perturbation: np.ndarray,
+    lat: np.ndarray,
+    lon: np.ndarray,
+    source: str,
+    year: int,
+    rank: int,
+    output_dir: Path,
+    dpi: int,
+    smooth_sigma: float,
+    tos_vmax: float,
+    zos_vmax: float,
+    contour_levels: int,
+    zero_contour: bool,
+) -> Path:
+    """画 CNOP 本体：输入第 12 个月上实际加入的 δTOS 与 δZOS。"""
+
+    plot_delta = np.stack([smooth_field(perturbation[0], smooth_sigma), smooth_field(perturbation[1], smooth_sigma)])
+    tos_lim = symmetric_vmax(plot_delta[0], tos_vmax)
+    zos_lim = symmetric_vmax(plot_delta[1], zos_vmax)
+    tos_levels = np.linspace(-tos_lim, tos_lim, contour_levels)
+    zos_levels = np.linspace(-zos_lim, zos_lim, contour_levels)
+
+    proj = projection()
+    fig = plt.figure(figsize=(10.8, 4.2))
+    gs = fig.add_gridspec(1, 2, wspace=0.10)
+    axes = [
+        fig.add_subplot(gs[0, 0], projection=proj) if HAS_CARTOPY else fig.add_subplot(gs[0, 0]),
+        fig.add_subplot(gs[0, 1], projection=proj) if HAS_CARTOPY else fig.add_subplot(gs[0, 1]),
+    ]
+    m0 = contour_map(axes[0], lon, lat, plot_delta[0], tos_levels, TOS_CMAP, zero_contour)
+    add_map_features(axes[0], show_xticks=True, show_yticks=True)
+    axes[0].set_title("(a) CNOP initial perturbation: delta TOS", fontweight="bold")
+
+    m1 = contour_map(axes[1], lon, lat, plot_delta[1], zos_levels, ZOS_CMAP, zero_contour)
+    add_map_features(axes[1], show_xticks=True, show_yticks=False)
+    axes[1].set_title("(b) CNOP initial perturbation: delta ZOS", fontweight="bold")
+
+    cax0 = fig.add_axes([0.17, 0.08, 0.28, 0.028])
+    cax1 = fig.add_axes([0.57, 0.08, 0.28, 0.028])
+    cb0 = fig.colorbar(m0, cax=cax0, orientation="horizontal")
+    cb0.ax.xaxis.set_major_formatter(FormatStrFormatter("%.2f"))
+    cb0.set_label("delta TOS")
+    cb1 = fig.colorbar(m1, cax=cax1, orientation="horizontal")
+    cb1.ax.xaxis.set_major_formatter(FormatStrFormatter("%.3f"))
+    cb1.set_label("delta ZOS")
+    fig.suptitle(f"CNOP initial perturbation: {source} {year}, candidate rank {rank}", fontsize=12, fontweight="bold", y=0.96)
+    fig.subplots_adjust(left=0.04, right=0.99, top=0.86, bottom=0.18)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / f"cnop_initial_perturbation_{source}_{year}_rank{rank}.png"
+    fig.savefig(path, dpi=dpi)
+    fig.savefig(path.with_suffix(".pdf"), dpi=dpi)
+    plt.close(fig)
+    return path
+
+
+def plot_comparison_figure(
+    baseline: np.ndarray,
+    perturbed: np.ndarray,
+    response: np.ndarray,
+    lat: np.ndarray,
+    lon: np.ndarray,
+    labels: list[str],
+    source: str,
+    year: int,
+    rank: int,
+    lead: int,
+    output_dir: Path,
+    dpi: int,
+    smooth_sigma: float,
+    tos_vmax: float,
+    zos_vmax: float,
+    contour_levels: int,
+    zero_contour: bool,
+) -> Path:
+    """画 baseline、叠加扰动后预测、二者差值，明确展示对比链条。"""
+
+    idx = min(max(lead, 1), baseline.shape[0]) - 1
+    base = np.stack([smooth_field(baseline[idx, 0], smooth_sigma), smooth_field(baseline[idx, 1], smooth_sigma)])
+    pert = np.stack([smooth_field(perturbed[idx, 0], smooth_sigma), smooth_field(perturbed[idx, 1], smooth_sigma)])
+    diff = np.stack([smooth_field(response[idx, 0], smooth_sigma), smooth_field(response[idx, 1], smooth_sigma)])
+
+    tos_abs_min = float(np.nanpercentile(np.stack([base[0], pert[0]]), 2))
+    tos_abs_max = float(np.nanpercentile(np.stack([base[0], pert[0]]), 98))
+    zos_abs_min = float(np.nanpercentile(np.stack([base[1], pert[1]]), 2))
+    zos_abs_max = float(np.nanpercentile(np.stack([base[1], pert[1]]), 98))
+    tos_abs_levels = np.linspace(tos_abs_min, tos_abs_max, contour_levels)
+    zos_abs_levels = np.linspace(zos_abs_min, zos_abs_max, contour_levels)
+    tos_diff_levels = np.linspace(-tos_vmax, tos_vmax, contour_levels)
+    zos_diff_levels = np.linspace(-zos_vmax, zos_vmax, contour_levels)
+
+    proj = projection()
+    fig = plt.figure(figsize=(13.2, 5.6))
+    gs = fig.add_gridspec(2, 3, wspace=0.08, hspace=0.16)
+    col_titles = ("Baseline forecast", "CNOP-perturbed forecast", "Difference")
+    row_labels = ("TOS", "ZOS")
+    mappables: list[object] = []
+    for row in range(2):
+        for col in range(3):
+            ax = fig.add_subplot(gs[row, col], projection=proj) if HAS_CARTOPY else fig.add_subplot(gs[row, col])
+            if row == 0 and col == 0:
+                m = plain_contour_map(ax, lon, lat, base[0], tos_abs_levels, "Spectral_r")
+            elif row == 0 and col == 1:
+                m = plain_contour_map(ax, lon, lat, pert[0], tos_abs_levels, "Spectral_r")
+            elif row == 0:
+                m = contour_map(ax, lon, lat, diff[0], tos_diff_levels, TOS_CMAP, zero_contour)
+            elif row == 1 and col == 0:
+                m = plain_contour_map(ax, lon, lat, base[1], zos_abs_levels, "viridis")
+            elif row == 1 and col == 1:
+                m = plain_contour_map(ax, lon, lat, pert[1], zos_abs_levels, "viridis")
+            else:
+                m = contour_map(ax, lon, lat, diff[1], zos_diff_levels, ZOS_CMAP, zero_contour)
+            mappables.append(m)
+            add_map_features(ax, show_xticks=row == 1, show_yticks=col == 0)
+            if row == 0:
+                ax.set_title(f"({chr(97 + col)}) {col_titles[col]}", fontweight="bold")
+            add_layer_label(ax, row_labels[row])
+
+    caxes = [
+        fig.add_axes([0.06, 0.08, 0.20, 0.020]),
+        fig.add_axes([0.30, 0.08, 0.20, 0.020]),
+        fig.add_axes([0.54, 0.08, 0.20, 0.020]),
+        fig.add_axes([0.78, 0.08, 0.18, 0.020]),
+    ]
+    cb_abs_tos = fig.colorbar(mappables[0], cax=caxes[0], orientation="horizontal")
+    cb_abs_tos.ax.xaxis.set_major_formatter(FormatStrFormatter("%.1f"))
+    cb_abs_tos.set_label("absolute TOS")
+    cb_abs_zos = fig.colorbar(mappables[3], cax=caxes[1], orientation="horizontal")
+    cb_abs_zos.ax.xaxis.set_major_formatter(FormatStrFormatter("%.2f"))
+    cb_abs_zos.set_label("absolute ZOS")
+    cb_diff_tos = fig.colorbar(mappables[2], cax=caxes[2], orientation="horizontal")
+    cb_diff_tos.ax.xaxis.set_major_formatter(FormatStrFormatter("%.2f"))
+    cb_diff_tos.set_label("TOS difference")
+    cb_diff_zos = fig.colorbar(mappables[5], cax=caxes[3], orientation="horizontal")
+    cb_diff_zos.ax.xaxis.set_major_formatter(FormatStrFormatter("%.3f"))
+    cb_diff_zos.set_label("ZOS difference")
+    fig.suptitle(
+        f"Forecast comparison at lead {lead} ({labels[idx]}): {source} {year}, candidate rank {rank}",
+        fontsize=12,
+        fontweight="bold",
+        y=0.97,
+    )
+    fig.subplots_adjust(left=0.04, right=0.99, top=0.89, bottom=0.16)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / f"cnop_forecast_comparison_lead{lead}_{source}_{year}_rank{rank}.png"
+    fig.savefig(path, dpi=dpi)
+    fig.savefig(path.with_suffix(".pdf"), dpi=dpi)
+    plt.close(fig)
+    return path
 
 
 def plot_paper_figure(
@@ -384,7 +591,7 @@ def main() -> None:
     ranks = parse_ranks(args.candidate_ranks, args.candidate_rank)
     output_dir = args.output_dir or args.cnop_dir / "figures"
     for rank in ranks:
-        response, lat, lon, labels, source, year = build_response(
+        products = build_case_products(
             args.config,
             args.checkpoint,
             args.cnop_dir,
@@ -396,28 +603,67 @@ def main() -> None:
             args.horizon,
             args.trained_rollout_steps,
         )
-        path = plot_paper_figure(
-            response,
-            lat,
-            lon,
-            labels,
-            source,
-            year,
-            rank,
-            months,
-            args.summary_month,
-            output_dir,
-            args.dpi,
-            args.smooth_sigma,
-            args.vector_sigma,
-            args.arrow_stride,
-            args.arrow_scale,
-            args.tos_vmax,
-            args.zos_vmax,
-            args.contour_levels,
-            args.zero_contour,
-        )
-        print(f"wrote {path}")
+        if not args.skip_perturbation:
+            path = plot_perturbation_figure(
+                products.perturbation,
+                products.lat,
+                products.lon,
+                products.source,
+                products.year,
+                rank,
+                output_dir,
+                args.dpi,
+                args.smooth_sigma,
+                args.perturb_tos_vmax,
+                args.perturb_zos_vmax,
+                args.contour_levels,
+                args.zero_contour,
+            )
+            print(f"wrote {path}")
+        if not args.skip_comparison:
+            path = plot_comparison_figure(
+                products.baseline,
+                products.perturbed,
+                products.response,
+                products.lat,
+                products.lon,
+                products.labels,
+                products.source,
+                products.year,
+                rank,
+                args.summary_month,
+                output_dir,
+                args.dpi,
+                args.smooth_sigma,
+                args.tos_vmax,
+                args.zos_vmax,
+                args.contour_levels,
+                args.zero_contour,
+            )
+            print(f"wrote {path}")
+        if not args.skip_response:
+            path = plot_paper_figure(
+                products.response,
+                products.lat,
+                products.lon,
+                products.labels,
+                products.source,
+                products.year,
+                rank,
+                months,
+                args.summary_month,
+                output_dir,
+                args.dpi,
+                args.smooth_sigma,
+                args.vector_sigma,
+                args.arrow_stride,
+                args.arrow_scale,
+                args.tos_vmax,
+                args.zos_vmax,
+                args.contour_levels,
+                args.zero_contour,
+            )
+            print(f"wrote {path}")
 
 
 if __name__ == "__main__":
