@@ -68,6 +68,7 @@ class CaseProducts:
     """一个 CNOP 候选扰动对应的全部可视化材料。"""
 
     perturbation: np.ndarray
+    truth: np.ndarray
     baseline: np.ndarray
     perturbed: np.ndarray
     response: np.ndarray
@@ -108,6 +109,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-response", action="store_true")
     parser.add_argument("--skip-perturbation", action="store_true")
     parser.add_argument("--skip-comparison", action="store_true")
+    parser.add_argument("--skip-multi-perturbation", action="store_true")
     return parser.parse_args()
 
 
@@ -306,11 +308,13 @@ def build_case_products(
     response = (perturbed - baseline).numpy()
 
     payload = dataset.source_payloads[case.source_idx]
+    truth = np.asarray(payload["data"][case.target_t : case.target_t + horizon], dtype=np.float32)
     lat = np.asarray(payload["lat"], dtype=np.float64)
     lon = np.asarray(payload["lon"], dtype=np.float64)
     labels = month_labels(case, dataset, horizon)
     return CaseProducts(
         perturbation=perturbation,
+        truth=truth,
         baseline=baseline.numpy(),
         perturbed=perturbed.numpy(),
         response=response,
@@ -394,7 +398,86 @@ def plot_perturbation_figure(
     return path
 
 
+def plot_multi_perturbation_figure(
+    products_by_rank: list[tuple[int, CaseProducts]],
+    output_dir: Path,
+    dpi: int,
+    smooth_sigma: float,
+    tos_vmax: float,
+    zos_vmax: float,
+    contour_levels: int,
+    zero_contour: bool,
+) -> Path:
+    """把同一个初始场的多个局地最优扰动放在一张图里横向比较。"""
+
+    if not products_by_rank:
+        raise ValueError("products_by_rank must not be empty")
+    source = products_by_rank[0][1].source
+    year = products_by_rank[0][1].year
+    lat = products_by_rank[0][1].lat
+    lon = products_by_rank[0][1].lon
+    deltas = [
+        (
+            rank,
+            np.stack(
+                [
+                    smooth_field(products.perturbation[0], smooth_sigma),
+                    smooth_field(products.perturbation[1], smooth_sigma),
+                ]
+            ),
+        )
+        for rank, products in products_by_rank
+    ]
+    tos_lim = symmetric_vmax(np.stack([delta[0] for _rank, delta in deltas]), tos_vmax)
+    zos_lim = symmetric_vmax(np.stack([delta[1] for _rank, delta in deltas]), zos_vmax)
+    tos_levels = np.linspace(-tos_lim, tos_lim, contour_levels)
+    zos_levels = np.linspace(-zos_lim, zos_lim, contour_levels)
+
+    proj = projection()
+    nrows = len(deltas)
+    fig = plt.figure(figsize=(10.8, 2.05 * nrows + 1.2))
+    gs = fig.add_gridspec(nrows, 2, wspace=0.08, hspace=0.18)
+    m_tos = None
+    m_zos = None
+    for row, (rank, delta) in enumerate(deltas):
+        ax_tos = fig.add_subplot(gs[row, 0], projection=proj) if HAS_CARTOPY else fig.add_subplot(gs[row, 0])
+        ax_zos = fig.add_subplot(gs[row, 1], projection=proj) if HAS_CARTOPY else fig.add_subplot(gs[row, 1])
+        m_tos = contour_map(ax_tos, lon, lat, delta[0], tos_levels, TOS_CMAP, zero_contour)
+        m_zos = contour_map(ax_zos, lon, lat, delta[1], zos_levels, ZOS_CMAP, zero_contour)
+        add_map_features(ax_tos, show_xticks=row == nrows - 1, show_yticks=True)
+        add_map_features(ax_zos, show_xticks=row == nrows - 1, show_yticks=False)
+        ax_tos.set_ylabel(f"rank {rank}", fontsize=8, fontweight="bold")
+        if row == 0:
+            ax_tos.set_title("(a) delta TOS", fontweight="bold")
+            ax_zos.set_title("(b) delta ZOS", fontweight="bold")
+
+    cax0 = fig.add_axes([0.17, 0.075, 0.28, 0.020])
+    cax1 = fig.add_axes([0.57, 0.075, 0.28, 0.020])
+    cb0 = fig.colorbar(m_tos, cax=cax0, orientation="horizontal")
+    cb0.ax.xaxis.set_major_formatter(FormatStrFormatter("%.2f"))
+    cb0.set_label("delta TOS")
+    cb1 = fig.colorbar(m_zos, cax=cax1, orientation="horizontal")
+    cb1.ax.xaxis.set_major_formatter(FormatStrFormatter("%.3f"))
+    cb1.set_label("delta ZOS")
+    ranks_text = ",".join(str(rank) for rank, _products in products_by_rank)
+    fig.suptitle(
+        f"Multiple CNOP local optima from the same initial state: {source} {year}, ranks {ranks_text}",
+        fontsize=12,
+        fontweight="bold",
+        y=0.975,
+    )
+    fig.subplots_adjust(left=0.06, right=0.99, top=0.92, bottom=0.15)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / f"cnop_multi_initial_perturbations_{source}_{year}_ranks{ranks_text}.png"
+    fig.savefig(path, dpi=dpi)
+    fig.savefig(path.with_suffix(".pdf"), dpi=dpi)
+    plt.close(fig)
+    return path
+
+
 def plot_comparison_figure(
+    truth: np.ndarray,
     baseline: np.ndarray,
     perturbed: np.ndarray,
     response: np.ndarray,
@@ -413,40 +496,45 @@ def plot_comparison_figure(
     contour_levels: int,
     zero_contour: bool,
 ) -> Path:
-    """画 baseline、叠加扰动后预测、二者差值，明确展示对比链条。"""
+    """画真值、baseline、叠加扰动后预测、二者差值，明确展示对比链条。"""
 
     idx = min(max(lead, 1), baseline.shape[0]) - 1
+    obs = np.stack([smooth_field(truth[idx, 0], smooth_sigma), smooth_field(truth[idx, 1], smooth_sigma)])
     base = np.stack([smooth_field(baseline[idx, 0], smooth_sigma), smooth_field(baseline[idx, 1], smooth_sigma)])
     pert = np.stack([smooth_field(perturbed[idx, 0], smooth_sigma), smooth_field(perturbed[idx, 1], smooth_sigma)])
     diff = np.stack([smooth_field(response[idx, 0], smooth_sigma), smooth_field(response[idx, 1], smooth_sigma)])
 
-    tos_abs_min = float(np.nanpercentile(np.stack([base[0], pert[0]]), 2))
-    tos_abs_max = float(np.nanpercentile(np.stack([base[0], pert[0]]), 98))
-    zos_abs_min = float(np.nanpercentile(np.stack([base[1], pert[1]]), 2))
-    zos_abs_max = float(np.nanpercentile(np.stack([base[1], pert[1]]), 98))
+    tos_abs_min = float(np.nanpercentile(np.stack([obs[0], base[0], pert[0]]), 2))
+    tos_abs_max = float(np.nanpercentile(np.stack([obs[0], base[0], pert[0]]), 98))
+    zos_abs_min = float(np.nanpercentile(np.stack([obs[1], base[1], pert[1]]), 2))
+    zos_abs_max = float(np.nanpercentile(np.stack([obs[1], base[1], pert[1]]), 98))
     tos_abs_levels = np.linspace(tos_abs_min, tos_abs_max, contour_levels)
     zos_abs_levels = np.linspace(zos_abs_min, zos_abs_max, contour_levels)
     tos_diff_levels = np.linspace(-tos_vmax, tos_vmax, contour_levels)
     zos_diff_levels = np.linspace(-zos_vmax, zos_vmax, contour_levels)
 
     proj = projection()
-    fig = plt.figure(figsize=(13.2, 5.6))
-    gs = fig.add_gridspec(2, 3, wspace=0.08, hspace=0.16)
-    col_titles = ("Baseline forecast", "CNOP-perturbed forecast", "Difference")
+    fig = plt.figure(figsize=(15.6, 5.6))
+    gs = fig.add_gridspec(2, 4, wspace=0.08, hspace=0.16)
+    col_titles = ("Observed truth", "Baseline forecast", "CNOP-perturbed forecast", "Difference")
     row_labels = ("TOS", "ZOS")
     mappables: list[object] = []
     for row in range(2):
-        for col in range(3):
+        for col in range(4):
             ax = fig.add_subplot(gs[row, col], projection=proj) if HAS_CARTOPY else fig.add_subplot(gs[row, col])
             if row == 0 and col == 0:
-                m = plain_contour_map(ax, lon, lat, base[0], tos_abs_levels, "Spectral_r")
+                m = plain_contour_map(ax, lon, lat, obs[0], tos_abs_levels, "Spectral_r")
             elif row == 0 and col == 1:
+                m = plain_contour_map(ax, lon, lat, base[0], tos_abs_levels, "Spectral_r")
+            elif row == 0 and col == 2:
                 m = plain_contour_map(ax, lon, lat, pert[0], tos_abs_levels, "Spectral_r")
-            elif row == 0:
+            elif row == 0 and col == 3:
                 m = contour_map(ax, lon, lat, diff[0], tos_diff_levels, TOS_CMAP, zero_contour)
             elif row == 1 and col == 0:
-                m = plain_contour_map(ax, lon, lat, base[1], zos_abs_levels, "viridis")
+                m = plain_contour_map(ax, lon, lat, obs[1], zos_abs_levels, "viridis")
             elif row == 1 and col == 1:
+                m = plain_contour_map(ax, lon, lat, base[1], zos_abs_levels, "viridis")
+            elif row == 1 and col == 2:
                 m = plain_contour_map(ax, lon, lat, pert[1], zos_abs_levels, "viridis")
             else:
                 m = contour_map(ax, lon, lat, diff[1], zos_diff_levels, ZOS_CMAP, zero_contour)
@@ -465,13 +553,13 @@ def plot_comparison_figure(
     cb_abs_tos = fig.colorbar(mappables[0], cax=caxes[0], orientation="horizontal")
     cb_abs_tos.ax.xaxis.set_major_formatter(FormatStrFormatter("%.1f"))
     cb_abs_tos.set_label("absolute TOS")
-    cb_abs_zos = fig.colorbar(mappables[3], cax=caxes[1], orientation="horizontal")
+    cb_abs_zos = fig.colorbar(mappables[4], cax=caxes[1], orientation="horizontal")
     cb_abs_zos.ax.xaxis.set_major_formatter(FormatStrFormatter("%.2f"))
     cb_abs_zos.set_label("absolute ZOS")
-    cb_diff_tos = fig.colorbar(mappables[2], cax=caxes[2], orientation="horizontal")
+    cb_diff_tos = fig.colorbar(mappables[3], cax=caxes[2], orientation="horizontal")
     cb_diff_tos.ax.xaxis.set_major_formatter(FormatStrFormatter("%.2f"))
     cb_diff_tos.set_label("TOS difference")
-    cb_diff_zos = fig.colorbar(mappables[5], cax=caxes[3], orientation="horizontal")
+    cb_diff_zos = fig.colorbar(mappables[7], cax=caxes[3], orientation="horizontal")
     cb_diff_zos.ax.xaxis.set_major_formatter(FormatStrFormatter("%.3f"))
     cb_diff_zos.set_label("ZOS difference")
     fig.suptitle(
@@ -590,6 +678,7 @@ def main() -> None:
     months = parse_months(args.months)
     ranks = parse_ranks(args.candidate_ranks, args.candidate_rank)
     output_dir = args.output_dir or args.cnop_dir / "figures"
+    products_by_rank: list[tuple[int, CaseProducts]] = []
     for rank in ranks:
         products = build_case_products(
             args.config,
@@ -603,6 +692,7 @@ def main() -> None:
             args.horizon,
             args.trained_rollout_steps,
         )
+        products_by_rank.append((rank, products))
         if not args.skip_perturbation:
             path = plot_perturbation_figure(
                 products.perturbation,
@@ -622,6 +712,7 @@ def main() -> None:
             print(f"wrote {path}")
         if not args.skip_comparison:
             path = plot_comparison_figure(
+                products.truth,
                 products.baseline,
                 products.perturbed,
                 products.response,
@@ -664,6 +755,18 @@ def main() -> None:
                 args.zero_contour,
             )
             print(f"wrote {path}")
+    if len(products_by_rank) > 1 and not args.skip_perturbation and not args.skip_multi_perturbation:
+        path = plot_multi_perturbation_figure(
+            products_by_rank,
+            output_dir,
+            args.dpi,
+            args.smooth_sigma,
+            args.perturb_tos_vmax,
+            args.perturb_zos_vmax,
+            args.contour_levels,
+            args.zero_contour,
+        )
+        print(f"wrote {path}")
 
 
 if __name__ == "__main__":
