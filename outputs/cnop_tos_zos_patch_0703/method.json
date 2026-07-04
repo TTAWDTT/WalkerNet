@@ -1,0 +1,85 @@
+{
+  "config": "configs/server_3090_mixed5_ddp8.yaml",
+  "checkpoint": "/mnt/sda/WalkerNet/checkpoints_mixed5_enso18_simple_loss_corr_ddp8/best_skill.pt",
+  "checkpoint_epoch": 6,
+  "split": "test",
+  "case_year_range": "1851,2014",
+  "num_cases": 10,
+  "horizon": 12,
+  "steps": 40,
+  "lr": 0.08,
+  "epsilon_tos": 0.1,
+  "epsilon_zos": 0.1,
+  "max_abs": 2.0,
+  "domain": "tropical_pacific",
+  "perturb_grid": "patch",
+  "perturb_patch_size": 4,
+  "lat_bounds": "-20,20",
+  "lon_bounds": "120,290",
+  "amp": true,
+  "checkpoint_rollout": true,
+  "smoothness_weight": 0.001,
+  "objective": "softmax over target-year 3-month mean Nino3.4 anomaly",
+  "selected_cases": [
+    {
+      "source": "IPSL-CM6A-LR",
+      "target_year": 1880,
+      "target_t": 360,
+      "observed_max_3m_abs": 0.1264190673828125
+    },
+    {
+      "source": "EC-Earth3",
+      "target_year": 1959,
+      "target_t": 1308,
+      "observed_max_3m_abs": 0.1584116667509079
+    },
+    {
+      "source": "EC-Earth3",
+      "target_year": 1942,
+      "target_t": 1104,
+      "observed_max_3m_abs": 0.18331654369831085
+    },
+    {
+      "source": "EC-Earth3",
+      "target_year": 1975,
+      "target_t": 1500,
+      "observed_max_3m_abs": 0.19476763904094696
+    },
+    {
+      "source": "MPI-ESM1-2-HR",
+      "target_year": 1876,
+      "target_t": 312,
+      "observed_max_3m_abs": 0.2206541746854782
+    },
+    {
+      "source": "GFDL-ESM4",
+      "target_year": 1995,
+      "target_t": 1740,
+      "observed_max_3m_abs": 0.22883670032024384
+    },
+    {
+      "source": "MPI-ESM1-2-HR",
+      "target_year": 2003,
+      "target_t": 1836,
+      "observed_max_3m_abs": 0.23152415454387665
+    },
+    {
+      "source": "CESM2",
+      "target_year": 1856,
+      "target_t": 72,
+      "observed_max_3m_abs": 0.23407046496868134
+    },
+    {
+      "source": "EC-Earth3",
+      "target_year": 1878,
+      "target_t": 336,
+      "observed_max_3m_abs": 0.24092800915241241
+    },
+    {
+      "source": "GFDL-ESM4",
+      "target_year": 1930,
+      "target_t": 960,
+      "observed_max_3m_abs": 0.25204405188560486
+    }
+  ]
+}
