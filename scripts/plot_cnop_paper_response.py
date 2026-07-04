@@ -16,6 +16,7 @@ from pathlib import Path
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
 import numpy as np
 import torch
 
@@ -48,6 +49,16 @@ except Exception:  # pragma: no cover - optional plotting dependency
 
 
 MAP_BOX = (120.0, 290.0, -35.0, 35.0)
+TOS_CMAP = LinearSegmentedColormap.from_list(
+    "soft_tos_response",
+    ["#4B56A6", "#8FC7D9", "#F7F3D0", "#F0A35A", "#B61732"],
+    N=256,
+)
+ZOS_CMAP = LinearSegmentedColormap.from_list(
+    "soft_zos_response",
+    ["#7B4A12", "#D2A450", "#F5F2E6", "#78C5BD", "#006B61"],
+    N=256,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -58,6 +69,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--case-source", type=str, default="")
     parser.add_argument("--case-year", type=int, default=0)
     parser.add_argument("--candidate-rank", type=int, default=1)
+    parser.add_argument("--candidate-ranks", type=str, default="", help="Comma-separated candidate ranks; overrides --candidate-rank.")
     parser.add_argument("--split", type=str, default="test")
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--horizon", type=int, default=12)
@@ -71,6 +83,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--arrow-scale", type=float, default=4.5)
     parser.add_argument("--tos-vmax", type=float, default=2.6)
     parser.add_argument("--zos-vmax", type=float, default=0.08)
+    parser.add_argument("--contour-levels", type=int, default=23)
+    parser.add_argument("--zero-contour", action="store_true", default=True)
     parser.add_argument("--trained-rollout-steps", type=int, default=0)
     return parser.parse_args()
 
@@ -96,6 +110,17 @@ def parse_months(value: str) -> list[int]:
     if any(month < 1 or month > 12 for month in months):
         raise ValueError(f"months must be in [1, 12], got {months}")
     return months
+
+
+def parse_ranks(value: str, fallback: int) -> list[int]:
+    if not value.strip():
+        return [fallback]
+    ranks = [int(item.strip()) for item in value.split(",") if item.strip()]
+    if not ranks:
+        raise ValueError("candidate ranks must contain at least one rank")
+    if any(rank < 1 for rank in ranks):
+        raise ValueError(f"candidate ranks must be positive, got {ranks}")
+    return ranks
 
 
 def projection():
@@ -155,11 +180,25 @@ def add_layer_label(ax: plt.Axes, label: str) -> None:
     )
 
 
-def contour_map(ax: plt.Axes, lon: np.ndarray, lat: np.ndarray, field: np.ndarray, levels: np.ndarray, cmap: str):
+def contour_map(
+    ax: plt.Axes,
+    lon: np.ndarray,
+    lat: np.ndarray,
+    field: np.ndarray,
+    levels: np.ndarray,
+    cmap: LinearSegmentedColormap,
+    draw_zero: bool,
+):
     kwargs = {"levels": levels, "cmap": cmap, "extend": "both"}
     if HAS_CARTOPY:
         kwargs["transform"] = ccrs.PlateCarree()
-    return ax.contourf(lon, lat, field, **kwargs)
+    mappable = ax.contourf(lon, lat, field, **kwargs)
+    if draw_zero:
+        zero_kwargs = {"levels": [0.0], "colors": "#293241", "linewidths": 0.28, "alpha": 0.55}
+        if HAS_CARTOPY:
+            zero_kwargs["transform"] = ccrs.PlateCarree()
+        ax.contour(lon, lat, field, **zero_kwargs)
+    return mappable
 
 
 def quiver_map(
@@ -262,10 +301,12 @@ def plot_paper_figure(
     arrow_scale: float,
     tos_vmax: float,
     zos_vmax: float,
+    contour_levels: int,
+    zero_contour: bool,
 ) -> Path:
     plot_response = lowpass_response(response, smooth_sigma, vector_sigma)
-    tos_levels = np.linspace(-tos_vmax, tos_vmax, 35)
-    zos_levels = np.linspace(-zos_vmax, zos_vmax, 31)
+    tos_levels = np.linspace(-tos_vmax, tos_vmax, contour_levels)
+    zos_levels = np.linspace(-zos_vmax, zos_vmax, contour_levels)
     tau = np.sqrt(plot_response[:, 2] ** 2 + plot_response[:, 3] ** 2)
     view_mask = (lat[:, None] >= MAP_BOX[2]) & (lat[:, None] <= MAP_BOX[3]) & (lon[None, :] >= MAP_BOX[0]) & (lon[None, :] <= MAP_BOX[1])
     tau_ref = max(float(np.nanpercentile(tau[..., view_mask], 94)), 1.0e-6)
@@ -276,7 +317,7 @@ def plot_paper_figure(
 
     ax_main = fig.add_subplot(outer[:, 0], projection=proj) if HAS_CARTOPY else fig.add_subplot(outer[:, 0])
     summary_idx = min(max(summary_month, 1), response.shape[0]) - 1
-    main = contour_map(ax_main, lon, lat, plot_response[summary_idx, 0], tos_levels, "RdYlBu_r")
+    main = contour_map(ax_main, lon, lat, plot_response[summary_idx, 0], tos_levels, TOS_CMAP, zero_contour)
     quiver_map(
         ax_main,
         lon,
@@ -302,14 +343,14 @@ def plot_paper_figure(
         right_axes.extend([ax_tos, ax_zos])
         idx = month - 1
 
-        tos_mappable = contour_map(ax_tos, lon, lat, plot_response[idx, 0], tos_levels, "RdYlBu_r")
+        tos_mappable = contour_map(ax_tos, lon, lat, plot_response[idx, 0], tos_levels, TOS_CMAP, zero_contour)
         quiver_map(ax_tos, lon, lat, plot_response[idx, 2], plot_response[idx, 3], tau_ref, arrow_stride, arrow_scale)
         add_map_features(ax_tos, show_xticks=False, show_yticks=col == 0)
         add_layer_label(ax_tos, "TOS + wind")
         ax_tos.set_title(f"({chr(97 + panel_ord)}) Lead {month}: {labels[idx]}", y=1.02, fontweight="bold")
         panel_ord += 1
 
-        zos_mappable = contour_map(ax_zos, lon, lat, plot_response[idx, 1], zos_levels, "BrBG")
+        zos_mappable = contour_map(ax_zos, lon, lat, plot_response[idx, 1], zos_levels, ZOS_CMAP, zero_contour)
         add_map_features(ax_zos, show_xticks=row == 1, show_yticks=col == 0)
         add_layer_label(ax_zos, "ZOS")
 
@@ -340,39 +381,43 @@ def main() -> None:
     args = parse_args()
     set_style()
     months = parse_months(args.months)
-    response, lat, lon, labels, source, year = build_response(
-        args.config,
-        args.checkpoint,
-        args.cnop_dir,
-        args.case_source,
-        args.case_year,
-        args.candidate_rank,
-        args.split,
-        args.device,
-        args.horizon,
-        args.trained_rollout_steps,
-    )
+    ranks = parse_ranks(args.candidate_ranks, args.candidate_rank)
     output_dir = args.output_dir or args.cnop_dir / "figures"
-    path = plot_paper_figure(
-        response,
-        lat,
-        lon,
-        labels,
-        source,
-        year,
-        args.candidate_rank,
-        months,
-        args.summary_month,
-        output_dir,
-        args.dpi,
-        args.smooth_sigma,
-        args.vector_sigma,
-        args.arrow_stride,
-        args.arrow_scale,
-        args.tos_vmax,
-        args.zos_vmax,
-    )
-    print(f"wrote {path}")
+    for rank in ranks:
+        response, lat, lon, labels, source, year = build_response(
+            args.config,
+            args.checkpoint,
+            args.cnop_dir,
+            args.case_source,
+            args.case_year,
+            rank,
+            args.split,
+            args.device,
+            args.horizon,
+            args.trained_rollout_steps,
+        )
+        path = plot_paper_figure(
+            response,
+            lat,
+            lon,
+            labels,
+            source,
+            year,
+            rank,
+            months,
+            args.summary_month,
+            output_dir,
+            args.dpi,
+            args.smooth_sigma,
+            args.vector_sigma,
+            args.arrow_stride,
+            args.arrow_scale,
+            args.tos_vmax,
+            args.zos_vmax,
+            args.contour_levels,
+            args.zero_contour,
+        )
+        print(f"wrote {path}")
 
 
 if __name__ == "__main__":
