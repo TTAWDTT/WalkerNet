@@ -55,6 +55,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dpi", type=int, default=320)
     parser.add_argument("--arrow-stride", type=int, default=6)
     parser.add_argument("--arrow-scale", type=float, default=4.0, help="Approximate degree length of the reference vector.")
+    parser.add_argument("--smooth-sigma", type=float, default=1.0, help="Gaussian smoothing sigma for plotted response fields.")
+    parser.add_argument("--contour-levels", type=int, default=33)
     parser.add_argument("--trained-rollout-steps", type=int, default=0)
     return parser.parse_args()
 
@@ -178,6 +180,24 @@ def month_labels(case: NeutralCase, dataset: WalkerDataset, horizon: int) -> lis
     return [names[int(month) - 1] for month in months]
 
 
+def smooth_field(field: np.ndarray, sigma: float) -> np.ndarray:
+    """Lightly smooth a plotted field while preserving NaN masks."""
+
+    if sigma <= 0:
+        return field
+    try:
+        from scipy.ndimage import gaussian_filter
+    except Exception:
+        return field
+
+    finite = np.isfinite(field)
+    filled = np.where(finite, field, 0.0)
+    weights = gaussian_filter(finite.astype(np.float32), sigma=sigma, mode="nearest")
+    smoothed = gaussian_filter(filled, sigma=sigma, mode="nearest") / np.maximum(weights, 1.0e-6)
+    smoothed[~finite & (weights < 0.25)] = np.nan
+    return smoothed
+
+
 def plot_monthly_response(
     response: np.ndarray,
     lat: np.ndarray,
@@ -190,12 +210,20 @@ def plot_monthly_response(
     dpi: int,
     arrow_stride: int,
     arrow_scale: float,
+    smooth_sigma: float,
+    contour_levels: int,
 ) -> Path:
     view_mask = (lat[:, None] >= MAP_BOX[2]) & (lat[:, None] <= MAP_BOX[3]) & (lon[None, :] >= MAP_BOX[0]) & (lon[None, :] <= MAP_BOX[1])
     tos_vmax = max(float(np.nanpercentile(np.abs(response[:, 0][..., view_mask]), 98)), 1.0e-6)
     zos_vmax = max(float(np.nanpercentile(np.abs(response[:, 1][..., view_mask]), 98)), 1.0e-6)
     tau = np.sqrt(response[:, 2] ** 2 + response[:, 3] ** 2)
     tau_ref = max(float(np.nanpercentile(tau[..., view_mask], 95)), 1.0e-6)
+    plot_response = np.empty_like(response)
+    for month_idx in range(response.shape[0]):
+        for var_idx in range(response.shape[1]):
+            plot_response[month_idx, var_idx] = smooth_field(response[month_idx, var_idx], smooth_sigma)
+    tos_levels = np.linspace(-tos_vmax, tos_vmax, max(9, int(contour_levels)))
+    zos_levels = np.linspace(-zos_vmax, zos_vmax, max(9, int(contour_levels)))
 
     fig, axes = plt.subplots(4, 6, figsize=(18.0, 8.8), sharex=True, sharey=True)
     fig.subplots_adjust(left=0.045, right=0.985, top=0.91, bottom=0.15, wspace=0.055, hspace=0.12)
@@ -212,7 +240,7 @@ def plot_monthly_response(
         show_y = col == 0
         show_x = zos_row == 3
 
-        tos_mesh = ax_tos.pcolormesh(lon, lat, response[idx, 0], cmap="RdYlBu_r", vmin=-tos_vmax, vmax=tos_vmax, shading="auto")
+        tos_mesh = ax_tos.contourf(lon, lat, plot_response[idx, 0], levels=tos_levels, cmap="RdYlBu_r", extend="both")
         setup_axis(ax_tos, show_xticks=False, show_yticks=show_y)
         ax_tos.set_title(f"({chr(97 + idx)}) {labels[idx]}", fontweight="bold", pad=2)
         if show_y:
@@ -226,8 +254,8 @@ def plot_monthly_response(
         ax_tos.quiver(
             lon2[np.ix_(lat_idx, lon_idx)],
             lat2[np.ix_(lat_idx, lon_idx)],
-            response[idx, 2][np.ix_(lat_idx, lon_idx)],
-            response[idx, 3][np.ix_(lat_idx, lon_idx)],
+            plot_response[idx, 2][np.ix_(lat_idx, lon_idx)],
+            plot_response[idx, 3][np.ix_(lat_idx, lon_idx)],
             color="#1F2937",
             width=0.0018,
             headwidth=3.0,
@@ -239,7 +267,7 @@ def plot_monthly_response(
             alpha=0.82,
         )
 
-        zos_mesh = ax_zos.pcolormesh(lon, lat, response[idx, 1], cmap="BrBG", vmin=-zos_vmax, vmax=zos_vmax, shading="auto")
+        zos_mesh = ax_zos.contourf(lon, lat, plot_response[idx, 1], levels=zos_levels, cmap="BrBG", extend="both")
         setup_axis(ax_zos, show_xticks=show_x, show_yticks=show_y)
         if show_y:
             ax_zos.set_ylabel("ZOS", fontsize=7)
@@ -305,6 +333,8 @@ def main() -> None:
         args.dpi,
         args.arrow_stride,
         args.arrow_scale,
+        args.smooth_sigma,
+        args.contour_levels,
     )
     print(f"checkpoint_epoch={checkpoint.get('epoch')} case_npz={npz_path}")
     print(f"wrote {path}")
