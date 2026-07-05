@@ -68,6 +68,8 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Optional inclusive target-year range, e.g. 1851,2014. If set, neutral cases are selected from all sources instead of the split sample list.",
     )
+    parser.add_argument("--case-source-name", type=str, default="", help="Run one specific case from this source.")
+    parser.add_argument("--case-target-year", type=int, default=0, help="Run one specific Jan-Dec target year.")
     parser.add_argument("--horizon", type=int, default=12, help="Rollout months for the CNOP objective.")
     parser.add_argument("--steps", type=int, default=80, help="Projected-gradient optimization steps per case.")
     parser.add_argument("--lr", type=float, default=0.08)
@@ -236,6 +238,47 @@ def select_neutral_cases(
     pool = below if len(below) >= num_cases else candidates
     pool = sorted(pool, key=lambda case: (case.neutral_score, case.source_name, case.target_year))
     return pool[:num_cases]
+
+
+def select_specific_case(
+    dataset: WalkerDataset,
+    climatology: np.ndarray,
+    source_name: str,
+    target_year: int,
+    horizon: int,
+) -> NeutralCase:
+    """Select exactly one Jan-Dec case by source and target year."""
+
+    source_to_idx = {name: idx for idx, name in enumerate(dataset.source_names)}
+    if source_name not in source_to_idx:
+        raise ValueError(f"Unknown source {source_name!r}; available={list(dataset.source_names)}")
+    source_idx = source_to_idx[source_name]
+    payload = dataset.source_payloads[source_idx]
+    years = np.asarray(payload["years"])
+    months = np.asarray(payload["months"])
+    starts = np.where((years == int(target_year)) & (months == 1))[0]
+    if starts.size == 0:
+        raise ValueError(f"No January start found for source={source_name} target_year={target_year}")
+    target_t = int(starts[0])
+    final_t = target_t + horizon - 1
+    if final_t >= len(years) or int(months[final_t]) != 12 or int(years[final_t]) != int(target_year):
+        raise ValueError(f"source={source_name} target_year={target_year} is not a complete Jan-Dec window")
+    if target_t - dataset.L < 0 or int(months[target_t - dataset.L]) != 1:
+        raise ValueError(f"source={source_name} target_year={target_year} does not have previous Jan-Dec input")
+
+    tos = np.asarray(payload["data"][target_t : target_t + horizon, 0], dtype=np.float32)
+    raw = compute_nino34_numpy(tos, np.asarray(payload["lat"]), np.asarray(payload["lon"]))
+    anomaly = raw - climatology[source_idx, months[target_t : target_t + horizon]]
+    rolling = three_month_mean_np(anomaly)
+    max_abs = float(np.nanmax(np.abs(rolling)))
+    return NeutralCase(
+        source_idx=source_idx,
+        source_name=source_name,
+        target_t=target_t,
+        target_year=int(target_year),
+        neutral_score=max_abs,
+        observed_max_3m_abs=max_abs,
+    )
 
 
 def build_domain_mask(
@@ -1232,15 +1275,28 @@ def main() -> None:
     climatology_np = compute_source_nino34_climatology(dataset)
     climatology = torch.from_numpy(climatology_np).to(device=device, dtype=torch.float32)
 
-    case_year_range = parse_year_range(args.case_year_range)
-    cases = select_neutral_cases(
-        dataset,
-        climatology_np,
-        args.num_cases,
-        args.horizon,
-        args.neutral_threshold,
-        case_year_range=case_year_range,
-    )
+    if args.case_source_name or int(args.case_target_year) > 0:
+        if not args.case_source_name or int(args.case_target_year) <= 0:
+            raise ValueError("--case-source-name and --case-target-year must be set together")
+        cases = [
+            select_specific_case(
+                dataset,
+                climatology_np,
+                args.case_source_name,
+                int(args.case_target_year),
+                args.horizon,
+            )
+        ]
+    else:
+        case_year_range = parse_year_range(args.case_year_range)
+        cases = select_neutral_cases(
+            dataset,
+            climatology_np,
+            args.num_cases,
+            args.horizon,
+            args.neutral_threshold,
+            case_year_range=case_year_range,
+        )
     if not cases:
         raise ValueError("No neutral Jan-Dec cases found")
     write_method_json(output_dir, args, checkpoint, cases)
