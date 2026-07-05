@@ -82,10 +82,12 @@ def parse_args() -> argparse.Namespace:
         "--constraint-mode",
         type=str,
         default="normalized_rms",
-        choices=("normalized_rms", "relative_initial_l2"),
-        help="Perturbation norm constraint. relative_initial_l2 uses physical ||delta||_2 <= fraction * ||initial field||_2.",
+        choices=("normalized_rms", "relative_initial_l2", "event_l2"),
+        help="Perturbation norm constraint. event_l2 uses an ENSO-event based joint TOS/ZOS L2 radius.",
     )
     parser.add_argument("--relative-l2-fraction", type=float, default=0.1)
+    parser.add_argument("--constraint-file", type=str, default="", help="JSON produced by scripts/compute_cnop_constraint.py.")
+    parser.add_argument("--constraint-scale", type=float, default=1.0, help="Scale applied to event_l2 constraint.")
     parser.add_argument("--max-abs", type=float, default=2.0, help="Elementwise normalized perturbation clip.")
     parser.add_argument("--neutral-threshold", type=float, default=0.5)
     parser.add_argument("--domain", type=str, default="tropical_pacific", choices=("tropical_pacific", "global"))
@@ -342,12 +344,21 @@ def project_delta_param(
     args: argparse.Namespace,
     dataset: WalkerDataset | None = None,
     x0: torch.Tensor | None = None,
+    case: NeutralCase | None = None,
 ) -> None:
     """Project perturbation parameters using the full-resolution perturbation norm."""
     with torch.no_grad():
         full_delta = expand_delta(delta_param, target_hw, perturb_grid)
         mask_f = mask.to(dtype=delta_param.dtype)
-        if args.constraint_mode == "relative_initial_l2":
+        if args.constraint_mode == "event_l2":
+            if dataset is None or case is None:
+                raise ValueError("event_l2 constraint requires dataset and case")
+            radius = float(args.event_constraint_l2)
+            delta_dimless = normalized_delta_to_event_constraint_tensor(dataset, case.source_idx, full_delta, args)
+            delta_norm = torch.sqrt((delta_dimless.square() * mask_f).sum()).clamp_min(1.0e-12)
+            if float(delta_norm.item()) > radius:
+                delta_param.mul_(radius / delta_norm)
+        elif args.constraint_mode == "relative_initial_l2":
             if dataset is None or x0 is None:
                 raise ValueError("relative_initial_l2 constraint requires dataset and x0")
             delta_phys = normalized_delta_to_physical_tensor(dataset, full_delta)
@@ -399,6 +410,7 @@ def initialize_delta_param(
     target_hw: tuple[int, int],
     start_idx: int,
     seed: int,
+    case: NeutralCase,
 ) -> torch.Tensor:
     """初始化一个候选扰动；start 0 从零开始，其余 start 随机初始化。"""
 
@@ -407,7 +419,18 @@ def initialize_delta_param(
         generator = torch.Generator(device=x0.device)
         generator.manual_seed(int(seed))
         delta_param.normal_(mean=0.0, std=float(args.random_init_scale), generator=generator)
-    project_delta_param(delta_param, mask, eps, float(args.max_abs), target_hw, args.perturb_grid, args, dataset=dataset, x0=x0)
+    project_delta_param(
+        delta_param,
+        mask,
+        eps,
+        float(args.max_abs),
+        target_hw,
+        args.perturb_grid,
+        args,
+        dataset=dataset,
+        x0=x0,
+        case=case,
+    )
     return delta_param.requires_grad_(True)
 
 
@@ -489,6 +512,7 @@ def optimize_single_start(
         target_hw,
         start_idx,
         seed,
+        case,
     )
     optimizer = torch.optim.Adam([delta_param], lr=float(args.lr))
     history: list[dict[str, float]] = []
@@ -516,7 +540,18 @@ def optimize_single_start(
         loss = -metrics["objective"] + penalty
         loss.backward()
         optimizer.step()
-        project_delta_param(delta_param, mask, eps, float(args.max_abs), target_hw, args.perturb_grid, args, dataset=dataset, x0=x0)
+        project_delta_param(
+            delta_param,
+            mask,
+            eps,
+            float(args.max_abs),
+            target_hw,
+            args.perturb_grid,
+            args,
+            dataset=dataset,
+            x0=x0,
+            case=case,
+        )
 
         if step == 1 or step == int(args.steps) or step % max(1, int(args.steps) // 10) == 0:
             history.append(
@@ -618,7 +653,18 @@ def refine_with_lbfgs(
         return loss
 
     optimizer.step(closure)
-    project_delta_param(delta_param, mask, eps, float(args.max_abs), target_hw, args.perturb_grid, args, dataset=dataset, x0=x0)
+    project_delta_param(
+        delta_param,
+        mask,
+        eps,
+        float(args.max_abs),
+        target_hw,
+        args.perturb_grid,
+        args,
+        dataset=dataset,
+        x0=x0,
+        case=case,
+    )
     return delta_param.detach()
 
 
@@ -853,6 +899,78 @@ def normalized_delta_to_physical_tensor(dataset: WalkerDataset, delta: torch.Ten
     raise ValueError(f"Unsupported normalization: {dataset.norm}")
 
 
+def prepare_event_l2_constraint(dataset: WalkerDataset, args: argparse.Namespace) -> None:
+    """Load event-based constraint metadata and prepare source-wise scaling tensors."""
+
+    if args.constraint_mode != "event_l2":
+        args.event_constraint_l2 = 0.0
+        return
+    if not args.constraint_file:
+        raise ValueError("--constraint-file is required when --constraint-mode event_l2")
+
+    constraint_path = Path(args.constraint_file)
+    with constraint_path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    radius = float(payload["constraint_l2"]) * float(args.constraint_scale)
+    if radius <= 0:
+        raise ValueError(f"event_l2 constraint must be positive, got {radius}")
+
+    normalization = str(payload.get("normalization", "december_anomaly_train_std_equal_rms"))
+    equalization = payload.get("equalization_rms_before_rescale", {})
+    equalization_rms = torch.tensor(
+        [
+            float(equalization.get("tos", 1.0)),
+            float(equalization.get("zos", 1.0)),
+        ],
+        dtype=torch.float32,
+    ).clamp_min(1.0e-12)
+
+    args.event_constraint_l2 = radius
+    args.event_constraint_normalization = normalization
+    args.event_constraint_equalization_rms = equalization_rms
+
+    if normalization == "december_anomaly_train_std_equal_rms":
+        train_start, train_end = dataset.data_config["train_years"]
+        std_rows: list[np.ndarray] = []
+        for payload_item in dataset.source_payloads:
+            years = np.asarray(payload_item["years"])
+            months = np.asarray(payload_item["months"])
+            mask = (years >= int(train_start)) & (years <= int(train_end)) & (months == 12)
+            fields = np.asarray(payload_item["data"][mask, :2], dtype=np.float32)
+            mean_field = np.nanmean(fields, axis=0)
+            std_scalar = np.nanstd(fields - mean_field[None], axis=(0, 2, 3)).astype(np.float32)
+            std_scalar = np.where(std_scalar > 1.0e-12, std_scalar, 1.0).astype(np.float32)
+            std_rows.append(std_scalar)
+        args.event_constraint_december_std = torch.from_numpy(np.stack(std_rows, axis=0).astype(np.float32))
+    elif normalization == "dataset_zscore_equal_rms":
+        args.event_constraint_december_std = None
+    else:
+        raise ValueError(f"Unsupported event constraint normalization: {normalization}")
+
+    print(
+        f"[constraint] event_l2 radius={radius:.6f} "
+        f"scale={float(args.constraint_scale):.4f} file={constraint_path}",
+        flush=True,
+    )
+
+
+def normalized_delta_to_event_constraint_tensor(
+    dataset: WalkerDataset,
+    source_idx: int,
+    delta: torch.Tensor,
+    args: argparse.Namespace,
+) -> torch.Tensor:
+    """Convert delta to the same dimensionless space used by compute_cnop_constraint.py."""
+
+    equalization = args.event_constraint_equalization_rms.to(device=delta.device, dtype=delta.dtype).view(1, 2, 1, 1)
+    if args.event_constraint_normalization == "dataset_zscore_equal_rms":
+        return delta / equalization
+
+    delta_phys = normalized_delta_to_physical_tensor(dataset, delta)
+    december_std = args.event_constraint_december_std[source_idx].to(device=delta.device, dtype=delta.dtype).view(1, 2, 1, 1)
+    return delta_phys / december_std / equalization
+
+
 def write_case_npz(output_dir: Path, result: dict[str, Any], dataset: WalkerDataset) -> Path:
     case: NeutralCase = result["case"]
     path = output_dir / f"case_{case.source_name}_{case.target_year}.npz"
@@ -1071,6 +1189,9 @@ def write_method_json(output_dir: Path, args: argparse.Namespace, checkpoint: di
         "epsilon_zos": args.epsilon_zos,
         "constraint_mode": args.constraint_mode,
         "relative_l2_fraction": args.relative_l2_fraction,
+        "constraint_file": args.constraint_file or None,
+        "constraint_scale": args.constraint_scale,
+        "event_constraint_l2": getattr(args, "event_constraint_l2", None),
         "max_abs": args.max_abs,
         "domain": args.domain,
         "perturb_grid": args.perturb_grid,
@@ -1105,6 +1226,7 @@ def main() -> None:
 
     config = load_config(args.config)
     dataset = WalkerDataset(config["data"]["path"], config, split=args.split)
+    prepare_event_l2_constraint(dataset, args)
     model, checkpoint = load_model(config, args.checkpoint, device)
     trained_rollout_steps = int(config.get("training", {}).get("rollout_steps", args.horizon))
     climatology_np = compute_source_nino34_climatology(dataset)
