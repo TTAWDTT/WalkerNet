@@ -22,6 +22,7 @@ CUDA_VISIBLE_DEVICES=0 /home/cpji/wwb/torch/bin/python -u scripts/compute_tos_zo
   --config configs/server_3090_mixed5_ddp8.yaml \
   --checkpoint /mnt/sda/WalkerNet/checkpoints_mixed5_enso18_simple_loss_corr_ddp8/best_skill.pt \
   --split test \
+  --case-year-range 1851,2014 \
   --device cuda \
   --num-cases 10 \
   --horizon 12 \
