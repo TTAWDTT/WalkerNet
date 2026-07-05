@@ -155,16 +155,21 @@ def select_enso_event_samples(
     return samples
 
 
-def december_anomaly_stats(dataset: WalkerDataset) -> dict[int, dict[str, np.ndarray]]:
-    """为每个 source 计算训练期 12 月 TOS/ZOS 的平均场和标量标准差。"""
+def december_anomaly_stats(dataset: WalkerDataset, source_indices: set[int]) -> dict[int, dict[str, np.ndarray]]:
+    """为会被实际用到的 source 计算训练期 12 月 TOS/ZOS 统计量。"""
 
     train_start, train_end = dataset.data_config["train_years"]
     stats: dict[int, dict[str, np.ndarray]] = {}
     for source_idx, payload in enumerate(dataset.source_payloads):
+        if source_idx not in source_indices:
+            continue
         years = np.asarray(payload["years"])
         months = np.asarray(payload["months"])
         train_december = (years >= int(train_start)) & (years <= int(train_end)) & (months == 12)
         fields = np.asarray(payload["data"][train_december, :2], dtype=np.float32)
+        if fields.size == 0:
+            source = dataset.source_names[source_idx]
+            raise ValueError(f"No training December fields for source={source}")
         mean_field = np.nanmean(fields, axis=0)
         std_scalar = np.nanstd(fields - mean_field[None], axis=(0, 2, 3)).astype(np.float32)
         std_scalar = np.where(std_scalar > 1.0e-12, std_scalar, 1.0).astype(np.float32)
@@ -190,7 +195,7 @@ def event_fields_to_dimensionless(
             )
             raw_fields.append((field - mean[:, None, None]) / std[:, None, None])
     else:
-        stats = december_anomaly_stats(dataset)
+        stats = december_anomaly_stats(dataset, {sample.source_idx for sample in samples})
         for sample in samples:
             field = np.asarray(
                 dataset.source_payloads[sample.source_idx]["data"][sample.previous_december_index, :2],
@@ -269,7 +274,7 @@ def write_outputs(
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
-        for sample, row in zip(samples, event_rows, strict=True):
+        for sample, row in zip(samples, event_rows):
             writer.writerow(
                 {
                     "source": sample.source_name,
