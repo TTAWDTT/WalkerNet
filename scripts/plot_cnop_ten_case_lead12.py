@@ -329,6 +329,12 @@ def add_panel_label(ax: plt.Axes, text: str, loc: str = "upper left") -> None:
     )
 
 
+def apply_ocean_mask(field: np.ndarray, valid_mask: np.ndarray) -> np.ndarray:
+    """Hide invalid land cells before plotting; model outputs there are meaningless."""
+
+    return np.where(valid_mask, field, np.nan)
+
+
 def main() -> None:
     args = parse_args()
     if args.lead_month < 1 or args.lead_month > args.horizon:
@@ -392,6 +398,7 @@ def main() -> None:
         perturbed = rollout_fields(model, dataset, case, x_pert, args.horizon, trained_rollout_steps).numpy()
         payload = dataset.source_payloads[case.source_idx]
         truth = np.asarray(payload["data"][case.target_t : case.target_t + args.horizon], dtype=np.float32)
+        tos_valid = payload["valid_mask"][0].cpu().numpy().astype(bool)
         response_tos = perturbed[lead_idx, 0] - baseline[lead_idx, 0]
         truth_tos = truth[lead_idx, 0]
         baseline_tos = baseline[lead_idx, 0]
@@ -414,6 +421,12 @@ def main() -> None:
         truth_nino = float(compute_nino34_numpy(truth_tos[None], lat, lon)[0])
         baseline_nino = float(compute_nino34_numpy(baseline_tos[None], lat, lon)[0])
         perturbed_nino = float(compute_nino34_numpy(perturbed_tos[None], lat, lon)[0])
+
+        perturb_tos = apply_ocean_mask(perturb_tos, tos_valid)
+        response_tos = apply_ocean_mask(response_tos, tos_valid)
+        truth_tos = apply_ocean_mask(truth_tos, tos_valid)
+        baseline_tos = apply_ocean_mask(baseline_tos, tos_valid)
+        perturbed_tos = apply_ocean_mask(perturbed_tos, tos_valid)
 
         perturb_plot = smooth_field(perturb_tos, args.smooth_sigma)
         response_plot = smooth_field(response_tos, args.smooth_sigma)
