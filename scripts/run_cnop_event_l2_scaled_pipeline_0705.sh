@@ -24,6 +24,31 @@ CASES=(
   "GFDL-ESM4 1930 1"
 )
 
+wait_for_gpu_memory() {
+  local max_used_mb="$1"
+  echo "[pipeline] wait for GPUs memory.used <= ${max_used_mb} MiB: $(date)"
+  while true; do
+    local used_values
+    used_values="$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits)"
+    local ok=1
+    local max_seen=0
+    while read -r used; do
+      used="${used// /}"
+      if [[ -n "${used}" && "${used}" -gt "${max_seen}" ]]; then
+        max_seen="${used}"
+      fi
+      if [[ -n "${used}" && "${used}" -gt "${max_used_mb}" ]]; then
+        ok=0
+      fi
+    done <<< "${used_values}"
+    echo "[pipeline] gpu max memory.used=${max_seen} MiB"
+    if [[ "${ok}" -eq 1 ]]; then
+      break
+    fi
+    sleep 600
+  done
+}
+
 plot_and_recompute() {
   local out_dir="$1"
   local tag="$2"
@@ -126,6 +151,7 @@ run_scale() {
   mkdir -p "${shard_dir}"
 
   echo "[pipeline] start scale=${scale} tag=${scale_tag}: $(date)"
+  wait_for_gpu_memory 13000
   local pids=()
   for idx in 0 1 2 3 4 5 6 7; do
     read -r source year gpu <<< "${CASES[$idx]}"
