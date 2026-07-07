@@ -179,7 +179,8 @@ rollout_selection:
 
 当前 CNOP 实验使用已经训练好的 `best_skill.pt`，在同一个中性样本
 `IPSL-CM6A-LR 1880` 上优化输入窗口第 12 个月的 `tos/zos` 扰动。
-约束采用物理量 L2 范数：
+约束采用相对初始场物理量 L2 范数；下面几张 `docs/assets/cnop_3pct_*`
+图片都来自这个 3% 约束实验：
 
 ```text
 ||delta_tos||_2 <= 3% * ||initial_tos||_2
@@ -214,8 +215,10 @@ CNOP 本体，即实际加在输入第 12 个月上的 `delta_tos / delta_zos`�
   <img src="./docs/assets/cnop_3pct_truth_comparison.jpg" alt="CNOP forecast comparison with observed truth" width="980">
 </p>
 
-同一初始场、同一目标函数下的多个局地最优扰动。rank 1-3 形态高度接近，
-说明当前设置下优化主要收敛到同一个主导敏感模态：
+同一初始场、同一目标函数下，从多个随机初值重复优化得到的前三个候选扰动。
+这里的 `rank` 只表示按目标函数值从高到低排序，不是物理模态编号。当前 rank 1-3
+形态和目标函数值都很接近，说明这个设置更像是收敛到同一个主导敏感方向；
+这张图主要用于检查优化重复性，暂时不宜解读为“多个不同局地最优模态”：
 
 <p align="center">
   <img src="./docs/assets/cnop_3pct_multi_optima.jpg" alt="Multiple CNOP local optima" width="880">
@@ -226,6 +229,53 @@ CNOP 本体，即实际加在输入第 12 个月上的 `delta_tos / delta_zos`�
 <p align="center">
   <img src="./docs/assets/cnop_3pct_response_evolution.jpg" alt="CNOP response evolution" width="980">
 </p>
+
+## CNOP 64 样本聚类实验
+
+为了避免只看单个个例，新增了一个 64 样本实验。筛选条件是：
+
+1. 目标年一月至十二月的 truth 不发生 ENSO，即 observed max 3-month `|Niño3.4 anomaly| <= 0.5`。
+2. baseline 与 truth 接近，按 12 个月 `Niño3.4 anomaly RMSE` 从小到大选样。
+
+CNOP 设置沿用 event-based joint TOS/ZOS L2 constraint，并取 `constraint_scale = 0.4`。
+64 个样本整体结果如下：
+
+| Metric | Mean | Median | Min | Max |
+|---|---:|---:|---:|---:|
+| observed max 3-month `|Niño3.4|` | 0.366 | 0.380 | 0.126 | 0.500 |
+| baseline lead-12 Niño3.4 | -0.066 | -0.051 | -0.826 | 1.013 |
+| CNOP lead-12 Niño3.4 | 0.821 | 0.823 | -0.225 | 2.142 |
+| lead-12 gain | 0.887 | 0.867 | 0.492 | 1.344 |
+| baseline max 3-month Niño3.4 | 0.212 | 0.147 | -0.347 | 0.973 |
+| CNOP max 3-month Niño3.4 | 1.005 | 0.915 | 0.253 | 2.020 |
+| max 3-month gain | 0.792 | 0.796 | 0.377 | 1.192 |
+
+64 个 CNOP 初始扰动按无量纲 `delta_norm` 聚类，使用所有 case 共同有效海洋格点：
+
+| Cluster | Count | Mean lead-12 gain | Mean max 3-month gain |
+|---:|---:|---:|---:|
+| 1 | 10 | 0.955 | 0.800 |
+| 2 | 22 | 0.877 | 0.792 |
+| 3 | 17 | 0.933 | 0.784 |
+| 4 | 15 | 0.804 | 0.797 |
+
+这个结果说明：在 `0.4 constraint` 下，CNOP 对非 ENSO 且 baseline 预报较接近 truth
+的 64 个样本都能稳定推高 Niño3.4；不同 cluster 更像是不同扰动形态原型，而不是有效/无效两类。
+
+<p align="center">
+  <img src="./docs/assets/cnop64_scale04_cluster_pca_similarity.png" alt="64-case CNOP cluster PCA and similarity" width="980">
+</p>
+
+从 4 个 cluster 中先取中心代表，再用较强 lead-12 gain 样本补足，得到 10 个代表样本：
+
+<p align="center">
+  <img src="./docs/assets/cnop64_scale04_representative10.png" alt="Representative 10 CNOP cases under 0.4 event constraint" width="980">
+</p>
+
+完整数值表保存在：
+
+- `docs/assets/cnop64_scale04_summary_forecast_clim.csv`
+- `docs/assets/cnop64_scale04_cluster_summary.csv`
 
 ## 常用命令
 
