@@ -235,6 +235,13 @@ def test_early_stop_flag_uses_rank_zero_decision():
         assert trainer._broadcast_bool_from_main(False) is True
 
 
+def test_keep_epoch_checkpoints_config_parsing():
+    assert Trainer._parse_keep_epoch_checkpoints(None) == set()
+    assert Trainer._parse_keep_epoch_checkpoints(4) == {4}
+    assert Trainer._parse_keep_epoch_checkpoints("4, 6, 0") == {4, 6}
+    assert Trainer._parse_keep_epoch_checkpoints([6, 8, -1]) == {6, 8}
+
+
 def _run_all():
     import traceback
 
