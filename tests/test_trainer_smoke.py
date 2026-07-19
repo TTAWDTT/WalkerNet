@@ -13,6 +13,7 @@ from __future__ import annotations
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import torch
 from torch import nn
@@ -182,6 +183,56 @@ def test_nino34_delta_loss_tracks_index_correction():
     loss = nino34_delta_mse_loss(pred, target, x_last, valid_mask)
 
     assert torch.allclose(loss, torch.tensor(1.0), atol=1e-6)
+
+
+def test_rollout_selection_is_broadcast_to_worker_rank():
+    """非主 rank 应等待并接收 rank 0 的 rollout 指标。"""
+    loader = DataLoader(TinyDataset(), batch_size=1, shuffle=False)
+    trainer = Trainer(TinyModel(), loader, loader, {"training": {}}, device="cpu", rank=1)
+    trainer.is_distributed = True
+
+    expected = {"score": 0.42, "leads": [6, 12]}
+
+    def receive_from_main(payload, src):
+        assert src == 0
+        payload[0] = (expected, None)
+
+    with patch("src.trainer.dist.broadcast_object_list", side_effect=receive_from_main) as broadcast:
+        result = trainer.evaluate_rollout_selection(epoch=3)
+
+    assert result == expected
+    broadcast.assert_called_once()
+
+
+def test_rollout_selection_error_is_broadcast_to_worker_rank():
+    """rank 0 的评测异常应让全部 rank 一起失败，避免其它 rank 继续训练。"""
+    loader = DataLoader(TinyDataset(), batch_size=1, shuffle=False)
+    trainer = Trainer(TinyModel(), loader, loader, {"training": {}}, device="cpu", rank=1)
+    trainer.is_distributed = True
+
+    def receive_error(payload, src):
+        payload[0] = ({}, "ValueError: bad rollout data")
+
+    with patch("src.trainer.dist.broadcast_object_list", side_effect=receive_error):
+        try:
+            trainer.evaluate_rollout_selection(epoch=3)
+        except RuntimeError as exc:
+            assert "bad rollout data" in str(exc)
+        else:
+            raise AssertionError("worker rank did not receive rank 0 rollout error")
+
+
+def test_early_stop_flag_uses_rank_zero_decision():
+    """早停控制信号必须以 rank 0 为准。"""
+    loader = DataLoader(TinyDataset(), batch_size=1, shuffle=False)
+    trainer = Trainer(TinyModel(), loader, loader, {"training": {}}, device="cpu", rank=1)
+    trainer.is_distributed = True
+
+    def receive_stop(flag, src):
+        flag.fill_(1)
+
+    with patch("src.trainer.dist.broadcast", side_effect=receive_stop):
+        assert trainer._broadcast_bool_from_main(False) is True
 
 
 def _run_all():
