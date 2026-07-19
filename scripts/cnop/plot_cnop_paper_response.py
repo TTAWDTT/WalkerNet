@@ -22,11 +22,11 @@ from matplotlib.colors import LinearSegmentedColormap
 import numpy as np
 import torch
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.plot_cnop_monthly_response import (  # noqa: E402
+from scripts.cnop.plot_cnop_monthly_response import (  # noqa: E402
     NINO34_BOX,
     apply_delta,
     load_case_npz,

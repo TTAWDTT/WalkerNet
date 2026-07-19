@@ -316,13 +316,13 @@ python -m src.train \
 原始数据需要先重网格到 1°：
 
 ```bash
-bash scripts/remap_to_1x1.sh
+bash scripts/data/remap_to_1x1.sh
 ```
 
 检查重网格结果：
 
 ```bash
-python scripts/check_remapped_data.py --data-dir data_1x1
+python scripts/data/check_remapped_data.py --data-dir data_1x1
 ```
 
 大文件目录不应提交到 GitHub，例如：
@@ -338,13 +338,14 @@ checkpoints*/
 ## 代码结构
 
 ```text
-configs/          训练配置
-docs/             架构与实验记录
-scripts/          数据处理、检查与服务器辅助脚本
-src/dataset.py    数据集与多 source 读取
-src/model.py      WalkerNet 模型
-src/trainer.py    rollout 训练、loss、checkpoint
-src/evaluate*.py  评测脚本
+configs/          训练与评测配置，索引见 configs/README.md
+docs/             架构、方法与实验结果，索引见 docs/README.md
+scripts/data/     重网格与数据校验
+scripts/train/    训练、冒烟测试与 GPU 等待任务
+scripts/eval/     常规评测可视化
+scripts/cnop/     CNOP 优化、分析与实验流水线
+src/              Dataset、WalkerNet、训练和评测核心代码
+tests/            模型、数据集、Trainer 与 DDP 测试
 ```
 
 ## 当前状态

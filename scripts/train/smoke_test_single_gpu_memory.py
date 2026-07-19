@@ -5,7 +5,7 @@ batches and runs forward/backward to estimate whether a single GPU can train the
 current model.
 
 Example on the server:
-    CUDA_VISIBLE_DEVICES=0 python scripts/smoke_test_single_gpu_memory.py \
+    CUDA_VISIBLE_DEVICES=0 python scripts/train/smoke_test_single_gpu_memory.py \
         --config configs/server_3090.yaml --batch-sizes 1 2 4
 """
 
@@ -20,7 +20,7 @@ from pathlib import Path
 import torch
 from torch.cuda.amp import GradScaler, autocast
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 

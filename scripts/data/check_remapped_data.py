@@ -4,9 +4,9 @@ This script verifies that data_1x1 contains the four shared variables in the
 expected (time, lat, lon) layout.
 
 Run:
-    python scripts/check_remapped_data.py
-    python scripts/check_remapped_data.py --data-dir data_1x1
-    python scripts/check_remapped_data.py --data-dir /mnt/sda/WalkerNet/cmip6_1x1 --multi-source
+    python scripts/data/check_remapped_data.py
+    python scripts/data/check_remapped_data.py --data-dir data_1x1
+    python scripts/data/check_remapped_data.py --data-dir /mnt/sda/WalkerNet/cmip6_1x1 --multi-source
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
