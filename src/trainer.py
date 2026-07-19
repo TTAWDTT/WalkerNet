@@ -529,6 +529,9 @@ class Trainer:
         self.rollout_selection_loader: DataLoader | None = None
         self.best_rollout_skill = float("-inf")
         self.log_interval = int(self.logging_config.get("log_interval", 50))
+        self.keep_epoch_checkpoints = self._parse_keep_epoch_checkpoints(
+            self.logging_config.get("keep_epoch_checkpoints", [])
+        )
         self.save_dir = Path(self.logging_config.get("save_dir", "checkpoints"))
         if self.is_main:
             self.save_dir.mkdir(parents=True, exist_ok=True)
@@ -647,6 +650,20 @@ class Trainer:
             "config": self.config,
         }
         torch.save(checkpoint, path)
+
+    @staticmethod
+    def _parse_keep_epoch_checkpoints(value: Any) -> set[int]:
+        """解析需要额外保留的 epoch 编号。"""
+        if value is None or value == "":
+            return set()
+        if isinstance(value, int):
+            return {int(value)}
+        if isinstance(value, str):
+            items = [item.strip() for item in value.split(",") if item.strip()]
+        else:
+            items = list(value)
+        epochs = {int(item) for item in items}
+        return {epoch for epoch in epochs if epoch > 0}
 
     def load_checkpoint(self, path: str | Path) -> tuple[int, dict[str, float]]:
         """读取 checkpoint，返回 epoch 和 metrics。"""
@@ -784,6 +801,8 @@ class Trainer:
                 self.save_checkpoint(self.save_dir / "best.pt", epoch, all_metrics)
             if is_best_skill:
                 self.save_checkpoint(self.save_dir / "best_skill.pt", epoch, all_metrics)
+            if epoch in self.keep_epoch_checkpoints:
+                self.save_checkpoint(self.save_dir / f"epoch_{epoch:03d}.pt", epoch, all_metrics)
 
             # rank 0 可能正在写较大的 checkpoint；其它 rank 必须在这里等待，
             # 否则会提前进入下一轮 DDP collective，造成 collective 顺序错位。
