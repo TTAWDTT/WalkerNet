@@ -16,6 +16,9 @@
 # 8 卡训练
 bash scripts/train/train_ddp.sh
 
+# SSP126 从零训练两阶段流水线
+bash scripts/train/run_ssp126_scratch_pipeline.sh
+
 # 数据重网格与校验
 bash scripts/data/remap_to_1x1.sh
 python scripts/data/check_remapped_data.py --data-dir data_1x1
