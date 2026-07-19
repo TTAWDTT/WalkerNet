@@ -16,12 +16,18 @@ from pathlib import Path
 import numpy as np
 import torch
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.compute_tos_zos_cnop import compute_nino34_numpy, three_month_mean_np  # noqa: E402
-from scripts.plot_cnop_monthly_response import apply_delta, load_model, make_case, make_case_input, rollout_fields  # noqa: E402
+from scripts.cnop.compute_tos_zos_cnop import compute_nino34_numpy, three_month_mean_np  # noqa: E402
+from scripts.cnop.plot_cnop_monthly_response import (  # noqa: E402
+    apply_delta,
+    load_model,
+    make_case,
+    make_case_input,
+    rollout_fields,
+)
 from src.dataset import WalkerDataset  # noqa: E402
 from src.utils import load_config  # noqa: E402
 

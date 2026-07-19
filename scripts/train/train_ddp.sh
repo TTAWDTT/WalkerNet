@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /mnt/sda/WalkerNet
+ROOT_DIR="${WALKERNET_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+cd "${ROOT_DIR}"
 
 # 默认使用服务器 8 张 3090；短测时可覆盖：
-#   NPROC_PER_NODE=2 CUDA_VISIBLE_DEVICES=0,1 bash scripts/train_ddp.sh
+#   NPROC_PER_NODE=2 CUDA_VISIBLE_DEVICES=0,1 bash scripts/train/train_ddp.sh
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
 export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 

@@ -2,7 +2,7 @@
 
 这个脚本放在服务器 tmux 中长期运行：
 
-    python scripts/wait_start_mixed5_training.py
+    python scripts/train/wait_start_mixed5_training.py
 
 安全约定：
 - 只观察 GPU 显存占用，不终止任何其它用户进程。

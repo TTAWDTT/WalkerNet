@@ -2,7 +2,7 @@
 
 这个脚本设计成跑在服务器 tmux 里：
 
-    python scripts/monitor_switch_to_ddp8.py
+    python scripts/train/monitor_switch_to_ddp8.py
 
 安全约定：
     1. 只观察 GPU 0-3 是否空出来，不会杀其它用户进程。

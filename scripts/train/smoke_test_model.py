@@ -5,7 +5,7 @@ config (180x360, 6 ViT layers). Targets GPU; CPU is intentionally not supported
 since the production model exceeds typical local CPU memory budgets.
 
 Run on a GPU machine from project root:
-    python scripts/smoke_test_model.py
+    python scripts/train/smoke_test_model.py
 """
 
 from __future__ import annotations
