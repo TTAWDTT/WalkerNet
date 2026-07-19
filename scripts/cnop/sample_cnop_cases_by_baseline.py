@@ -18,19 +18,19 @@ from typing import Any
 import numpy as np
 import torch
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.compute_tos_zos_cnop import (  # noqa: E402
+from scripts.cnop.compute_tos_zos_cnop import (  # noqa: E402
     NeutralCase,
     compute_nino34_numpy,
     compute_source_nino34_climatology,
     make_case_input,
     three_month_mean_np,
 )
-from scripts.plot_cnop_monthly_response import load_model, rollout_fields  # noqa: E402
-from scripts.plot_cnop_ten_case_lead12 import load_or_compute_forecast_climatology  # noqa: E402
+from scripts.cnop.plot_cnop_monthly_response import load_model, rollout_fields  # noqa: E402
+from scripts.cnop.plot_cnop_ten_case_lead12 import load_or_compute_forecast_climatology  # noqa: E402
 from src.dataset import WalkerDataset  # noqa: E402
 from src.utils import load_config, set_seed  # noqa: E402
 

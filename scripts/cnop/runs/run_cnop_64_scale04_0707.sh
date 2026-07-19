@@ -52,7 +52,7 @@ run_case() {
   fi
   rm -rf "${case_dir}"
   mkdir -p "${case_dir}"
-  CUDA_VISIBLE_DEVICES="${gpu}" "${PYTHON}" -u scripts/compute_tos_zos_cnop.py \
+  CUDA_VISIBLE_DEVICES="${gpu}" "${PYTHON}" -u scripts/cnop/compute_tos_zos_cnop.py \
     --config "${CONFIG}" \
     --checkpoint "${CHECKPOINT}" \
     --split test \
@@ -93,7 +93,7 @@ merge_outputs() {
 
 echo "[cnop64] begin: $(date)"
 echo "[cnop64] sample cases"
-CUDA_VISIBLE_DEVICES=0 "${PYTHON}" -u scripts/sample_cnop_cases_by_baseline.py \
+CUDA_VISIBLE_DEVICES=0 "${PYTHON}" -u scripts/cnop/sample_cnop_cases_by_baseline.py \
   --config "${CONFIG}" \
   --checkpoint "${CHECKPOINT}" \
   --split test \
@@ -129,7 +129,7 @@ done
 merge_outputs
 
 echo "[cnop64] recompute forecast-clim summary"
-CUDA_VISIBLE_DEVICES=0 "${PYTHON}" -u scripts/recompute_cnop_summary_forecast_clim.py \
+CUDA_VISIBLE_DEVICES=0 "${PYTHON}" -u scripts/cnop/recompute_cnop_summary_forecast_clim.py \
   --config "${CONFIG}" \
   --checkpoint "${CHECKPOINT}" \
   --cnop-dir "${OUT_DIR}" \
@@ -140,14 +140,14 @@ CUDA_VISIBLE_DEVICES=0 "${PYTHON}" -u scripts/recompute_cnop_summary_forecast_cl
   --lead-month 12
 
 echo "[cnop64] cluster 64 cases and build representative subset"
-"${PYTHON}" -u scripts/cluster_cnop_cases.py \
+"${PYTHON}" -u scripts/cnop/cluster_cnop_cases.py \
   --cnop-dir "${OUT_DIR}" \
   --summary-name cnop_summary_forecast_clim.csv \
   --representative-count 10 \
   --cluster-count 4
 
 echo "[cnop64] plot representative 10 cases"
-CUDA_VISIBLE_DEVICES=0 "${PYTHON}" -u scripts/plot_cnop_ten_case_lead12.py \
+CUDA_VISIBLE_DEVICES=0 "${PYTHON}" -u scripts/cnop/plot_cnop_ten_case_lead12.py \
   --config "${CONFIG}" \
   --checkpoint "${CHECKPOINT}" \
   --cnop-dir "${OUT_DIR}/representative_10" \

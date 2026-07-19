@@ -1,9 +1,29 @@
-.claude
-data_example/*
-data_1x1/*
-.vscode/*
-__pycache__/
-*.pyc
+# 编辑器与本地助手
+.claude/
+.vscode/
+.idea/
 CLAUDE.md
 
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# 数据、缓存与模型产物
+data_example/
+data_1x1/
+cmip6_1x1/
+cmip6_ssp_1x1/
+cmip6-ssp/
+raw/
+cache/
+checkpoints*/
+outputs/
+logs/
+runtime/
+backups/
+reports/
+*.log
+
+# 展示项目
 remotion-promo/
