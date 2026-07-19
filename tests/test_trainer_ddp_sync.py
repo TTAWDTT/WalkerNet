@@ -47,17 +47,22 @@ class TinyModel(nn.Module):
 
 
 def run_rank(rank: int, world_size: int, init_method: str | None = None) -> None:
+    backend = os.environ.get("TEST_BACKEND", "gloo")
+    device = torch.device(f"cuda:{rank}" if backend == "nccl" else "cpu")
+    if device.type == "cuda":
+        torch.cuda.set_device(device)
+
     if init_method is None:
-        dist.init_process_group("gloo")
+        dist.init_process_group(backend)
     else:
-        dist.init_process_group("gloo", init_method=init_method, rank=rank, world_size=world_size)
+        dist.init_process_group(backend, init_method=init_method, rank=rank, world_size=world_size)
     loader = DataLoader(TinyDataset(), batch_size=1)
     trainer = Trainer(
         TinyModel(),
         loader,
         loader,
         {"training": {}, "logging": {"log_interval": 0}},
-        device="cpu",
+        device=device,
         rank=rank,
         world_size=world_size,
     )
