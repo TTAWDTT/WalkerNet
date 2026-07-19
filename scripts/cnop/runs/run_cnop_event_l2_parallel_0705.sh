@@ -38,7 +38,7 @@ launch_case() {
   mkdir -p "${case_dir}"
   echo "[parallel] launch case=${idx} source=${source} year=${year} gpu=${gpu}"
   (
-    CUDA_VISIBLE_DEVICES="${gpu}" /home/cpji/wwb/torch/bin/python -u scripts/compute_tos_zos_cnop.py \
+    CUDA_VISIBLE_DEVICES="${gpu}" /home/cpji/wwb/torch/bin/python -u scripts/cnop/compute_tos_zos_cnop.py \
       --config configs/server_3090_mixed5_ddp8.yaml \
       --checkpoint /mnt/sda/WalkerNet/checkpoints_mixed5_enso18_simple_loss_corr_ddp8/best_skill.pt \
       --split test \
@@ -110,7 +110,7 @@ awk 'FNR==1 && NR!=1 {next} {print}' "${SHARD_DIR}"/case_*_*/cnop_summary.csv > 
 awk 'FNR==1 && NR!=1 {next} {print}' "${SHARD_DIR}"/case_*_*/cnop_candidate_summary.csv > "${OUT_DIR}/cnop_candidate_summary.csv"
 
 echo "[parallel] plot merged result: $(date)"
-CUDA_VISIBLE_DEVICES=0 /home/cpji/wwb/torch/bin/python -u scripts/plot_cnop_ten_case_lead12.py \
+CUDA_VISIBLE_DEVICES=0 /home/cpji/wwb/torch/bin/python -u scripts/cnop/plot_cnop_ten_case_lead12.py \
   --config configs/server_3090_mixed5_ddp8.yaml \
   --checkpoint /mnt/sda/WalkerNet/checkpoints_mixed5_enso18_simple_loss_corr_ddp8/best_skill.pt \
   --cnop-dir "${OUT_DIR}" \

@@ -4,12 +4,12 @@ set -euo pipefail
 # Remap raw CESM2 NetCDF files to the shared WalkerNet 1-degree grid.
 #
 # Run from WSL/Linux:
-#   bash scripts/remap_to_1x1.sh
+#   bash scripts/data/remap_to_1x1.sh
 #
 # Or from Windows PowerShell:
-#   wsl -d Ubuntu-24.04 -- bash /mnt/d/Github/WalkerNet/scripts/remap_to_1x1.sh
+#   wsl -d Ubuntu-24.04 -- bash /mnt/d/Github/WalkerNet/scripts/data/remap_to_1x1.sh
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 GRID_FILE="$ROOT_DIR/configs/grid_1x1_180x360.txt"
 INPUT_DIR="${1:-$ROOT_DIR/data_example}"
 OUTPUT_DIR="${2:-$ROOT_DIR/data_1x1}"
@@ -52,4 +52,4 @@ remap_one "tauv" "$INPUT_DIR/tauv_Amon_CESM2_historical_r1i1p1f1_gn_185001-20141
 echo
 echo "Done. Remapped files are in: $OUTPUT_DIR"
 echo "Run this to verify:"
-echo "  python scripts/check_remapped_data.py --data-dir \"$OUTPUT_DIR\""
+echo "  python scripts/data/check_remapped_data.py --data-dir \"$OUTPUT_DIR\""

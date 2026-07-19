@@ -9,7 +9,7 @@ mkdir -p "${LOG_DIR}"
 echo "[run] start CNOP forecast climatology + constraint: $(date)"
 echo "[run] host: $(hostname)"
 
-CUDA_VISIBLE_DEVICES=0 /home/cpji/wwb/torch/bin/python -u scripts/plot_cnop_ten_case_lead12.py \
+CUDA_VISIBLE_DEVICES=0 /home/cpji/wwb/torch/bin/python -u scripts/cnop/plot_cnop_ten_case_lead12.py \
   --config configs/server_3090_mixed5_ddp8.yaml \
   --checkpoint /mnt/sda/WalkerNet/checkpoints_mixed5_enso18_simple_loss_corr_ddp8/best_skill.pt \
   --cnop-dir outputs/cnop_tos_zos_patch_0703 \
@@ -29,7 +29,7 @@ CUDA_VISIBLE_DEVICES=0 /home/cpji/wwb/torch/bin/python -u scripts/plot_cnop_ten_
   --dpi 360 \
   --output outputs/cnop_tos_zos_patch_0703/figures/cnop_ten_case_lead12_forecast_clim_ssta.png
 
-/home/cpji/wwb/torch/bin/python -u scripts/compute_cnop_constraint.py \
+/home/cpji/wwb/torch/bin/python -u scripts/cnop/compute_cnop_constraint.py \
   --config configs/server_3090_mixed5_ddp8.yaml \
   --split train \
   --event-year-range train \

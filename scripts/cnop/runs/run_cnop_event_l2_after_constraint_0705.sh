@@ -18,7 +18,7 @@ while [[ ! -s "${CONSTRAINT_JSON}" || ! -s "${FORECAST_CLIM}" ]]; do
 done
 
 echo "[run] start event_l2 CNOP: $(date)"
-CUDA_VISIBLE_DEVICES=0 /home/cpji/wwb/torch/bin/python -u scripts/compute_tos_zos_cnop.py \
+CUDA_VISIBLE_DEVICES=0 /home/cpji/wwb/torch/bin/python -u scripts/cnop/compute_tos_zos_cnop.py \
   --config configs/server_3090_mixed5_ddp8.yaml \
   --checkpoint /mnt/sda/WalkerNet/checkpoints_mixed5_enso18_simple_loss_corr_ddp8/best_skill.pt \
   --split test \
@@ -46,7 +46,7 @@ CUDA_VISIBLE_DEVICES=0 /home/cpji/wwb/torch/bin/python -u scripts/compute_tos_zo
 
 echo "[run] plot event_l2 CNOP with forecast climatology: $(date)"
 mkdir -p "$(dirname "${FIG_PATH}")"
-CUDA_VISIBLE_DEVICES=0 /home/cpji/wwb/torch/bin/python -u scripts/plot_cnop_ten_case_lead12.py \
+CUDA_VISIBLE_DEVICES=0 /home/cpji/wwb/torch/bin/python -u scripts/cnop/plot_cnop_ten_case_lead12.py \
   --config configs/server_3090_mixed5_ddp8.yaml \
   --checkpoint /mnt/sda/WalkerNet/checkpoints_mixed5_enso18_simple_loss_corr_ddp8/best_skill.pt \
   --cnop-dir "${CNOP_DIR}" \

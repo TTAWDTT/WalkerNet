@@ -5,7 +5,7 @@ January-December window as model input, and optimizes a bounded perturbation on
 the final input month. Only ``tos`` and ``zos`` are perturbed by default.
 
 Example:
-    python scripts/compute_tos_zos_cnop.py \
+    python scripts/cnop/compute_tos_zos_cnop.py \
         --config configs/server_3090_mixed5_ddp8.yaml \
         --checkpoint /mnt/sda/WalkerNet/checkpoints_mixed5_enso18_simple_loss_corr_ddp8/best_skill.pt \
         --split test --device cuda --num-cases 10 --steps 80 \
@@ -28,7 +28,7 @@ import torch
 import torch.utils.checkpoint
 import torch.nn.functional as F
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -88,7 +88,12 @@ def parse_args() -> argparse.Namespace:
         help="Perturbation norm constraint. event_l2 uses an ENSO-event based joint TOS/ZOS L2 radius.",
     )
     parser.add_argument("--relative-l2-fraction", type=float, default=0.1)
-    parser.add_argument("--constraint-file", type=str, default="", help="JSON produced by scripts/compute_cnop_constraint.py.")
+    parser.add_argument(
+        "--constraint-file",
+        type=str,
+        default="",
+        help="JSON produced by scripts/cnop/compute_cnop_constraint.py.",
+    )
     parser.add_argument("--constraint-scale", type=float, default=1.0, help="Scale applied to event_l2 constraint.")
     parser.add_argument("--max-abs", type=float, default=2.0, help="Elementwise normalized perturbation clip.")
     parser.add_argument("--neutral-threshold", type=float, default=0.5)

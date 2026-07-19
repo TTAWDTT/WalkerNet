@@ -202,7 +202,7 @@ top_start_idx
 完成 CNOP 后，可以用下面的诊断脚本生成更适合汇报和论文草图的合成图：
 
 ```bash
-python scripts/plot_cnop_diagnostics.py \
+python scripts/cnop/plot_cnop_diagnostics.py \
     --input-dir outputs/cnop_tos_zos_patch_0703
 ```
 

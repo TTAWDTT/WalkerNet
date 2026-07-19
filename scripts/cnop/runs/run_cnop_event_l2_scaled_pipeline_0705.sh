@@ -56,7 +56,7 @@ plot_and_recompute() {
   mkdir -p "${out_dir}/figures"
 
   echo "[pipeline] recompute summary ${tag}: $(date)"
-  CUDA_VISIBLE_DEVICES=5 /home/cpji/wwb/torch/bin/python -u scripts/recompute_cnop_summary_forecast_clim.py \
+  CUDA_VISIBLE_DEVICES=5 /home/cpji/wwb/torch/bin/python -u scripts/cnop/recompute_cnop_summary_forecast_clim.py \
     --config "${CONFIG}" \
     --checkpoint "${CHECKPOINT}" \
     --cnop-dir "${out_dir}" \
@@ -67,7 +67,7 @@ plot_and_recompute() {
     --lead-month 12
 
   echo "[pipeline] plot ${tag}: $(date)"
-  CUDA_VISIBLE_DEVICES=5 /home/cpji/wwb/torch/bin/python -u scripts/plot_cnop_ten_case_lead12.py \
+  CUDA_VISIBLE_DEVICES=5 /home/cpji/wwb/torch/bin/python -u scripts/cnop/plot_cnop_ten_case_lead12.py \
     --config "${CONFIG}" \
     --checkpoint "${CHECKPOINT}" \
     --cnop-dir "${out_dir}" \
@@ -101,7 +101,7 @@ run_case() {
   rm -rf "${case_dir}"
   mkdir -p "${case_dir}"
 
-  CUDA_VISIBLE_DEVICES="${gpu}" /home/cpji/wwb/torch/bin/python -u scripts/compute_tos_zos_cnop.py \
+  CUDA_VISIBLE_DEVICES="${gpu}" /home/cpji/wwb/torch/bin/python -u scripts/cnop/compute_tos_zos_cnop.py \
     --config "${CONFIG}" \
     --checkpoint "${CHECKPOINT}" \
     --split test \

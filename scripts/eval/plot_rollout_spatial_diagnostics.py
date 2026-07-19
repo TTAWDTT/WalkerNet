@@ -5,7 +5,7 @@
 2. test set 上逐格点 anomaly ACC。
 
 示例：
-    python scripts/plot_rollout_spatial_diagnostics.py \
+    python scripts/eval/plot_rollout_spatial_diagnostics.py \
         --config configs/server_3090_mixed5_ddp8.yaml \
         --checkpoint /mnt/sda/WalkerNet/checkpoints_mixed5_ddp8/latest.pt \
         --output-dir outputs/fig_mixed5_latest_spatial
@@ -21,7 +21,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Subset
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
