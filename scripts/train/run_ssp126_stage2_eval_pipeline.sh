@@ -7,6 +7,8 @@ cd "${ROOT_DIR}"
 PYTHON_BIN="${PYTHON_BIN:-/home/cpji/wwb/torch/bin/python}"
 MASTER_PORT="${MASTER_PORT:-29532}"
 NUM_WORKERS="${NUM_WORKERS:-2}"
+TRAIN_GPUS="${TRAIN_GPUS:-0,1,2,3,4,5,6,7}"
+NPROC_PER_NODE="${NPROC_PER_NODE:-$(awk -F, '{print NF}' <<< "${TRAIN_GPUS}")}"
 CONFIG="${ROOT_DIR}/configs/server_3090_ssp126_scratch_stage2_ddp8.yaml"
 STAGE1_BEST="${ROOT_DIR}/checkpoints_ssp126_scratch_stage1_ddp8/best_skill.pt"
 STAGE2_DIR="${ROOT_DIR}/checkpoints_ssp126_scratch_stage2_ddp8"
@@ -48,10 +50,10 @@ run_stage2() {
     log "initialize Stage 2 from Stage 1 best_skill: ${STAGE1_BEST}"
   fi
 
-  log "Stage 2 training begin: $(date -Is)"
-  CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}" \
+  log "Stage 2 training begin: gpus=${TRAIN_GPUS}, world_size=${NPROC_PER_NODE}, time=$(date -Is)"
+  CUDA_VISIBLE_DEVICES="${TRAIN_GPUS}" \
     "${PYTHON_BIN}" -m torch.distributed.run \
-      --nproc_per_node=8 \
+      --nproc_per_node="${NPROC_PER_NODE}" \
       --master_port="${MASTER_PORT}" \
       --module src.train \
       --config "${CONFIG}" \
@@ -123,7 +125,7 @@ run_all_evaluations() {
   pids+=("$!"); names+=("best_skill_GFDL-ESM4")
   run_evaluation "best_skill_IPSL-CM6A-LR" 5 "${best}" "IPSL-CM6A-LR" &
   pids+=("$!"); names+=("best_skill_IPSL-CM6A-LR")
-  run_evaluation "best_skill_MPI-ESM1-2-HR" 6 "${best}" "MPI-ESM1-2-HR" &
+  run_evaluation "best_skill_MPI-ESM1-2-HR" 7 "${best}" "MPI-ESM1-2-HR" &
   pids+=("$!"); names+=("best_skill_MPI-ESM1-2-HR")
 
   for idx in "${!pids[@]}"; do
