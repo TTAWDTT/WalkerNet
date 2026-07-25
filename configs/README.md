@@ -8,6 +8,8 @@
 | `server_3090.yaml` | 单 source 服务器训练 |
 | `server_3090_mixed5*.yaml` | 五 source 混合训练，含单卡、DDP4、DDP8 和 smoke |
 | `server_3090_ssp126_ddp8.yaml` | SSP126 五模式混合训练，8 卡 DDP |
+| `server_3090_ssp126_scratch_stage1_ddp8.yaml` | SSP126 从零训练：固定 12-step 基础阶段 |
+| `server_3090_ssp126_scratch_stage2_ddp8.yaml` | SSP126 从 Stage 1 初始化：15/18-step 微调阶段 |
 | `server_3090_rollout*.yaml` | 历史 rollout 与微调实验 |
 | `server_smoke.yaml`、`server_ddp_smoke.yaml` | 单卡和 DDP 冒烟测试 |
 | `grid_1x1_180x360.txt` | CDO 目标网格定义 |
