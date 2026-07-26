@@ -150,7 +150,7 @@ def collect_rollout(
             device=device,
         )
         pred_norm = model(window, target_month, rollout_step=rollout_step)
-        pred_phys = dataset.denormalize(pred_norm)
+        pred_phys = dataset.denormalize(pred_norm, source_index)
         target_phys = target_physical(dataset, source_index, target_t, device)
 
         preds[step] = pred_phys.detach()

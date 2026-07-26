@@ -210,17 +210,17 @@ def _compute_nino34_numpy(data: np.ndarray, lat: np.ndarray, lon: np.ndarray) ->
 
 
 def _compute_nino34_climatology(dataset: WalkerDataset) -> torch.Tensor:
-    """用训练年份计算 Niño3.4 月气候态，返回 shape=(13,)；索引 1-12 有效。"""
+    """按 source 计算训练年份 Niño3.4 月气候态，返回 shape=(S, 13)。"""
     data_config = dataset.data_config
     train_start, train_end = data_config["train_years"]
-    train_mask = (dataset.years >= int(train_start)) & (dataset.years <= int(train_end))
-
-    tos = np.asarray(dataset.data[:, 0])
-    nino = _compute_nino34_numpy(tos, np.asarray(dataset.lat), np.asarray(dataset.lon))
-    climatology = np.zeros(13, dtype=np.float32)
-    for month in range(1, 13):
-        month_mask = train_mask & (dataset.months == month)
-        climatology[month] = float(np.nanmean(nino[month_mask]))
+    climatology = np.zeros((len(dataset.source_payloads), 13), dtype=np.float32)
+    for source_idx, payload in enumerate(dataset.source_payloads):
+        train_mask = (payload["years"] >= int(train_start)) & (payload["years"] <= int(train_end))
+        tos = np.asarray(payload["data"][:, 0])
+        nino = _compute_nino34_numpy(tos, np.asarray(payload["lat"]), np.asarray(payload["lon"]))
+        for month in range(1, 13):
+            month_mask = train_mask & (payload["months"] == month)
+            climatology[source_idx, month] = float(np.nanmean(nino[month_mask]))
     return torch.from_numpy(climatology)
 
 
@@ -277,6 +277,7 @@ def evaluate(
     persistence_phys_stats = _empty_stats()
 
     target_months: list[torch.Tensor] = []
+    source_indices: list[torch.Tensor] = []
     model_nino_raw: list[torch.Tensor] = []
     persistence_nino_raw: list[torch.Tensor] = []
     target_nino_raw: list[torch.Tensor] = []
@@ -290,6 +291,10 @@ def evaluate(
         y = batch["y"].to(device)
         target_month = batch["target_month"].to(device)
         valid_mask = batch["valid_mask"].to(device)
+        source_index = batch.get("source_index")
+        if source_index is None:
+            source_index = torch.zeros(x.shape[0], dtype=torch.long)
+        source_index = source_index.to(device=device, dtype=torch.long)
 
         pred = model(x, target_month)
         persistence = x[:, -1:].contiguous()
@@ -297,9 +302,9 @@ def evaluate(
         _update_stats(model_norm_stats, pred, y, valid_mask[:, None])
         _update_stats(persistence_norm_stats, persistence, y, valid_mask[:, None])
 
-        pred_phys = dataset.denormalize(pred)
-        persistence_phys = dataset.denormalize(persistence)
-        y_phys = dataset.denormalize(y)
+        pred_phys = dataset.denormalize(pred, source_index)
+        persistence_phys = dataset.denormalize(persistence, source_index)
+        y_phys = dataset.denormalize(y, source_index)
         _update_stats(model_phys_stats, pred_phys, y_phys, valid_mask[:, None])
         _update_stats(persistence_phys_stats, persistence_phys, y_phys, valid_mask[:, None])
 
@@ -309,6 +314,7 @@ def evaluate(
         target_nino = compute_nino34(y_phys[:, 0, 0], lat, lon).detach().cpu()
 
         target_months.append(target_month.detach().cpu())
+        source_indices.append(source_index.detach().cpu())
         model_nino_raw.append(model_nino)
         persistence_nino_raw.append(persistence_nino)
         target_nino_raw.append(target_nino)
@@ -317,11 +323,12 @@ def evaluate(
             print(f"evaluated batches={batch_idx}/{len(loader)}", flush=True)
 
     target_month_all = torch.cat(target_months).long()
+    source_index_all = torch.cat(source_indices).long()
     model_nino_raw_all = torch.cat(model_nino_raw)
     persistence_nino_raw_all = torch.cat(persistence_nino_raw)
     target_nino_raw_all = torch.cat(target_nino_raw)
 
-    clim = climatology.detach().cpu()[target_month_all]
+    clim = climatology.detach().cpu()[source_index_all, target_month_all]
     model_nino_anom = model_nino_raw_all - clim
     persistence_nino_anom = persistence_nino_raw_all - clim
     target_nino_anom = target_nino_raw_all - clim
