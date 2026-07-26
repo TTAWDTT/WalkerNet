@@ -26,7 +26,6 @@ from src.dataset import WalkerDataset
 
 
 VARIABLES = ("tos", "zos", "tauu", "tauv")
-EXPECTED_SHAPE = (1980, 180, 360)
 EXPECTED_DIMS = ("time", "lat", "lon")
 
 
@@ -43,10 +42,20 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Treat data-dir as a root containing one subdirectory per source.",
     )
+    parser.add_argument(
+        "--expected-months",
+        type=int,
+        default=1980,
+        help="Expected number of monthly time steps (historical=1980, SSP=1032).",
+    )
     return parser.parse_args()
 
 
-def check_file(data_dir: Path, variable: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def check_file(
+    data_dir: Path,
+    variable: str,
+    expected_months: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     path = data_dir / f"{variable}_1x1.nc"
     if not path.exists():
         raise FileNotFoundError(f"Missing file: {path}")
@@ -59,8 +68,9 @@ def check_file(data_dir: Path, variable: str) -> tuple[np.ndarray, np.ndarray, n
         if arr.dims != EXPECTED_DIMS:
             raise ValueError(f"{path}: expected dims {EXPECTED_DIMS}, got {arr.dims}")
 
-        if arr.shape != EXPECTED_SHAPE:
-            raise ValueError(f"{path}: expected shape {EXPECTED_SHAPE}, got {arr.shape}")
+        expected_shape = (expected_months, 180, 360)
+        if arr.shape != expected_shape:
+            raise ValueError(f"{path}: expected shape {expected_shape}, got {arr.shape}")
 
         lat = ds["lat"].values
         lon = ds["lon"].values
@@ -70,14 +80,14 @@ def check_file(data_dir: Path, variable: str) -> tuple[np.ndarray, np.ndarray, n
     return lat, lon, years, months
 
 
-def check_source(data_dir: Path) -> None:
+def check_source(data_dir: Path, expected_months: int) -> None:
     """检查一个 source 目录里的四个变量是否互相对齐。"""
     reference_lat = None
     reference_lon = None
     reference_years = None
     reference_months = None
     for variable in VARIABLES:
-        lat, lon, years, months = check_file(data_dir, variable)
+        lat, lon, years, months = check_file(data_dir, variable, expected_months)
         if reference_lat is None:
             reference_lat = lat
             reference_lon = lon
@@ -101,9 +111,9 @@ def main() -> None:
             raise FileNotFoundError(f"No source directories found under {args.data_dir}")
         for source_dir in source_dirs:
             print(f"== {source_dir.name} ==")
-            check_source(source_dir)
+            check_source(source_dir, args.expected_months)
     else:
-        check_source(args.data_dir)
+        check_source(args.data_dir, args.expected_months)
     print("All remapped files look good.")
 
 
