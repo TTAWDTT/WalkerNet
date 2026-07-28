@@ -155,10 +155,10 @@ def validate_input_timeline(job: VariableJob) -> None:
             raise ValueError(f"Invalid time range: {path}")
         ranges.append((start, end, path))
 
-    if ranges[0][0] != EXPECTED_START or ranges[-1][1] != EXPECTED_END:
+    if ranges[0][0] > EXPECTED_START or ranges[-1][1] < EXPECTED_END:
         raise ValueError(
-            f"{job.scenario}/{job.source_id}/{job.variable}: expected "
-            f"{EXPECTED_START}-{EXPECTED_END}, got {ranges[0][0]}-{ranges[-1][1]}"
+            f"{job.scenario}/{job.source_id}/{job.variable}: expected coverage "
+            f"of {EXPECTED_START}-{EXPECTED_END}, got {ranges[0][0]}-{ranges[-1][1]}"
         )
     for previous, current in zip(ranges, ranges[1:]):
         expected = next_month(previous[1])
@@ -167,15 +167,20 @@ def validate_input_timeline(job: VariableJob) -> None:
                 f"{job.scenario}/{job.source_id}/{job.variable}: gap or overlap after "
                 f"{previous[2].name}; expected {expected}, got {current[0]}"
             )
-    total_months = sum(month_count(start, end) for start, end, _path in ranges)
-    if total_months != EXPECTED_MONTHS:
+    selected_months = sum(
+        month_count(max(start, EXPECTED_START), min(end, EXPECTED_END))
+        for start, end, _path in ranges
+        if start <= EXPECTED_END and end >= EXPECTED_START
+    )
+    if selected_months != EXPECTED_MONTHS:
         raise ValueError(
             f"{job.scenario}/{job.source_id}/{job.variable}: "
-            f"expected {EXPECTED_MONTHS} months, got {total_months}"
+            f"expected {EXPECTED_MONTHS} selected months, got {selected_months}"
         )
     print(
         f"timeline OK {job.scenario}/{job.source_id}/{job.variable}: "
-        f"{len(job.files)} files, {total_months} months",
+        f"{len(job.files)} files, {selected_months} selected months "
+        f"from coverage {ranges[0][0]}-{ranges[-1][1]}",
         flush=True,
     )
 
