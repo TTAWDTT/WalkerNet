@@ -49,6 +49,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--threshold", type=float, default=1.5)
     parser.add_argument("--historical-years", type=int, nargs=2, default=(1929, 2014))
     parser.add_argument("--future-years", type=int, nargs=2, default=(2015, 2100))
+    parser.add_argument("--no-detrend", action="store_true", help="仅去逐月气候态，不去线性趋势")
     return parser.parse_args()
 
 
@@ -94,9 +95,11 @@ def _nino34_series(path: Path, start_year: int, end_year: int) -> tuple[np.ndarr
     return years, months, raw.astype(np.float64)
 
 
-def _detrended_anomaly(months: np.ndarray, raw: np.ndarray) -> np.ndarray:
+def _nino34_anomaly(months: np.ndarray, raw: np.ndarray, detrend: bool) -> np.ndarray:
     climatology = np.array([np.nanmean(raw[months == month]) for month in range(1, 13)])
     anomaly = raw - climatology[months - 1]
+    if not detrend:
+        return anomaly
     finite = np.isfinite(anomaly)
     time = np.arange(len(anomaly), dtype=np.float64)
     slope, intercept = np.polyfit(time[finite], anomaly[finite], deg=1)
@@ -142,12 +145,17 @@ def _summarize(rows: list[AnnualPeak], raw_means: dict[tuple[str, str], float]) 
         strong = [row for row in selected if row.is_strong]
         strong_el = [row for row in strong if row.event_type == "ElNino"]
         strong_la = [row for row in strong if row.event_type == "LaNina"]
+        source_rates = []
+        for source in SOURCES:
+            source_rows = [row for row in selected if row.source == source]
+            source_rates.append(sum(row.is_strong for row in source_rows) / len(source_rows))
         output.append(
             {
                 "scenario": scenario,
                 "model_years": len(selected),
                 "strong_years": len(strong),
                 "strong_year_rate": len(strong) / len(selected),
+                "source_rate_std": float(np.std(source_rates, ddof=1)),
                 "strong_el_nino_years": len(strong_el),
                 "strong_la_nina_years": len(strong_la),
                 "mean_abs_peak_strong": float(np.mean([row.max_abs_3m_nino34 for row in strong])),
@@ -217,7 +225,7 @@ def main() -> None:
         for source in SOURCES:
             path = _tos_path(args, scenario, source)
             years, months, raw = _nino34_series(path, int(bounds[0]), int(bounds[1]))
-            anomaly = _detrended_anomaly(months, raw)
+            anomaly = _nino34_anomaly(months, raw, detrend=not args.no_detrend)
             annual_rows.extend(_annual_peaks(scenario, source, years, anomaly, args.threshold))
             raw_means[(scenario, source)] = float(np.mean(raw))
             print(f"done scenario={scenario} source={source} years={bounds[0]}-{bounds[1]}", flush=True)
@@ -234,6 +242,7 @@ def main() -> None:
         "historical_years": list(args.historical_years),
         "future_years": list(args.future_years),
         "sources": list(SOURCES),
+        "linear_detrend": not args.no_detrend,
         "definition": (
             "A strong ENSO year has max absolute centered 3-month, monthly-climatology-removed "
             "and linearly detrended Nino3.4 anomaly >= threshold within the calendar year."
