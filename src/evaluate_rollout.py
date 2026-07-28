@@ -123,7 +123,10 @@ def _target_tensors(
         axis=0,
     )
     target_phys = torch.from_numpy(raw).float().to(device)[:, None]
-    target_norm = dataset._normalize_tensor(target_phys)  # noqa: SLF001 - 评测内部复用 Dataset 归一化
+    target_norm = dataset._normalize_tensor(  # noqa: SLF001 - 评测内部复用 Dataset 归一化
+        target_phys,
+        source_indices,
+    )
     target_norm = torch.nan_to_num(target_norm, nan=0.0, posinf=0.0, neginf=0.0)
     return target_norm, target_phys
 
@@ -299,13 +302,13 @@ def evaluate_rollout(
 
     for batch_idx, batch in enumerate(loader, start=1):
         window = batch["x"].to(device)
-        persistence_norm = window[:, -1:].contiguous()
-        persistence_phys = dataset.denormalize(persistence_norm)
         valid_mask = batch["valid_mask"].to(device)
         source_index = batch.get("source_index")
         if source_index is None:
             source_index = torch.zeros(window.shape[0], dtype=torch.long)
         source_index = source_index.to(device=device, dtype=torch.long)
+        persistence_norm = window[:, -1:].contiguous()
+        persistence_phys = dataset.denormalize(persistence_norm, source_index)
         base_target_t = batch["time_index"].to(device=device, dtype=torch.long)
 
         for step in range(1, max_lead + 1):
@@ -319,7 +322,7 @@ def evaluate_rollout(
                 device=device,
             )
             pred_norm = model(window, target_month, rollout_step=rollout_step)
-            pred_phys = dataset.denormalize(pred_norm)
+            pred_phys = dataset.denormalize(pred_norm, source_index)
             target_norm, target_phys = _target_tensors(dataset, source_index, target_t, device)
 
             if step in lead_stats:
