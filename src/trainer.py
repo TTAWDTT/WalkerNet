@@ -980,11 +980,11 @@ class Trainer:
 
         for batch in self.rollout_selection_loader:
             window = batch["x"].to(self.device)
-            persistence_phys = dataset.denormalize(window[:, -1:].contiguous())
             source_index = batch.get("source_index")
             if source_index is None:
                 source_index = torch.zeros(window.shape[0], dtype=torch.long)
             source_index = source_index.to(device=self.device, dtype=torch.long)
+            persistence_phys = dataset.denormalize(window[:, -1:].contiguous(), source_index)
             base_target_t = batch["time_index"].to(device=self.device, dtype=torch.long)
 
             for step in range(1, max_lead + 1):
@@ -997,7 +997,7 @@ class Trainer:
                     device=self.device,
                 )
                 pred_norm = rollout_model(window, target_month, rollout_step=rollout_step)
-                pred_phys = dataset.denormalize(pred_norm)
+                pred_phys = dataset.denormalize(pred_norm, source_index)
                 target_phys = self._target_phys(dataset, source_index, target_t)
 
                 clim = climatology[source_index, target_month].detach().cpu()
