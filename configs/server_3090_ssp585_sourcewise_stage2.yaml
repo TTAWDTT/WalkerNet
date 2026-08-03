@@ -80,7 +80,7 @@ training:
     monitor: "rollout_skill"
     patience: 6
     min_delta: 0.003
-    start_epoch: 30
+    start_epoch: 20
   seed: 42
 
 logging:
