@@ -68,6 +68,17 @@ def _parse_source_names(value: str) -> set[str] | None:
     return names or None
 
 
+def _trained_rollout_steps_for_checkpoint(config: dict[str, Any], checkpoint_epoch: int) -> int:
+    """根据 checkpoint 所在课程阶段还原实际训练使用的 rollout 长度。"""
+    training_config = config.get("training", {})
+    rollout_steps = max(1, int(training_config.get("rollout_steps", 1)))
+    for item in training_config.get("rollout_curriculum", []):
+        until_epoch = item.get("until_epoch")
+        if until_epoch is None or checkpoint_epoch <= int(until_epoch):
+            return max(1, min(rollout_steps, int(item["steps"])))
+    return rollout_steps
+
+
 def _valid_subset_positions(
     dataset: WalkerDataset,
     max_lead: int,
@@ -414,10 +425,11 @@ def main() -> None:
     checkpoint = torch.load(args.checkpoint, map_location=device)
     model = WalkerNet(config).to(device)
     model.load_state_dict(checkpoint["model"])
-    trained_rollout_steps = int(config.get("training", {}).get("rollout_steps", 1))
+    checkpoint_epoch = int(checkpoint.get("epoch", -1))
+    trained_rollout_steps = _trained_rollout_steps_for_checkpoint(config, checkpoint_epoch)
 
     print(f"checkpoint={args.checkpoint}")
-    print(f"checkpoint_epoch={checkpoint.get('epoch')}")
+    print(f"checkpoint_epoch={checkpoint_epoch}")
     print(
         f"split={args.split} usable_samples={len(subset)} original_samples={len(dataset)} "
         f"source_names={sorted(source_names) if source_names else 'ALL'} "
@@ -429,7 +441,7 @@ def main() -> None:
 
     json_payload = {
         "checkpoint": str(args.checkpoint),
-        "checkpoint_epoch": int(checkpoint.get("epoch", -1)),
+        "checkpoint_epoch": checkpoint_epoch,
         "split": args.split,
         "source_names": sorted(source_names) if source_names else None,
         "usable_samples": len(subset),
