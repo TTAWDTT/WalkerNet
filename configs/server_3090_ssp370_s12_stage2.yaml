@@ -1,0 +1,87 @@
+# SSP370 新训练方案 Stage 2：从 Stage 1 最佳权重继续 12 个月 rollout。
+
+data:
+  path: "/mnt/sda/WalkerNet/cmip6_ssp_1x1/ssp370/CESM2"
+  source_name: "CESM2"
+  sources:
+    - name: "CESM2"
+      path: "/mnt/sda/WalkerNet/cmip6_ssp_1x1/ssp370/CESM2"
+    - name: "EC-Earth3"
+      path: "/mnt/sda/WalkerNet/cmip6_ssp_1x1/ssp370/EC-Earth3"
+    - name: "GFDL-ESM4"
+      path: "/mnt/sda/WalkerNet/cmip6_ssp_1x1/ssp370/GFDL-ESM4"
+    - name: "IPSL-CM6A-LR"
+      path: "/mnt/sda/WalkerNet/cmip6_ssp_1x1/ssp370/IPSL-CM6A-LR"
+    - name: "MPI-ESM1-2-HR"
+      path: "/mnt/sda/WalkerNet/cmip6_ssp_1x1/ssp370/MPI-ESM1-2-HR"
+  L: 12
+  H: 180
+  W: 360
+  variables: ["tos", "zos", "tauu", "tauv"]
+  norm: "zscore"
+  norm_scope: "source"
+  data_cache_path: "/mnt/sda/WalkerNet/cache/ssp370_mixed5_data"
+  norm_stats_path: "/mnt/sda/WalkerNet/cache/ssp370_sourcewise_norm_stats_train.pt"
+  train_years: [2015, 2085]
+  val_years: [2086, 2093]
+  test_years: [2094, 2100]
+
+model:
+  patch_size: 4
+  d_model: 256
+  nhead: 8
+  dim_ff: 1024
+  num_layers: 6
+  patch_fusion_heads: 4
+  patch_fusion_layers: 1
+  patch_fusion_dim_ff: 1024
+  num_experts: 12
+  top_k: 2
+  decoder_hidden: 128
+  dropout: 0.1
+  max_rollout_steps: 24
+  residual_output: true
+
+training:
+  epochs: null
+  batch_size: 1
+  lr: 1.0e-5
+  weight_decay: 1.0e-2
+  amp: true
+  grad_accum_steps: 2
+  grad_clip: 1.0
+  rollout_steps: 12
+  rollout_curriculum: []
+  detach_rollout: true
+  lead_weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+  loss: "area_weighted_field_residual_gradient_nino_delta"
+  loss_weights:
+    area_weighted: true
+    field: 1.0
+    residual: 0.2
+    gradient: 0.05
+    nino34: 0.4
+    nino34_delta: 0.2
+  rollout_selection:
+    enabled: true
+    split: "val"
+    interval_epochs: 2
+    max_lead: 12
+    leads: [3, 6, 9, 12]
+    mode: "three_month_mean"
+    max_samples_per_source: 24
+    batch_size: 2
+    score: "mean_acc"
+  early_stopping:
+    enabled: true
+    monitor: "rollout_skill"
+    patience: 6
+    min_delta: 0.003
+    start_epoch: 30
+  seed: 42
+
+logging:
+  log_interval: 50
+  save_dir: "/mnt/sda/WalkerNet/checkpoints_ssp370_s12_stage2"
+  keep_epoch_checkpoints: [20, 25, 30, 35, 40, 50]
+  use_tensorboard: true
