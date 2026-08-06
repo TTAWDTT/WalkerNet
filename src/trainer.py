@@ -505,7 +505,14 @@ class Trainer:
 
         self.model.to(self.device)
 
-        self.epochs = int(self.training_config.get("epochs", 1))
+        # ``epochs: null`` 表示不设人工 epoch 上限；训练必须依靠早停结束。
+        # 这适合长 rollout 阶段：第 30 个 epoch 前不早停，之后由验证 skill 决定何时结束。
+        configured_epochs = self.training_config.get("epochs", 1)
+        self.epochs = None if configured_epochs is None else int(configured_epochs)
+        if self.epochs is None and not bool(self.training_config.get("early_stopping", {}).get("enabled", False)):
+            raise ValueError("training.epochs=null requires training.early_stopping.enabled=true")
+        if self.epochs is not None and self.epochs < 1:
+            raise ValueError("training.epochs must be positive or null")
         self.grad_accum_steps = max(1, int(self.training_config.get("grad_accum_steps", 1)))
         self.max_train_steps_per_epoch = int(self.training_config.get("max_train_steps_per_epoch", 0))
         self.max_val_steps = int(self.training_config.get("max_val_steps", 0))
@@ -769,7 +776,8 @@ class Trainer:
 
     def train(self) -> None:
         """完整训练循环。"""
-        for epoch in range(self.start_epoch, self.epochs + 1):
+        epoch = self.start_epoch
+        while self.epochs is None or epoch <= self.epochs:
             sampler = getattr(self.train_loader, "sampler", None)
             if hasattr(sampler, "set_epoch"):
                 sampler.set_epoch(epoch)
@@ -827,6 +835,8 @@ class Trainer:
                 if self.is_main:
                     print(f"early_stopping stop at epoch={epoch}")
                 break
+
+            epoch += 1
 
     def _build_rollout_selection_loader(self) -> DataLoader | None:
         """为 rank 0 构建 source-balanced 的 rollout skill 验证子集。"""
