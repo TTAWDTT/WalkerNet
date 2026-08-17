@@ -9,8 +9,10 @@ from scripts.cnop.compute_tos_zos_cnop import (
     NeutralCase,
     build_domain_mask,
     cnop_objective,
+    load_warm_start_deltas,
     select_diverse_candidates,
 )
+from scripts.cnop.basin_domains import numpy_basin_region
 
 
 class _DatasetStub:
@@ -47,6 +49,26 @@ def test_global_mask_contains_both_basin_masks() -> None:
 
     assert torch.all(global_mask | ~pacific)
     assert torch.all(global_mask | ~remote)
+    assert torch.equal(global_mask, pacific | remote)
+    assert not global_mask[0, 0, 0].any()
+    assert not global_mask[0, 0, -1].any()
+
+
+def test_numpy_and_torch_basin_masks_match() -> None:
+    dataset = _DatasetStub()
+    payload = dataset.source_payloads[0]
+    expected = numpy_basin_region(payload["lat"], payload["lon"], "global", (-60.0, 60.0))
+    actual = build_domain_mask(
+        dataset,
+        CASE,
+        "global",
+        (-20, 20),
+        (120, 290),
+        torch.device("cpu"),
+        (-60.0, 60.0),
+    )[0, 0].numpy()
+
+    assert np.array_equal(actual, expected)
 
 
 def test_late_three_month_objective_uses_leads_10_to_12() -> None:
@@ -67,3 +89,29 @@ def test_candidate_selection_removes_nearly_identical_fields() -> None:
     selected = select_diverse_candidates(candidates, top_k=3, max_cosine_similarity=0.98)
 
     assert [item["objective"] for item in selected] == [3.0, 2.0]
+
+
+def test_warm_starts_include_regional_fields_and_three_mixtures(tmp_path) -> None:
+    pacific_dir = tmp_path / "pacific"
+    remote_dir = tmp_path / "atlantic_indian"
+    pacific_dir.mkdir()
+    remote_dir.mkdir()
+    pacific = np.ones((2, 3, 4), dtype=np.float32)
+    remote = np.full((2, 3, 4), 2.0, dtype=np.float32)
+    pacific_path = pacific_dir / "case.npz"
+    remote_path = remote_dir / "case.npz"
+    np.savez_compressed(pacific_path, delta_norm=pacific)
+    np.savez_compressed(remote_path, delta_norm=remote)
+
+    warm_starts = load_warm_start_deltas([str(pacific_path), str(remote_path)])
+
+    assert [label for label, _ in warm_starts] == [
+        "pacific",
+        "atlantic_indian",
+        "mix:pacific+atlantic_indian",
+        "mix:3pacific+atlantic_indian",
+        "mix:pacific+3atlantic_indian",
+    ]
+    expected = [pacific, remote, pacific + remote, 0.75 * pacific + 0.25 * remote, 0.25 * pacific + 0.75 * remote]
+    for (_, actual), target in zip(warm_starts, expected, strict=True):
+        assert np.allclose(actual.numpy(), target)

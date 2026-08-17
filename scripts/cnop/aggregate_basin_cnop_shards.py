@@ -26,6 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--max-cosine-similarity", type=float, default=0.98)
+    parser.add_argument("--domains", type=str, default=",".join(DOMAINS))
     return parser.parse_args()
 
 
@@ -89,6 +90,7 @@ def write_domain_result(
         top_cnop_max_3m=np.asarray([item["cnop_max_3m"] for item in selected], dtype=np.float32),
         top_gain_max_3m=np.asarray([item["gain_max_3m"] for item in selected], dtype=np.float32),
         top_start_idx=np.asarray([item["start_idx"] for item in selected], dtype=np.int32),
+        top_init_label=np.asarray([item.get("init_label", "unknown") for item in selected]),
         top_constraint_norm=np.asarray([item["constraint_norm"] for item in selected], dtype=np.float32),
         top_constraint_radius=np.asarray([item["constraint_radius"] for item in selected], dtype=np.float32),
         top_constraint_ratio=np.asarray([item["constraint_ratio"] for item in selected], dtype=np.float32),
@@ -142,8 +144,12 @@ def write_domain_result(
 def main() -> None:
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    domains = tuple(item.strip() for item in args.domains.split(",") if item.strip())
+    invalid = sorted(set(domains) - set(DOMAINS))
+    if invalid:
+        raise ValueError(f"Unsupported domains: {invalid}")
     comparison_rows: list[dict[str, object]] = []
-    for domain in DOMAINS:
+    for domain in domains:
         records: list[dict[str, object]] = []
         base: dict[str, np.ndarray] | None = None
         for shard in sorted((args.input_dir / domain).glob("shard_*")):
@@ -156,6 +162,8 @@ def main() -> None:
         write_domain_result(args.output_dir, domain, base, selected)
         best = selected[0]
         random_path = args.input_dir.parent / "random_controls" / f"{domain}.csv"
+        if not random_path.exists():
+            continue
         with random_path.open("r", encoding="utf-8") as handle:
             random_objectives = np.asarray(
                 [float(row["objective"]) for row in csv.DictReader(handle)], dtype=np.float64
@@ -178,11 +186,12 @@ def main() -> None:
             }
         )
 
-    with (args.output_dir / "basin_comparison.csv").open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(comparison_rows[0]))
-        writer.writeheader()
-        writer.writerows(comparison_rows)
-    print(args.output_dir / "basin_comparison.csv")
+    if comparison_rows:
+        with (args.output_dir / "basin_comparison.csv").open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(comparison_rows[0]))
+            writer.writeheader()
+            writer.writerows(comparison_rows)
+        print(args.output_dir / "basin_comparison.csv")
 
 
 if __name__ == "__main__":
