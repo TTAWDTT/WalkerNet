@@ -75,6 +75,7 @@ class BasinProducts:
     response: np.ndarray
     nino_perturbed: np.ndarray
     objective: float
+    constraint_radius: float
     constraint_ratio: float
     random_objectives: np.ndarray
 
@@ -389,6 +390,7 @@ def build_products(args: argparse.Namespace) -> ExperimentProducts:
             response=perturbed - baseline,
             nino_perturbed=nino_forecast_series(perturbed[:, 0], forecast_clim, months, lat, lon),
             objective=float(summary["best_objective"]),
+            constraint_radius=float(summary["constraint_radius"]),
             constraint_ratio=float(summary["constraint_ratio"]),
             random_objectives=np.asarray([float(row["objective"]) for row in random_rows], dtype=np.float32),
         )
@@ -476,7 +478,7 @@ def plot_initial_overview(
     fig.colorbar(m_tos, cax=cax0, orientation="horizontal").set_label("TOS perturbation")
     fig.colorbar(m_zos, cax=cax1, orientation="horizontal").set_label("ZOS perturbation")
     fig.suptitle(
-        f"Initial CNOP structures under the same 0.1C hard constraint | {products.source} {products.year}",
+        f"Initial CNOP structures under basin-specific 0.1 C_D constraints | {products.source} {products.year}",
         fontsize=12, fontweight="bold", y=0.97,
     )
     return save_figure(fig, output_dir, "fig01_initial_cnop_domains", dpi)
@@ -684,7 +686,8 @@ def plot_statistical_summary(products: ExperimentProducts, output_dir: Path, dpi
         ax.set_xticks([])
         ax.set_ylabel("Objective")
         ax.set_title(
-            f"{DOMAIN_LABELS[domain]}  |  p ≤ {empirical_p:.4f}  |  ||δ||/R={basin.constraint_ratio:.6f}",
+            f"{DOMAIN_LABELS[domain]}  |  R={basin.constraint_radius:.3f}  |  "
+            f"p ≤ {empirical_p:.4f}  |  ||δ||/R={basin.constraint_ratio:.6f}",
             fontsize=8.2,
         )
         ax.grid(axis="y", color="#94A3B8", alpha=0.20, linewidth=0.5)
@@ -798,6 +801,7 @@ def main() -> None:
         "domains": {
             domain: {
                 "objective": products.basins[domain].objective,
+                "constraint_radius": products.basins[domain].constraint_radius,
                 "constraint_ratio": products.basins[domain].constraint_ratio,
                 "random_max": float(products.basins[domain].random_objectives.max()),
                 "lead12_nino": float(products.basins[domain].nino_perturbed[lead_idx]),
