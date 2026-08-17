@@ -25,7 +25,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.cnop.compute_tos_zos_cnop import compute_nino34_numpy, three_month_mean_np  # noqa: E402
+from scripts.cnop.basin_domains import BASIN_DOMAINS, numpy_basin_region  # noqa: E402
+from scripts.cnop.compute_tos_zos_cnop import compute_nino34_numpy, parse_bounds, three_month_mean_np  # noqa: E402
 from src.dataset import WalkerDataset  # noqa: E402
 from src.utils import load_config  # noqa: E402
 
@@ -66,6 +67,13 @@ def parse_args() -> argparse.Namespace:
         default="december_anomaly_train_std_equal_rms",
         choices=("dataset_zscore_equal_rms", "december_anomaly_train_std_equal_rms"),
         help="TOS/ZOS 无量纲化方法。默认先做 12 月距平，再除训练期 12 月标准差，最后两变量 RMS 拉齐。",
+    )
+    parser.add_argument("--domain", choices=BASIN_DOMAINS, default="global")
+    parser.add_argument(
+        "--basin-lat-bounds",
+        type=str,
+        default="-60,60",
+        help="三个海域 constraint 共同使用的纬度范围。",
     )
     return parser.parse_args()
 
@@ -155,7 +163,12 @@ def select_enso_event_samples(
     return samples
 
 
-def december_anomaly_stats(dataset: WalkerDataset, source_indices: set[int]) -> dict[int, dict[str, np.ndarray]]:
+def december_anomaly_stats(
+    dataset: WalkerDataset,
+    source_indices: set[int],
+    domain: str,
+    basin_lat_bounds: tuple[float, float],
+) -> dict[int, dict[str, np.ndarray]]:
     """为会被实际用到的 source 计算训练期 12 月 TOS/ZOS 统计量。"""
 
     train_start, train_end = dataset.data_config["train_years"]
@@ -171,9 +184,16 @@ def december_anomaly_stats(dataset: WalkerDataset, source_indices: set[int]) -> 
             source = dataset.source_names[source_idx]
             raise ValueError(f"No training December fields for source={source}")
         mean_field = np.nanmean(fields, axis=0)
-        std_scalar = np.nanstd(fields - mean_field[None], axis=(0, 2, 3)).astype(np.float32)
+        region = numpy_basin_region(payload["lat"], payload["lon"], domain, basin_lat_bounds)
+        source_valid = payload["valid_mask"][:2].cpu().numpy().astype(bool) & region[None]
+        anomalies = np.where(source_valid[None], fields - mean_field[None], np.nan)
+        std_scalar = np.nanstd(anomalies, axis=(0, 2, 3)).astype(np.float32)
         std_scalar = np.where(std_scalar > 1.0e-12, std_scalar, 1.0).astype(np.float32)
-        stats[source_idx] = {"mean_field": mean_field, "std_scalar": std_scalar}
+        stats[source_idx] = {
+            "mean_field": mean_field,
+            "std_scalar": std_scalar,
+            "valid": source_valid,
+        }
     return stats
 
 
@@ -181,21 +201,33 @@ def event_fields_to_dimensionless(
     dataset: WalkerDataset,
     samples: list[EnsoEventSample],
     normalization: str,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    domain: str,
+    basin_lat_bounds: tuple[float, float],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[int, np.ndarray]]:
     """返回拉齐尺度后的事件场，以及 TOS/ZOS 的尺度因子。"""
 
     raw_fields: list[np.ndarray] = []
+    source_stds: dict[int, np.ndarray] = {}
     if normalization == "dataset_zscore_equal_rms":
         mean = dataset.norm_stats["mean"].cpu().numpy()[:2].astype(np.float32)
         std = dataset.norm_stats["std"].cpu().numpy()[:2].astype(np.float32)
         for sample in samples:
+            payload = dataset.source_payloads[sample.source_idx]
             field = np.asarray(
-                dataset.source_payloads[sample.source_idx]["data"][sample.previous_december_index, :2],
+                payload["data"][sample.previous_december_index, :2],
                 dtype=np.float32,
             )
-            raw_fields.append((field - mean[:, None, None]) / std[:, None, None])
+            region = numpy_basin_region(payload["lat"], payload["lon"], domain, basin_lat_bounds)
+            source_valid = payload["valid_mask"][:2].cpu().numpy().astype(bool) & region[None]
+            raw_fields.append(np.where(source_valid, (field - mean[:, None, None]) / std[:, None, None], np.nan))
     else:
-        stats = december_anomaly_stats(dataset, {sample.source_idx for sample in samples})
+        stats = december_anomaly_stats(
+            dataset,
+            set(range(len(dataset.source_payloads))),
+            domain,
+            basin_lat_bounds,
+        )
+        source_stds = {source_idx: item["std_scalar"] for source_idx, item in stats.items()}
         for sample in samples:
             field = np.asarray(
                 dataset.source_payloads[sample.source_idx]["data"][sample.previous_december_index, :2],
@@ -203,7 +235,11 @@ def event_fields_to_dimensionless(
             )
             source_stats = stats[sample.source_idx]
             raw_fields.append(
-                (field - source_stats["mean_field"]) / source_stats["std_scalar"][:, None, None]
+                np.where(
+                    source_stats["valid"],
+                    (field - source_stats["mean_field"]) / source_stats["std_scalar"][:, None, None],
+                    np.nan,
+                )
             )
 
     fields = np.stack(raw_fields, axis=0).astype(np.float32)
@@ -211,7 +247,7 @@ def event_fields_to_dimensionless(
     rms = np.sqrt(np.nanmean(np.where(valid, fields, np.nan) ** 2, axis=(0, 2, 3))).astype(np.float32)
     rms = np.where(rms > 1.0e-12, rms, 1.0).astype(np.float32)
     equalized = fields / rms[None, :, None, None]
-    return equalized, rms, valid
+    return equalized, rms, valid, source_stds
 
 
 def compute_constraint(
@@ -252,6 +288,8 @@ def write_outputs(
     args: argparse.Namespace,
     samples: list[EnsoEventSample],
     scale_rms: np.ndarray,
+    source_stds: dict[int, np.ndarray],
+    source_names: list[str],
     event_rows: list[dict[str, float]],
     summary: dict[str, float],
 ) -> None:
@@ -295,9 +333,16 @@ def write_outputs(
         "event_threshold": args.event_threshold,
         "event_year_range": args.event_year_range,
         "normalization": args.normalization,
+        "domain": args.domain,
+        "basin_lat_bounds": list(parse_bounds(args.basin_lat_bounds)),
         "equalization_rms_before_rescale": {
             "tos": float(scale_rms[0]),
             "zos": float(scale_rms[1]),
+        },
+        "source_december_std": {
+            dataset_name: [float(value) for value in source_stds[source_idx]]
+            for source_idx, dataset_name in enumerate(source_names)
+            if source_idx in source_stds
         },
         "definition": (
             "constraint_l2 is the mean joint Euclidean norm of previous-December "
@@ -325,10 +370,27 @@ def main() -> None:
     if not samples:
         raise RuntimeError("No ENSO-event samples found; check event threshold or year range.")
 
-    fields, scale_rms, valid = event_fields_to_dimensionless(dataset, samples, args.normalization)
+    basin_lat_bounds = parse_bounds(args.basin_lat_bounds)
+    fields, scale_rms, valid, source_stds = event_fields_to_dimensionless(
+        dataset,
+        samples,
+        args.normalization,
+        args.domain,
+        basin_lat_bounds,
+    )
     event_rows, summary = compute_constraint(fields, valid)
-    write_outputs(args.output_dir, args, samples, scale_rms, event_rows, summary)
+    write_outputs(
+        args.output_dir,
+        args,
+        samples,
+        scale_rms,
+        source_stds,
+        dataset.source_names,
+        event_rows,
+        summary,
+    )
 
+    print(f"[constraint] domain: {args.domain} lat={basin_lat_bounds}")
     print(f"[constraint] event samples: {len(samples)}")
     print(f"[constraint] constraint_l2: {summary['constraint_l2']:.6f}")
     print(f"[constraint] constraint_rms: {summary['constraint_rms']:.6f}")
