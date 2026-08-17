@@ -1,0 +1,50 @@
+{
+  "source": "GFDL-ESM4",
+  "target_year": 1995,
+  "checkpoint": "checkpoints_mixed5_enso18_simple_loss_corr_ddp8/best_skill.pt",
+  "experiment_dir": "outputs/cnop_basin_gfdl1995_scale01_steps1000_0816",
+  "smooth_sigma": 2.0,
+  "vector_sigma": 3.0,
+  "shared_limits": {
+    "tos_response": 0.11954917944967759,
+    "zos_response": 0.008870462281629445,
+    "tos_absolute": [
+      -2.467423219680786,
+      29.100581817626953
+    ],
+    "zos_absolute": [
+      -1.8638779890537263,
+      0.7592891347408293
+    ]
+  },
+  "domains": {
+    "pacific": {
+      "objective": 0.18385443091392517,
+      "constraint_ratio": 0.9999999253926434,
+      "random_max": 0.03975552320480347,
+      "lead12_nino": 0.3226400911808014
+    },
+    "atlantic_indian": {
+      "objective": 0.022700011730194092,
+      "constraint_ratio": 0.9999999253926434,
+      "random_max": 0.005475372076034546,
+      "lead12_nino": 0.14915244281291962
+    },
+    "global": {
+      "objective": 0.13075067102909088,
+      "constraint_ratio": 0.9999999923186568,
+      "random_max": 0.02326902747154236,
+      "lead12_nino": 0.2647067606449127
+    }
+  },
+  "figures": [
+    "fig01_initial_cnop_domains.png",
+    "fig02_monthly_response_pacific.png",
+    "fig03_monthly_response_atlantic_indian.png",
+    "fig04_monthly_response_global.png",
+    "fig05_lead12_comparison_pacific.png",
+    "fig06_lead12_comparison_atlantic_indian.png",
+    "fig07_lead12_comparison_global.png",
+    "fig08_nino_random_summary.png"
+  ]
+}
