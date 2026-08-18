@@ -17,7 +17,7 @@
 Checkpoint:
 
 ```text
-/mnt/sda/WalkerNet/checkpoints_rollout_0606/best.pt
+<artifact-root>/checkpoints_rollout_0606/best.pt
 ```
 
 主要结论：
@@ -31,7 +31,7 @@ Checkpoint:
 Checkpoint:
 
 ```text
-/mnt/sda/WalkerNet/checkpoints_rollout12_0607/best.pt
+<artifact-root>/checkpoints_rollout12_0607/best.pt
 ```
 
 训练方式：
@@ -82,7 +82,7 @@ Checkpoint:
 Checkpoint:
 
 ```text
-/mnt/sda/WalkerNet/checkpoints_rollout12_acc_0608/best.pt
+<artifact-root>/checkpoints_rollout12_acc_0608/best.pt
 ```
 
 该轮尝试加入 `nino34_pattern_corr`、`nino34_pattern_variance` 和
@@ -103,7 +103,7 @@ rollout skill，反而整体弱于 `checkpoints_rollout12_0607/best.pt`。
 新增配置：
 
 ```text
-configs/server_3090_rollout12_delta_finetune_0610.yaml
+configs/examples/mixed5.yaml
 ```
 
 修正点：
@@ -113,4 +113,4 @@ configs/server_3090_rollout12_delta_finetune_0610.yaml
 3. 移除 `residual_delta_std`，避免过强放大 `tos/zos` residual。
 4. 新增 `nino34_delta` loss，约束预测场计算得到的 Niño3.4 指数相对上一月的修正量，
    即更直接地学习相对 persistence 的冷暖修正。
-5. 继续从 `/mnt/sda/WalkerNet/checkpoints_rollout12_0607/best.pt` 低学习率 fine-tune。
+5. 继续从 `<artifact-root>/checkpoints_rollout12_0607/best.pt` 低学习率 fine-tune。

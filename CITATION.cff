@@ -1,0 +1,8 @@
+cff-version: 1.2.0
+title: "WalkerNet"
+message: "Please cite WalkerNet when using this software."
+type: software
+repository-code: "https://github.com/TTAWDTT/WalkerNet"
+license: MIT
+version: 0.1.0
+date-released: 2026-08-18

@@ -1,7 +1,7 @@
 """WalkerNet 的数据集实现。
 
 WalkerDataset 只读取已经由 CDO 重网格后的 ``data_1x1`` 文件，不负责原始
-NetCDF 的经纬度映射。重网格请先运行 ``scripts/remap_to_1x1.sh``。
+NetCDF 的经纬度映射。重网格请先运行 ``scripts/data/remap_to_1x1.sh``。
 
 返回的样本遵守 ``src.interfaces`` 中的最小共享接口：
 
@@ -239,9 +239,9 @@ class WalkerDataset(Dataset):
 
             sources:
               - name: CESM2
-                path: /mnt/sda/WalkerNet/data_1x1
+                path: data/historical/CESM2
               - name: EC-Earth3
-                path: /mnt/sda/WalkerNet/cmip6_1x1/EC-Earth3
+                path: data/historical/EC-Earth3
         """
         raw_sources = data_config.get("sources")
         if not raw_sources:
@@ -308,7 +308,7 @@ class WalkerDataset(Dataset):
         if not data_path.exists():
             raise FileNotFoundError(
                 f"Remapped data directory not found: {data_path}\n"
-                "Run: wsl -d Ubuntu-24.04 -- bash /mnt/d/Github/WalkerNet/scripts/remap_to_1x1.sh"
+                "Run: bash scripts/data/remap_to_1x1.sh"
             )
 
         arrays: list[np.ndarray] = []
