@@ -6,7 +6,7 @@ current model.
 
 Example on the server:
     CUDA_VISIBLE_DEVICES=0 python scripts/train/smoke_test_single_gpu_memory.py \
-        --config configs/server_3090.yaml --batch-sizes 1 2 4
+        --config configs/examples/smoke.yaml --batch-sizes 1 2 4
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from src.utils import count_parameters, load_config, set_seed
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="WalkerNet single-GPU memory probe")
-    parser.add_argument("--config", type=str, default="configs/server_3090.yaml")
+    parser.add_argument("--config", type=str, default="configs/examples/smoke.yaml")
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--batch-sizes", type=int, nargs="+", default=[1, 2, 4])
     parser.add_argument("--no-amp", action="store_true", help="Disable AMP even if config enables it")

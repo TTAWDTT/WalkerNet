@@ -1,29 +1,28 @@
-# 编辑器与本地助手
-.claude/
-.vscode/
-.idea/
+.claude
+data_example/*
+data_1x1/*
+.vscode/*
+__pycache__/
+*.pyc
 CLAUDE.md
 
-# Python
-__pycache__/
-*.py[cod]
-.pytest_cache/
+remotion-promo/
 
-# 数据、缓存与模型产物
-data_example/
-data_1x1/
-cmip6_1x1/
-cmip6_ssp_1x1/
-cmip6-ssp/
-raw/
+# Local machine/server material. Keep reproducible metadata and selected figures
+# under docs/, but never commit raw data, caches, checkpoints, or run logs.
+.local/
+outputs/
+reports/
 cache/
 checkpoints*/
-outputs/
-logs/
-runtime/
-backups/
-reports/
+*.nc
+*.npy
+*.pt
+*.pth
+*.npz
 *.log
 
-# 展示项目
-remotion-promo/
+# Local editor and experiment state
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

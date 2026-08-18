@@ -1,7 +1,7 @@
 """生成并检查 WalkerDataset 的归一化统计量。
 
 用法：
-    python scripts/data/inspect_norm_stats.py --config configs/server_3090_ssp126_scratch_stage1_ddp8.yaml
+    python scripts/data/inspect_norm_stats.py --config configs/examples/mixed5.yaml
 """
 
 from __future__ import annotations

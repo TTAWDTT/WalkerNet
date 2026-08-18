@@ -50,7 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--input-dir",
         type=Path,
-        default=Path("outputs/cnop_tos_zos_patch_0703"),
+        default=Path("outputs/cnop_tos_zos"),
         help="目录内应包含 cnop_summary.csv 与 case_*.npz。",
     )
     parser.add_argument(

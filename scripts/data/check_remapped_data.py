@@ -6,7 +6,7 @@ expected (time, lat, lon) layout.
 Run:
     python scripts/data/check_remapped_data.py
     python scripts/data/check_remapped_data.py --data-dir data_1x1
-    python scripts/data/check_remapped_data.py --data-dir /mnt/sda/WalkerNet/cmip6_1x1 --multi-source
+    python scripts/data/check_remapped_data.py --data-dir /path/to/cmip6_1x1 --multi-source
 """
 
 from __future__ import annotations

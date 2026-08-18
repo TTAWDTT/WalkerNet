@@ -103,6 +103,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--zos-vmax", type=float, default=0.08)
     parser.add_argument("--perturb-tos-vmax", type=float, default=0.0, help="0 means auto percentile.")
     parser.add_argument("--perturb-zos-vmax", type=float, default=0.0, help="0 means auto percentile.")
+    parser.add_argument("--constraint-label", type=str, default="", help="Optional perturbation constraint label shown on perturbation figures.")
     parser.add_argument("--contour-levels", type=int, default=23)
     parser.add_argument("--zero-contour", action="store_true", default=True)
     parser.add_argument("--trained-rollout-steps", type=int, default=0)
@@ -355,6 +356,7 @@ def plot_perturbation_figure(
     zos_vmax: float,
     contour_levels: int,
     zero_contour: bool,
+    constraint_label: str,
 ) -> Path:
     """画 CNOP 本体：输入第 12 个月上实际加入的 δTOS 与 δZOS。"""
 
@@ -365,30 +367,35 @@ def plot_perturbation_figure(
     zos_levels = np.linspace(-zos_lim, zos_lim, contour_levels)
 
     proj = projection()
-    fig = plt.figure(figsize=(10.8, 4.2))
-    gs = fig.add_gridspec(1, 2, wspace=0.10)
+    fig = plt.figure(figsize=(10.2, 3.65))
+    gs = fig.add_gridspec(1, 2, wspace=0.08)
     axes = [
         fig.add_subplot(gs[0, 0], projection=proj) if HAS_CARTOPY else fig.add_subplot(gs[0, 0]),
         fig.add_subplot(gs[0, 1], projection=proj) if HAS_CARTOPY else fig.add_subplot(gs[0, 1]),
     ]
     m0 = contour_map(axes[0], lon, lat, plot_delta[0], tos_levels, TOS_CMAP, zero_contour)
     add_map_features(axes[0], show_xticks=True, show_yticks=True)
-    axes[0].set_title("(a) CNOP initial perturbation: delta TOS", fontweight="bold")
+    axes[0].set_title("a  TOS perturbation", loc="left", fontweight="bold")
 
-    m1 = contour_map(axes[1], lon, lat, plot_delta[1], zos_levels, ZOS_CMAP, zero_contour)
+    m1 = contour_map(axes[1], lon, lat, plot_delta[1], zos_levels, TOS_CMAP, zero_contour)
     add_map_features(axes[1], show_xticks=True, show_yticks=False)
-    axes[1].set_title("(b) CNOP initial perturbation: delta ZOS", fontweight="bold")
+    axes[1].set_title("b  ZOS perturbation", loc="left", fontweight="bold")
 
-    cax0 = fig.add_axes([0.17, 0.08, 0.28, 0.028])
-    cax1 = fig.add_axes([0.57, 0.08, 0.28, 0.028])
+    cax0 = fig.add_axes([0.145, 0.145, 0.31, 0.026])
+    cax1 = fig.add_axes([0.565, 0.145, 0.31, 0.026])
     cb0 = fig.colorbar(m0, cax=cax0, orientation="horizontal")
     cb0.ax.xaxis.set_major_formatter(FormatStrFormatter("%.2f"))
     cb0.set_label("delta TOS")
     cb1 = fig.colorbar(m1, cax=cax1, orientation="horizontal")
     cb1.ax.xaxis.set_major_formatter(FormatStrFormatter("%.3f"))
     cb1.set_label("delta ZOS")
-    fig.suptitle(f"CNOP initial perturbation: {source} {year}, candidate rank {rank}", fontsize=12, fontweight="bold", y=0.96)
-    fig.subplots_adjust(left=0.04, right=0.99, top=0.86, bottom=0.18)
+    fig.suptitle(f"CNOP candidate {rank}: initial perturbation for {source} {year}", fontsize=10.5, fontweight="bold", y=0.965)
+    top = 0.82
+    if constraint_label:
+        fig.text(0.5, 0.905, constraint_label, ha="center", fontsize=7.4, color="#4B5563")
+    else:
+        top = 0.86
+    fig.subplots_adjust(left=0.045, right=0.99, top=top, bottom=0.25)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / f"cnop_initial_perturbation_{source}_{year}_rank{rank}.png"
@@ -407,8 +414,9 @@ def plot_multi_perturbation_figure(
     zos_vmax: float,
     contour_levels: int,
     zero_contour: bool,
+    constraint_label: str,
 ) -> Path:
-    """把同一个初始场的多个局地最优扰动放在一张图里横向比较。"""
+    """把同一个初始场的多个候选扰动放在一张图里横向比较。"""
 
     if not products_by_rank:
         raise ValueError("products_by_rank must not be empty")
@@ -443,13 +451,13 @@ def plot_multi_perturbation_figure(
         ax_tos = fig.add_subplot(gs[row, 0], projection=proj) if HAS_CARTOPY else fig.add_subplot(gs[row, 0])
         ax_zos = fig.add_subplot(gs[row, 1], projection=proj) if HAS_CARTOPY else fig.add_subplot(gs[row, 1])
         m_tos = contour_map(ax_tos, lon, lat, delta[0], tos_levels, TOS_CMAP, zero_contour)
-        m_zos = contour_map(ax_zos, lon, lat, delta[1], zos_levels, ZOS_CMAP, zero_contour)
+        m_zos = contour_map(ax_zos, lon, lat, delta[1], zos_levels, TOS_CMAP, zero_contour)
         add_map_features(ax_tos, show_xticks=row == nrows - 1, show_yticks=True)
         add_map_features(ax_zos, show_xticks=row == nrows - 1, show_yticks=False)
-        ax_tos.set_ylabel(f"rank {rank}", fontsize=8, fontweight="bold")
+        ax_tos.set_ylabel(f"candidate {rank}", fontsize=8, fontweight="bold")
         if row == 0:
-            ax_tos.set_title("(a) delta TOS", fontweight="bold")
-            ax_zos.set_title("(b) delta ZOS", fontweight="bold")
+            ax_tos.set_title("a  TOS perturbation", loc="left", fontweight="bold")
+            ax_zos.set_title("b  ZOS perturbation", loc="left", fontweight="bold")
 
     cax0 = fig.add_axes([0.17, 0.075, 0.28, 0.020])
     cax1 = fig.add_axes([0.57, 0.075, 0.28, 0.020])
@@ -461,11 +469,13 @@ def plot_multi_perturbation_figure(
     cb1.set_label("delta ZOS")
     ranks_text = ",".join(str(rank) for rank, _products in products_by_rank)
     fig.suptitle(
-        f"Multiple CNOP local optima from the same initial state: {source} {year}, ranks {ranks_text}",
+        f"CNOP candidates from repeated starts: {source} {year}, ordered {ranks_text}",
         fontsize=12,
         fontweight="bold",
         y=0.975,
     )
+    if constraint_label:
+        fig.text(0.5, 0.945, constraint_label, ha="center", fontsize=7.4, color="#4B5563")
     fig.subplots_adjust(left=0.06, right=0.99, top=0.92, bottom=0.15)
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -708,6 +718,7 @@ def main() -> None:
                 args.perturb_zos_vmax,
                 args.contour_levels,
                 args.zero_contour,
+                args.constraint_label,
             )
             print(f"wrote {path}")
         if not args.skip_comparison:
@@ -765,6 +776,7 @@ def main() -> None:
             args.perturb_zos_vmax,
             args.contour_levels,
             args.zero_contour,
+            args.constraint_label,
         )
         print(f"wrote {path}")
 
