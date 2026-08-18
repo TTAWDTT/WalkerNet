@@ -68,6 +68,17 @@ def _parse_source_names(value: str) -> set[str] | None:
     return names or None
 
 
+def _trained_rollout_steps_for_checkpoint(config: dict[str, Any], checkpoint_epoch: int) -> int:
+    """根据 checkpoint 所在课程阶段还原实际训练使用的 rollout 长度。"""
+    training_config = config.get("training", {})
+    rollout_steps = max(1, int(training_config.get("rollout_steps", 1)))
+    for item in training_config.get("rollout_curriculum", []):
+        until_epoch = item.get("until_epoch")
+        if until_epoch is None or checkpoint_epoch <= int(until_epoch):
+            return max(1, min(rollout_steps, int(item["steps"])))
+    return rollout_steps
+
+
 def _valid_subset_positions(
     dataset: WalkerDataset,
     max_lead: int,
@@ -123,7 +134,10 @@ def _target_tensors(
         axis=0,
     )
     target_phys = torch.from_numpy(raw).float().to(device)[:, None]
-    target_norm = dataset._normalize_tensor(target_phys)  # noqa: SLF001 - 评测内部复用 Dataset 归一化
+    target_norm = dataset._normalize_tensor(  # noqa: SLF001 - 评测内部复用 Dataset 归一化
+        target_phys,
+        source_indices,
+    )
     target_norm = torch.nan_to_num(target_norm, nan=0.0, posinf=0.0, neginf=0.0)
     return target_norm, target_phys
 
@@ -299,13 +313,13 @@ def evaluate_rollout(
 
     for batch_idx, batch in enumerate(loader, start=1):
         window = batch["x"].to(device)
-        persistence_norm = window[:, -1:].contiguous()
-        persistence_phys = dataset.denormalize(persistence_norm)
         valid_mask = batch["valid_mask"].to(device)
         source_index = batch.get("source_index")
         if source_index is None:
             source_index = torch.zeros(window.shape[0], dtype=torch.long)
         source_index = source_index.to(device=device, dtype=torch.long)
+        persistence_norm = window[:, -1:].contiguous()
+        persistence_phys = dataset.denormalize(persistence_norm, source_index)
         base_target_t = batch["time_index"].to(device=device, dtype=torch.long)
 
         for step in range(1, max_lead + 1):
@@ -319,7 +333,7 @@ def evaluate_rollout(
                 device=device,
             )
             pred_norm = model(window, target_month, rollout_step=rollout_step)
-            pred_phys = dataset.denormalize(pred_norm)
+            pred_phys = dataset.denormalize(pred_norm, source_index)
             target_norm, target_phys = _target_tensors(dataset, source_index, target_t, device)
 
             if step in lead_stats:
@@ -411,10 +425,11 @@ def main() -> None:
     checkpoint = torch.load(args.checkpoint, map_location=device)
     model = WalkerNet(config).to(device)
     model.load_state_dict(checkpoint["model"])
-    trained_rollout_steps = int(config.get("training", {}).get("rollout_steps", 1))
+    checkpoint_epoch = int(checkpoint.get("epoch", -1))
+    trained_rollout_steps = _trained_rollout_steps_for_checkpoint(config, checkpoint_epoch)
 
     print(f"checkpoint={args.checkpoint}")
-    print(f"checkpoint_epoch={checkpoint.get('epoch')}")
+    print(f"checkpoint_epoch={checkpoint_epoch}")
     print(
         f"split={args.split} usable_samples={len(subset)} original_samples={len(dataset)} "
         f"source_names={sorted(source_names) if source_names else 'ALL'} "
@@ -426,7 +441,7 @@ def main() -> None:
 
     json_payload = {
         "checkpoint": str(args.checkpoint),
-        "checkpoint_epoch": int(checkpoint.get("epoch", -1)),
+        "checkpoint_epoch": checkpoint_epoch,
         "split": args.split,
         "source_names": sorted(source_names) if source_names else None,
         "usable_samples": len(subset),
