@@ -282,16 +282,16 @@ CNOP 设置沿用 event-based joint TOS/ZOS L2 constraint，并取 `constraint_s
 单卡训练：
 
 ```bash
-python -m src.train --config configs/server_3090_mixed5.yaml
+python -m src.train --config configs/examples/mixed5.yaml
 ```
 
 DDP 训练：
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
-python -m torch.distributed.run --nproc_per_node=8 \
+CUDA_VISIBLE_DEVICES=0,1 \
+python -m torch.distributed.run --nproc_per_node=2 \
   -m src.train \
-  --config configs/server_3090_mixed5_ddp8.yaml \
+  --config configs/examples/mixed5.yaml \
   --num-workers 2
 ```
 
@@ -299,7 +299,7 @@ python -m torch.distributed.run --nproc_per_node=8 \
 
 ```bash
 python -m src.train \
-  --config configs/server_3090_mixed5.yaml \
+  --config configs/examples/mixed5.yaml \
   --init-checkpoint /path/to/best_skill.pt
 ```
 
@@ -307,7 +307,7 @@ python -m src.train \
 
 ```bash
 python -m src.train \
-  --config configs/server_3090_mixed5.yaml \
+  --config configs/examples/mixed5.yaml \
   --resume /path/to/latest.pt
 ```
 
