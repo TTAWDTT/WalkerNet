@@ -7,7 +7,7 @@ set -euo pipefail
 #   bash scripts/data/remap_to_1x1.sh
 #
 # Or from Windows PowerShell:
-#   wsl -d Ubuntu-24.04 -- bash scripts/data/remap_to_1x1.sh
+#   wsl -d Ubuntu-24.04 -- bash /path/to/WalkerNet/scripts/data/remap_to_1x1.sh
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 GRID_FILE="$ROOT_DIR/configs/grid_1x1_180x360.txt"

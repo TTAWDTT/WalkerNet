@@ -89,6 +89,7 @@ class WalkerDataset(Dataset):
         self.L = int(self.data_config["L"])
         self.target_steps = int(self.data_config.get("target_steps", 1))
         self.norm = str(self.data_config.get("norm", "zscore")).lower()
+        self.norm_scope = str(self.data_config.get("norm_scope", "pooled")).lower()
         self.sources = self._resolve_sources(data_path, self.data_config)
         self.source_names = tuple(source.name for source in self.sources)
 
@@ -96,6 +97,8 @@ class WalkerDataset(Dataset):
             raise ValueError(f"Input window L must be >= 1, got {self.L}")
         if self.target_steps < 1:
             raise ValueError(f"target_steps must be >= 1, got {self.target_steps}")
+        if self.norm_scope not in {"pooled", "source"}:
+            raise ValueError(f"norm_scope must be 'pooled' or 'source', got {self.norm_scope!r}")
 
         # Dataset 和模型必须使用 interfaces.py 中固定的变量顺序。
         expected_variables = tuple(self.data_config.get("variables", VARIABLES))
@@ -169,8 +172,8 @@ class WalkerDataset(Dataset):
         x = torch.from_numpy(x_np).float()
         y_rollout = torch.from_numpy(y_rollout_np).float()
 
-        x = self._normalize_tensor(x)
-        y_rollout = self._normalize_tensor(y_rollout)
+        x = self._normalize_tensor(x, source_idx)
+        y_rollout = self._normalize_tensor(y_rollout, source_idx)
         y = y_rollout[:1]
 
         # 模型输入不允许有 NaN/Inf。无效位置由 valid_mask 告诉 loss。
@@ -194,21 +197,23 @@ class WalkerDataset(Dataset):
             )
         return sample
 
-    def denormalize(self, y: torch.Tensor) -> torch.Tensor:
+    def denormalize(self, y: torch.Tensor, source_index: Any = None) -> torch.Tensor:
         """把归一化空间中的张量还原到物理量单位。
 
         输入张量只要求最后三个维度是 ``(4, H, W)``，例如：
         ``(B, 1, 4, H, W)`` 或 ``(1, 4, H, W)``。
+        当 ``norm_scope=source`` 时，source_index 必须是单个 source 编号，
+        或与 batch 第一维对应的 ``(B,)`` 编号张量。
         """
         if self.norm == "none":
             return y
         if self.norm == "zscore":
-            mean = self._view_stats(self._mean, y)
-            std = self._view_stats(self._std, y)
+            mean = self._view_stats(self._mean, y, source_index)
+            std = self._view_stats(self._std, y, source_index)
             return y * std + mean
         if self.norm == "minmax":
-            min_value = self._view_stats(self._min, y)
-            max_value = self._view_stats(self._max, y)
+            min_value = self._view_stats(self._min, y, source_index)
+            max_value = self._view_stats(self._max, y, source_index)
             return y * (max_value - min_value) + min_value
         raise ValueError(f"Unsupported normalization method: {self.norm}")
 
@@ -239,9 +244,9 @@ class WalkerDataset(Dataset):
 
             sources:
               - name: CESM2
-                path: data/historical/CESM2
+                path: data/cesm2
               - name: EC-Earth3
-                path: data/historical/EC-Earth3
+                path: data/ec-earth3
         """
         raw_sources = data_config.get("sources")
         if not raw_sources:
@@ -308,7 +313,8 @@ class WalkerDataset(Dataset):
         if not data_path.exists():
             raise FileNotFoundError(
                 f"Remapped data directory not found: {data_path}\n"
-                "Run: bash scripts/data/remap_to_1x1.sh"
+                "Run: wsl -d Ubuntu-24.04 -- bash "
+                "/path/to/WalkerNet/scripts/data/remap_to_1x1.sh"
             )
 
         arrays: list[np.ndarray] = []
@@ -502,7 +508,7 @@ class WalkerDataset(Dataset):
         return np.where(target_in_split & enough_history & enough_future & future_in_split)[0].astype(np.int64)
 
     def _compute_norm_stats(self) -> dict[str, torch.Tensor]:
-        """只用训练年份计算归一化统计量。"""
+        """只用训练年份计算全体或逐 source 的归一化统计量。"""
         if self.norm == "none":
             return {}
 
@@ -514,54 +520,77 @@ class WalkerDataset(Dataset):
         if not has_training_month:
             raise ValueError(f"No training months found for train_years={self.data_config['train_years']}")
 
+        # pooled 兼容已训练模型，shape=(4,)；source 为每个物理模式独立统计，
+        # shape=(S, 4)，避免不同模式的气候均值和振幅互相污染。
+        payload_groups = (
+            [[payload] for payload in self.source_payloads]
+            if self.norm_scope == "source"
+            else [self.source_payloads]
+        )
+
         stats: dict[str, torch.Tensor] = {}
         if self.norm == "zscore":
-            mean = np.empty((len(VARIABLES),), dtype=np.float32)
-            std = np.empty((len(VARIABLES),), dtype=np.float32)
-            for idx in range(len(VARIABLES)):
-                total = 0.0
-                total_square = 0.0
-                count = 0
-                for payload in self.source_payloads:
-                    source_train_mask = (payload["years"] >= int(train_start)) & (payload["years"] <= int(train_end))
-                    values = np.asarray(payload["data"][source_train_mask, idx], dtype=np.float64)
-                    finite = np.isfinite(values)
-                    if not np.any(finite):
-                        continue
-                    valid_values = values[finite]
-                    total += float(valid_values.sum(dtype=np.float64))
-                    total_square += float((valid_values * valid_values).sum(dtype=np.float64))
-                    count += int(valid_values.size)
-                if count == 0:
-                    raise ValueError(f"No finite training values found for variable {VARIABLES[idx]}")
-                mean_value = total / count
-                variance = max(total_square / count - mean_value * mean_value, 0.0)
-                mean[idx] = mean_value
-                std[idx] = float(np.sqrt(variance))
-                if not np.isfinite(std[idx]) or std[idx] == 0:
-                    std[idx] = 1.0
+            mean = np.empty((len(payload_groups), len(VARIABLES)), dtype=np.float32)
+            std = np.empty_like(mean)
+            for group_idx, payloads in enumerate(payload_groups):
+                for variable_idx, variable in enumerate(VARIABLES):
+                    total = 0.0
+                    total_square = 0.0
+                    count = 0
+                    for payload in payloads:
+                        train_mask = (payload["years"] >= int(train_start)) & (
+                            payload["years"] <= int(train_end)
+                        )
+                        values = np.asarray(payload["data"][train_mask, variable_idx], dtype=np.float64)
+                        finite = np.isfinite(values)
+                        if not np.any(finite):
+                            continue
+                        valid_values = values[finite]
+                        total += float(valid_values.sum(dtype=np.float64))
+                        total_square += float((valid_values * valid_values).sum(dtype=np.float64))
+                        count += int(valid_values.size)
+                    if count == 0:
+                        label = self.source_names[group_idx] if self.norm_scope == "source" else "pooled"
+                        raise ValueError(f"No finite training values found for source={label}, variable={variable}")
+                    mean_value = total / count
+                    variance = max(total_square / count - mean_value * mean_value, 0.0)
+                    mean[group_idx, variable_idx] = mean_value
+                    std[group_idx, variable_idx] = float(np.sqrt(variance))
+                    if not np.isfinite(std[group_idx, variable_idx]) or std[group_idx, variable_idx] == 0:
+                        std[group_idx, variable_idx] = 1.0
+            if self.norm_scope == "pooled":
+                mean = mean[0]
+                std = std[0]
             stats["mean"] = torch.from_numpy(mean)
             stats["std"] = torch.from_numpy(std)
             return stats
 
         if self.norm == "minmax":
-            min_value = np.empty((len(VARIABLES),), dtype=np.float32)
-            max_value = np.empty((len(VARIABLES),), dtype=np.float32)
-            for idx in range(len(VARIABLES)):
-                source_mins = []
-                source_maxs = []
-                for payload in self.source_payloads:
-                    source_train_mask = (payload["years"] >= int(train_start)) & (payload["years"] <= int(train_end))
-                    values = payload["data"][source_train_mask, idx]
-                    if np.isfinite(values).any():
-                        source_mins.append(np.nanmin(values))
-                        source_maxs.append(np.nanmax(values))
-                if not source_mins:
-                    raise ValueError(f"No finite training values found for variable {VARIABLES[idx]}")
-                min_value[idx] = np.nanmin(np.asarray(source_mins, dtype=np.float32))
-                max_value[idx] = np.nanmax(np.asarray(source_maxs, dtype=np.float32))
-                if not np.isfinite(max_value[idx] - min_value[idx]) or max_value[idx] == min_value[idx]:
-                    max_value[idx] = min_value[idx] + 1.0
+            min_value = np.empty((len(payload_groups), len(VARIABLES)), dtype=np.float32)
+            max_value = np.empty_like(min_value)
+            for group_idx, payloads in enumerate(payload_groups):
+                for variable_idx, variable in enumerate(VARIABLES):
+                    group_mins = []
+                    group_maxs = []
+                    for payload in payloads:
+                        train_mask = (payload["years"] >= int(train_start)) & (
+                            payload["years"] <= int(train_end)
+                        )
+                        values = payload["data"][train_mask, variable_idx]
+                        if np.isfinite(values).any():
+                            group_mins.append(np.nanmin(values))
+                            group_maxs.append(np.nanmax(values))
+                    if not group_mins:
+                        label = self.source_names[group_idx] if self.norm_scope == "source" else "pooled"
+                        raise ValueError(f"No finite training values found for source={label}, variable={variable}")
+                    min_value[group_idx, variable_idx] = np.nanmin(np.asarray(group_mins, dtype=np.float32))
+                    max_value[group_idx, variable_idx] = np.nanmax(np.asarray(group_maxs, dtype=np.float32))
+                    span = max_value[group_idx, variable_idx] - min_value[group_idx, variable_idx]
+                    if not np.isfinite(span) or span == 0:
+                        max_value[group_idx, variable_idx] = min_value[group_idx, variable_idx] + 1.0
+            if self.norm_scope == "pooled":
+                min_value = min_value[0]
+                max_value = max_value[0]
             stats["min"] = torch.from_numpy(min_value)
             stats["max"] = torch.from_numpy(max_value)
             return stats
@@ -593,11 +622,24 @@ class WalkerDataset(Dataset):
                 raise ValueError(
                     f"Norm stats meta mismatch for {path}: {key}={meta.get(key)!r}, expected {expected!r}"
                 )
+        cached_scope = str(meta.get("norm_scope", "pooled"))
+        if cached_scope != self.norm_scope:
+            raise ValueError(
+                f"Norm stats meta mismatch for {path}: norm_scope={cached_scope!r}, "
+                f"expected {self.norm_scope!r}"
+            )
 
         stats = payload["stats"]
         if not isinstance(stats, dict):
             raise ValueError(f"Invalid norm stats payload: {path}")
-        return {key: value.detach().cpu() for key, value in stats.items()}
+        result = {key: value.detach().cpu() for key, value in stats.items()}
+        expected_shape = (len(self.sources), len(VARIABLES)) if self.norm_scope == "source" else (len(VARIABLES),)
+        for name, value in result.items():
+            if tuple(value.shape) != expected_shape:
+                raise ValueError(
+                    f"Norm stats shape mismatch for {path}: {name}={tuple(value.shape)}, expected {expected_shape}"
+                )
+        return result
 
     def _save_norm_stats(self, path: Path, stats: dict[str, torch.Tensor]) -> None:
         """把训练集归一化统计写入磁盘，供验证集和 DDP 其它 rank 复用。"""
@@ -608,30 +650,56 @@ class WalkerDataset(Dataset):
                 "variables": VARIABLES,
                 "train_years": tuple(self.data_config["train_years"]),
                 "source_names": self.source_names,
+                "norm_scope": self.norm_scope,
             },
             "stats": {key: value.detach().cpu() for key, value in stats.items()},
         }
         torch.save(payload, path)
 
-    def _normalize_tensor(self, tensor: torch.Tensor) -> torch.Tensor:
+    def _normalize_tensor(self, tensor: torch.Tensor, source_index: Any = None) -> torch.Tensor:
         """按变量维度广播归一化统计量。"""
         if self.norm == "none":
             return tensor
         if self.norm == "zscore":
-            mean = self._view_stats(self._mean, tensor)
-            std = self._view_stats(self._std, tensor)
+            mean = self._view_stats(self._mean, tensor, source_index)
+            std = self._view_stats(self._std, tensor, source_index)
             return (tensor - mean) / std
         if self.norm == "minmax":
-            min_value = self._view_stats(self._min, tensor)
-            max_value = self._view_stats(self._max, tensor)
+            min_value = self._view_stats(self._min, tensor, source_index)
+            max_value = self._view_stats(self._max, tensor, source_index)
             return (tensor - min_value) / (max_value - min_value)
         raise ValueError(f"Unsupported normalization method: {self.norm}")
 
     @staticmethod
-    def _view_stats(stats: torch.Tensor | None, target: torch.Tensor) -> torch.Tensor:
-        """把 (4,) 的统计量 reshape 成可广播到 target 的形状。"""
+    def _view_stats(stats: torch.Tensor | None, target: torch.Tensor, source_index: Any = None) -> torch.Tensor:
+        """选择对应 source，并 reshape 成可广播到 target 的形状。"""
         if stats is None:
             raise ValueError("Normalization stats are missing")
+
+        stats = stats.to(device=target.device, dtype=target.dtype)
+        if stats.ndim == 2:
+            if source_index is None:
+                if stats.shape[0] != 1:
+                    raise ValueError("source_index is required when norm_scope='source'")
+                stats = stats[0]
+            else:
+                indices = torch.as_tensor(source_index, dtype=torch.long, device=target.device)
+                if indices.ndim == 0:
+                    stats = stats[indices]
+                elif indices.ndim == 1:
+                    if target.ndim < 4 or indices.numel() != target.shape[0]:
+                        raise ValueError(
+                            f"Batched source_index shape {tuple(indices.shape)} does not match target {tuple(target.shape)}"
+                        )
+                    selected = stats.index_select(0, indices)
+                    shape = [target.shape[0]] + [1] * (target.ndim - 1)
+                    shape[-3] = len(VARIABLES)
+                    return selected.view(*shape)
+                else:
+                    raise ValueError(f"source_index must be scalar or 1D, got shape {tuple(indices.shape)}")
+
+        if stats.ndim != 1 or stats.shape[0] != len(VARIABLES):
+            raise ValueError(f"Invalid normalization stats shape: {tuple(stats.shape)}")
         shape = [1] * target.ndim
         shape[-3] = len(VARIABLES)
-        return stats.to(device=target.device, dtype=target.dtype).view(*shape)
+        return stats.view(*shape)

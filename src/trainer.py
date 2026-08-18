@@ -529,6 +529,9 @@ class Trainer:
         self.rollout_selection_loader: DataLoader | None = None
         self.best_rollout_skill = float("-inf")
         self.log_interval = int(self.logging_config.get("log_interval", 50))
+        self.keep_epoch_checkpoints = self._parse_keep_epoch_checkpoints(
+            self.logging_config.get("keep_epoch_checkpoints", [])
+        )
         self.save_dir = Path(self.logging_config.get("save_dir", "checkpoints"))
         if self.is_main:
             self.save_dir.mkdir(parents=True, exist_ok=True)
@@ -647,6 +650,20 @@ class Trainer:
             "config": self.config,
         }
         torch.save(checkpoint, path)
+
+    @staticmethod
+    def _parse_keep_epoch_checkpoints(value: Any) -> set[int]:
+        """解析需要额外保留的 epoch 编号。"""
+        if value is None or value == "":
+            return set()
+        if isinstance(value, int):
+            return {int(value)}
+        if isinstance(value, str):
+            items = [item.strip() for item in value.split(",") if item.strip()]
+        else:
+            items = list(value)
+        epochs = {int(item) for item in items}
+        return {epoch for epoch in epochs if epoch > 0}
 
     def load_checkpoint(self, path: str | Path) -> tuple[int, dict[str, float]]:
         """读取 checkpoint，返回 epoch 和 metrics。"""
@@ -784,6 +801,12 @@ class Trainer:
                 self.save_checkpoint(self.save_dir / "best.pt", epoch, all_metrics)
             if is_best_skill:
                 self.save_checkpoint(self.save_dir / "best_skill.pt", epoch, all_metrics)
+            if epoch in self.keep_epoch_checkpoints:
+                self.save_checkpoint(self.save_dir / f"epoch_{epoch:03d}.pt", epoch, all_metrics)
+
+            # rank 0 可能正在写较大的 checkpoint；其它 rank 必须在这里等待，
+            # 否则会提前进入下一轮 DDP collective，造成 collective 顺序错位。
+            self._distributed_barrier()
             if self.is_main and self.early_stopping_enabled:
                 best_text = (
                     f"best_val_loss={self.best_val_loss:.6f}"
@@ -799,6 +822,7 @@ class Trainer:
                     f"start_epoch={self.early_stopping_start_epoch}"
                 )
 
+            should_stop = self._broadcast_bool_from_main(should_stop)
             if should_stop:
                 if self.is_main:
                     print(f"early_stopping stop at epoch={epoch}")
@@ -867,8 +891,32 @@ class Trainer:
 
     @torch.no_grad()
     def evaluate_rollout_selection(self, epoch: int) -> dict[str, Any]:
-        """用验证集自由滚动 skill 选择 checkpoint。"""
-        if not self.is_main or self.rollout_selection_loader is None:
+        """由 rank 0 计算自由滚动 skill，再同步给全部 rank。
+
+        rollout 子集只存在于 rank 0。其它 rank 必须停在同一个 collective 上等待，
+        否则会先进入下一 epoch，并与 rank 0 的早停退出产生通信顺序冲突。
+        """
+        result: dict[str, Any] = {}
+        error: str | None = None
+
+        if self.is_main:
+            try:
+                result = self._evaluate_rollout_selection_on_main(epoch)
+            except Exception as exc:  # 所有 rank 必须收到同一个错误并一起退出。
+                error = f"{type(exc).__name__}: {exc}"
+
+        if self.is_distributed:
+            payload: list[Any] = [(result, error) if self.is_main else None]
+            dist.broadcast_object_list(payload, src=0)
+            result, error = payload[0]
+
+        if error is not None:
+            raise RuntimeError(f"rollout selection failed on rank 0: {error}")
+        return result
+
+    def _evaluate_rollout_selection_on_main(self, epoch: int) -> dict[str, Any]:
+        """仅在 rank 0 上执行自由滚动评测。"""
+        if self.rollout_selection_loader is None:
             return {}
 
         interval = max(1, int(self.rollout_selection_config.get("interval_epochs", 1)))
@@ -920,7 +968,9 @@ class Trainer:
         trained_rollout_steps: int,
     ) -> tuple[dict[int, torch.Tensor], dict[int, torch.Tensor], dict[int, torch.Tensor]]:
         """收集 1..max_lead 的 Niño3.4 anomaly 序列。"""
-        self.model.eval()
+        # 该评测只由 rank 0 执行，绕过 DDP wrapper，避免 forward 触发 buffer 同步。
+        rollout_model = self._model_for_state()
+        rollout_model.eval()
         model_nino: dict[int, list[torch.Tensor]] = {lead: [] for lead in range(1, max_lead + 1)}
         persistence_nino: dict[int, list[torch.Tensor]] = {lead: [] for lead in range(1, max_lead + 1)}
         target_nino: dict[int, list[torch.Tensor]] = {lead: [] for lead in range(1, max_lead + 1)}
@@ -930,11 +980,11 @@ class Trainer:
 
         for batch in self.rollout_selection_loader:
             window = batch["x"].to(self.device)
-            persistence_phys = dataset.denormalize(window[:, -1:].contiguous())
             source_index = batch.get("source_index")
             if source_index is None:
                 source_index = torch.zeros(window.shape[0], dtype=torch.long)
             source_index = source_index.to(device=self.device, dtype=torch.long)
+            persistence_phys = dataset.denormalize(window[:, -1:].contiguous(), source_index)
             base_target_t = batch["time_index"].to(device=self.device, dtype=torch.long)
 
             for step in range(1, max_lead + 1):
@@ -946,8 +996,8 @@ class Trainer:
                     dtype=torch.long,
                     device=self.device,
                 )
-                pred_norm = self.model(window, target_month, rollout_step=rollout_step)
-                pred_phys = dataset.denormalize(pred_norm)
+                pred_norm = rollout_model(window, target_month, rollout_step=rollout_step)
+                pred_phys = dataset.denormalize(pred_norm, source_index)
                 target_phys = self._target_phys(dataset, source_index, target_t)
 
                 clim = climatology[source_index, target_month].detach().cpu()
@@ -1057,6 +1107,19 @@ class Trainer:
         stats = torch.tensor([total_loss, float(num_batches)], dtype=torch.float64, device=self.device)
         dist.all_reduce(stats, op=dist.ReduceOp.SUM)
         return float(stats[0].item()), int(stats[1].item())
+
+    def _distributed_barrier(self) -> None:
+        """让所有 rank 在 epoch 边界对齐。"""
+        if self.is_distributed:
+            dist.barrier()
+
+    def _broadcast_bool_from_main(self, value: bool) -> bool:
+        """以 rank 0 的决定为准，同步布尔控制信号。"""
+        if not self.is_distributed:
+            return bool(value)
+        flag = torch.tensor([int(value) if self.is_main else 0], dtype=torch.uint8, device=self.device)
+        dist.broadcast(flag, src=0)
+        return bool(flag.item())
 
     def _move_batch(self, batch: dict[str, Any]) -> dict[str, Any]:
         """把 batch 中的 tensor 移到训练设备。"""
