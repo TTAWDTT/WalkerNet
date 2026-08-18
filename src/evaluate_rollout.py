@@ -36,7 +36,7 @@ from .utils import load_config
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="WalkerNet Rollout Evaluation")
-    parser.add_argument("--config", type=str, default="configs/server_3090.yaml")
+    parser.add_argument("--config", type=str, default="configs/default.yaml")
     parser.add_argument("--checkpoint", type=str, required=True)
     parser.add_argument("--split", type=str, default="test", choices=("train", "val", "test"))
     parser.add_argument("--device", type=str, default="cuda")

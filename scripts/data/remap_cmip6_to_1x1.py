@@ -10,11 +10,11 @@
     3. 每个输出文件内部时间长度应为 1850-01 到 2014-12 共 1980 个月。
     4. 这里只做“按模式独立重网格”，不做多模式混合训练数据拼接。
 
-服务器示例：
+示例：
     python scripts/data/remap_cmip6_to_1x1.py \
-        --input-root /mnt/sda/WalkerNet/raw/CMIP6-historical-data \
-        --output-root /mnt/sda/WalkerNet/cmip6_1x1 \
-        --cdo-bin /home/cpji/cdo/bin/cdo \
+        --input-root /path/to/CMIP6-historical-data \
+        --output-root /path/to/cmip6_1x1 \
+        --cdo-bin cdo \
         --threads 16 \
         --overwrite
 """

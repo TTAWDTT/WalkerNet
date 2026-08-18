@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="${WALKERNET_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+ROOT_DIR="${ROOT_DIR:-$(pwd)}"
 cd "${ROOT_DIR}"
 
-# 默认使用服务器 8 张 3090；短测时可覆盖：
+# 默认只启动一个进程做公开配置检查；多卡时由调用者显式覆盖：
 #   NPROC_PER_NODE=2 CUDA_VISIBLE_DEVICES=0,1 bash scripts/train/train_ddp.sh
-export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 
 # 这台机器是单机 3090，多数情况下不需要 InfiniBand；关闭 IB 探测能减少 NCCL 初始化卡住的概率。
@@ -15,9 +15,9 @@ export NCCL_IB_DISABLE="${NCCL_IB_DISABLE:-1}"
 export NCCL_P2P_DISABLE="${NCCL_P2P_DISABLE:-1}"
 export NCCL_DEBUG="${NCCL_DEBUG:-WARN}"
 
-PYTHON_BIN="${PYTHON_BIN:-/home/cpji/wwb/torch/bin/python}"
-NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
-CONFIG_PATH="${CONFIG_PATH:-configs/server_ddp_smoke.yaml}"
+PYTHON_BIN="${PYTHON_BIN:-python}"
+NPROC_PER_NODE="${NPROC_PER_NODE:-1}"
+CONFIG_PATH="${CONFIG_PATH:-configs/examples/smoke.yaml}"
 NUM_WORKERS="${NUM_WORKERS:-4}"
 
 "${PYTHON_BIN}" -m torch.distributed.run \

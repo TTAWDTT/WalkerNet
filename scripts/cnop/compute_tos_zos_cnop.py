@@ -6,8 +6,8 @@ the final input month. Only ``tos`` and ``zos`` are perturbed by default.
 
 Example:
     python scripts/cnop/compute_tos_zos_cnop.py \
-        --config configs/server_3090_mixed5_ddp8.yaml \
-        --checkpoint /mnt/sda/WalkerNet/checkpoints_mixed5_enso18_simple_loss_corr_ddp8/best_skill.pt \
+        --config configs/examples/mixed5.yaml \
+        --checkpoint /path/to/checkpoints/best_skill.pt \
         --split test --device cuda --num-cases 10 --steps 80 \
         --output-dir outputs/cnop_tos_zos_best
 """

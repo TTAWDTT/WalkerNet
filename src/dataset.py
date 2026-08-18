@@ -244,9 +244,9 @@ class WalkerDataset(Dataset):
 
             sources:
               - name: CESM2
-                path: /mnt/sda/WalkerNet/data_1x1
+                path: data/cesm2
               - name: EC-Earth3
-                path: /mnt/sda/WalkerNet/cmip6_1x1/EC-Earth3
+                path: data/ec-earth3
         """
         raw_sources = data_config.get("sources")
         if not raw_sources:
@@ -314,7 +314,7 @@ class WalkerDataset(Dataset):
             raise FileNotFoundError(
                 f"Remapped data directory not found: {data_path}\n"
                 "Run: wsl -d Ubuntu-24.04 -- bash "
-                "/mnt/d/Github/WalkerNet/scripts/data/remap_to_1x1.sh"
+                "/path/to/WalkerNet/scripts/data/remap_to_1x1.sh"
             )
 
         arrays: list[np.ndarray] = []

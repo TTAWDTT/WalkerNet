@@ -51,11 +51,11 @@ TOS_CMAP = LinearSegmentedColormap.from_list(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Plot 10 CNOP cases at lead 12.")
-    parser.add_argument("--config", type=Path, default=Path("configs/server_3090_mixed5_ddp8.yaml"))
+    parser.add_argument("--config", type=Path, required=True)
     parser.add_argument(
         "--checkpoint",
         type=Path,
-        default=Path("/mnt/sda/WalkerNet/checkpoints_mixed5_enso18_simple_loss_corr_ddp8/best_skill.pt"),
+        required=True,
     )
     parser.add_argument("--cnop-dir", type=Path, default=Path("outputs/cnop_relative_l2_3pct_lead12_0704"))
     parser.add_argument("--split", type=str, default="test")
