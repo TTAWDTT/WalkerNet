@@ -7,3 +7,22 @@ __pycache__/
 CLAUDE.md
 
 remotion-promo/
+
+# Local machine/server material. Keep reproducible metadata and selected figures
+# under docs/, but never commit raw data, caches, checkpoints, or run logs.
+.local/
+outputs/
+reports/
+cache/
+checkpoints*/
+*.nc
+*.npy
+*.pt
+*.pth
+*.npz
+*.log
+
+# Local editor and experiment state
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

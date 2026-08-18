@@ -198,11 +198,14 @@ top_start_idx
 ```
 
 这些字段用于比较同一个 case 的多个局部 CNOP 候选。
+`rank` 是候选扰动在同一个 case 内按 `objective` 从高到低排序后的序号；
+它不是 EOF/主成分意义上的物理模态编号。如果多个 rank 的形态和目标函数值都很接近，
+通常应解释为多次优化收敛到同一个主导敏感方向，而不是发现了多个可分辨的局地最优模态。
 
 完成 CNOP 后，可以用下面的诊断脚本生成更适合汇报和论文草图的合成图：
 
 ```bash
-python scripts/plot_cnop_diagnostics.py \
+python scripts/cnop/plot_cnop_diagnostics.py \
     --input-dir outputs/cnop_tos_zos_patch_0703
 ```
 

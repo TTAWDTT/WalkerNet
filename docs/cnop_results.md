@@ -59,7 +59,7 @@ smoothness_weight = 0.001
 服务器输出目录：
 
 ```text
-/mnt/sda/WalkerNet/outputs/cnop_tos_zos_patch_0703
+outputs/cnop_tos_zos
 ```
 
 本地已拉取：
