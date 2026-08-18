@@ -11,4 +11,4 @@
 | `reproducibility.md` | 训练与评测复现清单 |
 | `open_source_release.md` | 发布前检查清单 |
 
-根目录 `README.md` 只维护项目总览、当前主线结果和常用入口；方法细节与实验记录写入本目录，论文和外部资料放在 `sources/` 或 `literature/`。
+根目录 `README.md` 只维护项目总览、当前主线结果和常用入口；方法细节与实验记录写入本目录。
