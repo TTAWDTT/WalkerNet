@@ -786,6 +786,8 @@ def optimize_single_start(
             eps,
             args,
         )
+        delta_phys = normalized_delta_to_physical(dataset, final_delta.detach())[0]
+        normalized_abs_max = float(final_delta.detach().abs().max().item())
 
     return {
         "start_idx": start_idx,
@@ -797,7 +799,10 @@ def optimize_single_start(
         "final_learning_rate": float(optimizer.param_groups[0]["lr"]),
         "delta_norm": final_delta.detach().cpu().numpy()[0],
         "delta_param": delta_param.detach(),
-        "delta_phys": normalized_delta_to_physical(dataset, final_delta.detach())[0],
+        "delta_phys": delta_phys,
+        "normalized_abs_max": normalized_abs_max,
+        "tos_physical_abs_max": float(np.nanmax(np.abs(delta_phys[0]))),
+        "zos_physical_abs_max": float(np.nanmax(np.abs(delta_phys[1]))),
         "final_nino": final_metrics["nino"].detach().cpu().numpy(),
         "final_3m": final_metrics["three_month"].detach().cpu().numpy(),
         "objective": float(final_metrics["objective"].detach().cpu().item()),
@@ -1362,6 +1367,9 @@ def serializable_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
         "constraint_norm": candidate["constraint_norm"],
         "constraint_radius": candidate["constraint_radius"],
         "constraint_ratio": candidate["constraint_ratio"],
+        "normalized_abs_max": candidate["normalized_abs_max"],
+        "tos_physical_abs_max": candidate["tos_physical_abs_max"],
+        "zos_physical_abs_max": candidate["zos_physical_abs_max"],
         "refined_with_lbfgs": bool(candidate.get("refined_with_lbfgs", False)),
         "history": candidate.get("history", []),
     }
@@ -1388,6 +1396,9 @@ def write_summary_csv(output_dir: Path, results: list[dict[str, Any]]) -> Path:
                 "constraint_norm",
                 "constraint_radius",
                 "constraint_ratio",
+                "normalized_abs_max",
+                "tos_physical_abs_max",
+                "zos_physical_abs_max",
                 "mask_count",
             ]
         )
@@ -1410,6 +1421,9 @@ def write_summary_csv(output_dir: Path, results: list[dict[str, Any]]) -> Path:
                     result["top_candidates"][0]["constraint_norm"],
                     result["top_candidates"][0]["constraint_radius"],
                     result["top_candidates"][0]["constraint_ratio"],
+                    result["top_candidates"][0]["normalized_abs_max"],
+                    result["top_candidates"][0]["tos_physical_abs_max"],
+                    result["top_candidates"][0]["zos_physical_abs_max"],
                     result["mask_count"],
                 ]
             )
@@ -1438,6 +1452,9 @@ def write_candidate_summary_csv(output_dir: Path, results: list[dict[str, Any]])
                 "constraint_norm",
                 "constraint_radius",
                 "constraint_ratio",
+                "normalized_abs_max",
+                "tos_physical_abs_max",
+                "zos_physical_abs_max",
                 "refined_with_lbfgs",
             ]
         )
@@ -1462,6 +1479,9 @@ def write_candidate_summary_csv(output_dir: Path, results: list[dict[str, Any]])
                         candidate["constraint_norm"],
                         candidate["constraint_radius"],
                         candidate["constraint_ratio"],
+                        candidate["normalized_abs_max"],
+                        candidate["tos_physical_abs_max"],
+                        candidate["zos_physical_abs_max"],
                         bool(candidate.get("refined_with_lbfgs", False)),
                     ]
                 )
