@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from argparse import Namespace
+import sys
 
 import numpy as np
 import torch
+
+from scripts.cnop.summarize_constraint_scale_pilot import main as summarize_constraint_scale_pilot
 
 from scripts.cnop.compute_tos_zos_cnop import (
     NeutralCase,
@@ -218,3 +221,35 @@ def test_gradient_plot_loader_cross_checks_csv_npz_and_budget(tmp_path) -> None:
     assert result.cnop_value == 1.2
     assert result.gradient_value == 0.8
     assert np.allclose(result.random_values, [0.1, 0.3])
+
+
+def test_constraint_scale_pilot_summary_keeps_paired_methods(tmp_path, monkeypatch) -> None:
+    case_dir = tmp_path / "scale_0p10" / "GFDL-ESM4_1995"
+    (case_dir / "cnop").mkdir(parents=True)
+    (case_dir / "gradient").mkdir()
+    (case_dir / "cnop" / "cnop_summary.csv").write_text(
+        "source,target_year,best_objective,constraint_ratio\nGFDL-ESM4,1995,0.6,1.0\n",
+        encoding="utf-8",
+    )
+    (case_dir / "gradient" / "gradient_summary.csv").write_text(
+        "objective,constraint_ratio\n0.5,1.0\n",
+        encoding="utf-8",
+    )
+    (case_dir / "random_controls.csv").write_text(
+        "objective\n0.1\n0.2\n0.3\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(sys, "argv", ["summarize", "--experiment-dir", str(tmp_path)])
+    summarize_constraint_scale_pilot()
+
+    summary = np.genfromtxt(
+        tmp_path / "summary" / "constraint_scale_pilot_by_scale.csv",
+        delimiter=",",
+        names=True,
+        dtype=None,
+        encoding="utf-8",
+    )
+    assert np.isclose(summary["constraint_scale"], 0.1)
+    assert summary["n_cases"] == 1
+    assert np.isclose(summary["mean_cnop_minus_gradient"], 0.1)
