@@ -13,6 +13,8 @@ from scripts.cnop.compute_tos_zos_cnop import (
     select_diverse_candidates,
 )
 from scripts.cnop.basin_domains import numpy_basin_region
+from scripts.cnop.evaluate_basin_zero_state_gradient import scale_zero_state_gradient_to_event_radius
+from scripts.cnop.plot_basin_cnop_gradient_comparison import load_domain_comparison
 
 
 class _DatasetStub:
@@ -115,3 +117,70 @@ def test_warm_starts_include_regional_fields_and_three_mixtures(tmp_path) -> Non
     expected = [pacific, remote, pacific + remote, 0.75 * pacific + 0.25 * remote, 0.25 * pacific + 0.75 * remote]
     for (_, actual), target in zip(warm_starts, expected, strict=True):
         assert np.allclose(actual.numpy(), target)
+
+
+def test_zero_state_gradient_is_scaled_to_event_radius_after_patch_upsampling() -> None:
+    """The linear baseline uses the same full-resolution masked norm as CNOP."""
+
+    class _NormNoneDataset:
+        norm = "none"
+
+    args = Namespace(
+        constraint_mode="event_l2",
+        event_constraint_l2=3.0,
+        event_constraint_normalization="dataset_zscore_equal_rms",
+        event_constraint_equalization_rms=torch.ones(2),
+        perturb_grid="patch",
+        max_abs=100.0,
+    )
+    gradient = torch.ones((1, 2, 1, 1))
+    mask = torch.ones((1, 2, 2, 2), dtype=torch.bool)
+    direction, projected, clipped = scale_zero_state_gradient_to_event_radius(
+        gradient,
+        dataset=_NormNoneDataset(),
+        case=CASE,
+        mask=mask,
+        target_hw=(2, 2),
+        args=args,
+    )
+    full = torch.nn.functional.interpolate(direction, size=(2, 2), mode="bilinear", align_corners=False)
+    assert projected
+    assert not clipped
+    assert torch.isclose(torch.sqrt((full.square() * mask).sum()), torch.tensor(3.0))
+
+
+def test_gradient_plot_loader_cross_checks_csv_npz_and_budget(tmp_path) -> None:
+    domain = "pacific"
+    combined = tmp_path / "combined" / domain
+    gradient = tmp_path / "gradient_baseline" / domain
+    random_controls = tmp_path / "random_controls"
+    combined.mkdir(parents=True)
+    gradient.mkdir(parents=True)
+    random_controls.mkdir()
+    (combined / "cnop_summary.csv").write_text(
+        "source,target_year,best_objective,lead_delta,constraint_norm,constraint_radius,constraint_ratio\n"
+        "GFDL-ESM4,1995,1.2,1.3,2.0,2.0,1.0\n",
+        encoding="utf-8",
+    )
+    (gradient / "gradient_summary.csv").write_text(
+        "source,target_year,objective_mode,objective,lead_delta,constraint_norm,constraint_radius,constraint_ratio\n"
+        "GFDL-ESM4,1995,late_3m_delta,0.8,0.9,2.0,2.0,1.0\n",
+        encoding="utf-8",
+    )
+    np.savez_compressed(
+        gradient / "case_GFDL-ESM4_1995.npz",
+        objective=np.asarray(0.8, dtype=np.float32),
+        lead_delta=np.asarray(0.9, dtype=np.float32),
+        constraint_norm=np.asarray(2.0, dtype=np.float32),
+        constraint_radius=np.asarray(2.0, dtype=np.float32),
+        constraint_ratio=np.asarray(1.0, dtype=np.float32),
+        projected=np.asarray(True),
+    )
+    (random_controls / "pacific.csv").write_text(
+        "objective,lead_delta\n0.1,0.2\n0.3,0.4\n",
+        encoding="utf-8",
+    )
+    result = load_domain_comparison(tmp_path, domain, "objective", 1.0e-5, 1.0e-5)
+    assert result.cnop_value == 1.2
+    assert result.gradient_value == 0.8
+    assert np.allclose(result.random_values, [0.1, 0.3])

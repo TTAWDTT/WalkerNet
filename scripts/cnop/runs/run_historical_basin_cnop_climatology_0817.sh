@@ -10,7 +10,7 @@ CONSTRAINT_ROOT="${ROOT}/outputs/cnop_basin_constraints_0817"
 OUT="${ROOT}/outputs/cnop_basin_gfdl1995_clim_scale01_steps1000_0817"
 LOG_DIR="${ROOT}/outputs/logs/cnop_basin_gfdl1995_clim_scale01_steps1000_0817"
 
-mkdir -p "${CONSTRAINT_ROOT}" "${OUT}/shards" "${OUT}/combined" "${OUT}/random_controls" "${LOG_DIR}"
+mkdir -p "${CONSTRAINT_ROOT}" "${OUT}/shards" "${OUT}/combined" "${OUT}/random_controls" "${OUT}/gradient_baseline" "${LOG_DIR}"
 cd "${ROOT}"
 
 constraint_file() {
@@ -138,6 +138,30 @@ run_random_controls() {
     > "${LOG_DIR}/${domain}_random_controls.log" 2>&1
 }
 
+run_zero_state_gradient() {
+  local domain="$1"
+  local gpu="$2"
+  local output_dir="${OUT}/gradient_baseline/${domain}"
+  if [[ -s "${output_dir}/gradient_summary.csv" ]]; then
+    return
+  fi
+  CUDA_VISIBLE_DEVICES="${gpu}" "${PYTHON}" -u scripts/cnop/evaluate_basin_zero_state_gradient.py \
+    --config "${CONFIG}" \
+    --checkpoint "${CHECKPOINT}" \
+    --constraint-file "$(constraint_file "${domain}")" \
+    --constraint-scale 0.1 \
+    --domain "${domain}" \
+    --basin-lat-bounds=-60,60 \
+    --case-source-name GFDL-ESM4 \
+    --case-target-year 1995 \
+    --device cuda \
+    --perturb-grid patch \
+    --perturb-patch-size 4 \
+    --max-abs 2.0 \
+    --output-dir "${output_dir}" \
+    > "${LOG_DIR}/${domain}_zero_state_gradient.log" 2>&1
+}
+
 echo "[basin-clim] pipeline begin $(date -Is)"
 for domain in pacific atlantic_indian global; do
   compute_constraint "${domain}"
@@ -170,6 +194,9 @@ pids=()
 run_random_controls pacific 0 & pids+=("$!")
 run_random_controls atlantic_indian 1 & pids+=("$!")
 run_random_controls global 2 & pids+=("$!")
+run_zero_state_gradient pacific 3 & pids+=("$!")
+run_zero_state_gradient atlantic_indian 4 & pids+=("$!")
+run_zero_state_gradient global 5 & pids+=("$!")
 for pid in "${pids[@]}"; do wait "${pid}"; done
 
 aggregate_domains "pacific,atlantic_indian,global"
@@ -197,5 +224,12 @@ CUDA_VISIBLE_DEVICES=0 "${PYTHON}" -u scripts/cnop/plot_basin_cnop_experiment.py
   --lead-month 12 \
   --dpi 320 \
   > "${LOG_DIR}/plot_paper.log" 2>&1
+
+"${PYTHON}" -u scripts/cnop/plot_basin_cnop_gradient_comparison.py \
+  --experiment-dir "${OUT}" \
+  --output-dir "${OUT}/figures_paper" \
+  --metric objective \
+  --dpi 320 \
+  > "${LOG_DIR}/plot_gradient_comparison.log" 2>&1
 
 echo "[basin-clim] pipeline complete $(date -Is)"
