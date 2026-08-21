@@ -1,0 +1,4 @@
+source,target_year,observed_max_3m_abs,selection_note
+MPI-ESM1-2-HR,2008,0.785094,held-out weak-ENSO background; lowest baseline selection score under the fixed protocol
+EC-Earth3,2010,0.577558,held-out weak-ENSO background; lowest baseline selection score under the fixed protocol
+IPSL-CM6A-LR,2014,0.750902,held-out weak-ENSO background; lowest baseline selection score under the fixed protocol
