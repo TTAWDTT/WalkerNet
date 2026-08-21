@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-ROOT="/mnt/sda/WalkerNet"
-PYTHON="/home/cpji/wwb/torch/bin/python"
-CONFIG="${ROOT}/configs/server_3090_mixed5_ddp8.yaml"
-CHECKPOINT="${ROOT}/checkpoints_mixed5_enso18_simple_loss_corr_ddp8/best_skill.pt"
-FORECAST_CLIM="${ROOT}/outputs/cnop_tos_zos_patch_0703/forecast_tos_climatology_train_h12.npz"
-CONSTRAINT_ROOT="${ROOT}/outputs/cnop_basin_constraints_0817"
-OUT="${ROOT}/outputs/cnop_basin_gfdl1995_clim_scale01_steps1000_0817"
-LOG_DIR="${ROOT}/outputs/logs/cnop_basin_gfdl1995_clim_scale01_steps1000_0817"
+# Defaults preserve the original training host.  A portable deployment may
+# override all location-dependent paths through WALKERNET_* environment vars.
+ROOT="${WALKERNET_ROOT:-/mnt/sda/WalkerNet}"
+PYTHON="${WALKERNET_PYTHON:-/home/cpji/wwb/torch/bin/python}"
+CONFIG="${WALKERNET_CONFIG:-${ROOT}/configs/server_3090_mixed5_ddp8.yaml}"
+CHECKPOINT="${WALKERNET_CHECKPOINT:-${ROOT}/checkpoints_mixed5_enso18_simple_loss_corr_ddp8/best_skill.pt}"
+FORECAST_CLIM="${WALKERNET_FORECAST_CLIM:-${ROOT}/outputs/cnop_tos_zos_patch_0703/forecast_tos_climatology_train_h12.npz}"
+CONSTRAINT_ROOT="${WALKERNET_CONSTRAINT_ROOT:-${ROOT}/outputs/cnop_basin_constraints_0817}"
+OUT="${WALKERNET_OUTPUT_DIR:-${ROOT}/outputs/cnop_basin_gfdl1995_clim_scale01_steps1000_0817}"
+LOG_DIR="${WALKERNET_LOG_DIR:-${ROOT}/outputs/logs/cnop_basin_gfdl1995_clim_scale01_steps1000_0817}"
 
 mkdir -p "${CONSTRAINT_ROOT}" "${OUT}/shards" "${OUT}/combined" "${OUT}/random_controls" "${OUT}/gradient_baseline" "${LOG_DIR}"
 cd "${ROOT}"
