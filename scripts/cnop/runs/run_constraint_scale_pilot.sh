@@ -12,7 +12,7 @@ CONSTRAINT_ROOT="${WALKERNET_CONSTRAINT_ROOT:-${ROOT}/outputs/cnop_basin_constra
 OUT="${WALKERNET_OUTPUT_DIR:?Set WALKERNET_OUTPUT_DIR for this pilot.}"
 LOG_DIR="${WALKERNET_LOG_DIR:-${OUT}/logs}"
 SCALES="${WALKERNET_CONSTRAINT_SCALES:-0.05 0.10 0.20}"
-MAX_PARALLEL="${WALKERNET_MAX_PARALLEL:-8}"
+GPU_IDS_TEXT="${WALKERNET_GPU_IDS:-0 1 2 3 5 6 7}"
 
 mkdir -p "${OUT}" "${LOG_DIR}" "${CONSTRAINT_ROOT}/global"
 cd "${ROOT}"
@@ -21,8 +21,20 @@ if [[ ! -s "${CASE_MANIFEST}" ]]; then
   echo "Case manifest is missing or empty: ${CASE_MANIFEST}" >&2
   exit 2
 fi
-if (( MAX_PARALLEL < 1 || MAX_PARALLEL > 8 )); then
-  echo "WALKERNET_MAX_PARALLEL must be between 1 and 8" >&2
+read -r -a GPU_IDS <<< "${GPU_IDS_TEXT}"
+if (( ${#GPU_IDS[@]} == 0 )); then
+  echo "WALKERNET_GPU_IDS must contain at least one GPU index" >&2
+  exit 2
+fi
+for gpu in "${GPU_IDS[@]}"; do
+  if ! [[ "${gpu}" =~ ^[0-7]$ ]]; then
+    echo "Invalid GPU index in WALKERNET_GPU_IDS: ${gpu}" >&2
+    exit 2
+  fi
+done
+MAX_PARALLEL="${WALKERNET_MAX_PARALLEL:-${#GPU_IDS[@]}}"
+if (( MAX_PARALLEL < 1 || MAX_PARALLEL > ${#GPU_IDS[@]} )); then
+  echo "WALKERNET_MAX_PARALLEL must be between 1 and ${#GPU_IDS[@]}" >&2
   exit 2
 fi
 
@@ -43,15 +55,20 @@ fi
 scale_tag() { printf 'scale_%s' "${1/./p}"; }
 case_tag() { printf '%s_%s' "${1//\//_}" "$2"; }
 wait_batch() { local pid; for pid in "${PIDS[@]}"; do wait "${pid}"; done; PIDS=(); }
-all_gpus_idle() {
-  local busy
-  busy=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | sed '/^[[:space:]]*$/d' | wc -l)
-  [[ "${busy}" -eq 0 ]]
+all_selected_gpus_idle() {
+  local gpu busy
+  for gpu in "${GPU_IDS[@]}"; do
+    busy=$(nvidia-smi -i "${gpu}" --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | sed '/^[[:space:]]*$/d' | wc -l)
+    if [[ "${busy}" -ne 0 ]]; then
+      return 1
+    fi
+  done
+  return 0
 }
 wait_for_all_gpus() {
   local stable=0
   while (( stable < 3 )); do
-    if all_gpus_idle; then
+    if all_selected_gpus_idle; then
       stable=$((stable + 1))
       echo "[pilot] all GPUs idle check ${stable}/3 $(date -Is)"
     else
@@ -101,15 +118,16 @@ run_cnop() {
 
 run_stage() {
   local stage="$1"; shift
-  local gpu=0
+  local gpu_index=0 gpu
   PIDS=()
   for scale in ${SCALES}; do
     for case in "${CASES[@]}"; do
       IFS=, read -r source year <<< "${case}"
       case_dir="${OUT}/$(scale_tag "${scale}")/$(case_tag "${source}" "${year}")"
+      gpu="${GPU_IDS[${gpu_index}]}"
       "run_${stage}" "${scale}" "${source}" "${year}" "${gpu}" "${case_dir}" &
       PIDS+=("$!")
-      gpu=$(( (gpu + 1) % MAX_PARALLEL ))
+      gpu_index=$(( (gpu_index + 1) % ${#GPU_IDS[@]} ))
       if (( ${#PIDS[@]} >= MAX_PARALLEL )); then wait_batch; fi
     done
   done
