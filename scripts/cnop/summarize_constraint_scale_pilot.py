@@ -46,6 +46,11 @@ def percentile(values: list[float], q: float) -> float:
     return values[lower] * (1.0 - fraction) + values[upper] * fraction
 
 
+def optional_float(row: dict[str, str], field: str) -> float:
+    value = row.get(field, "")
+    return float(value) if value else float("nan")
+
+
 def scale_from_directory(path: Path) -> float:
     value = path.name.removeprefix("scale_").replace("p", ".")
     return float(value)
@@ -77,6 +82,9 @@ def main() -> None:
                     "cnop_minus_gradient": cnop_objective - gradient_objective,
                     "cnop_constraint_ratio": float(cnop["constraint_ratio"]),
                     "gradient_constraint_ratio": float(gradient["constraint_ratio"]),
+                    "cnop_normalized_abs_max": optional_float(cnop, "normalized_abs_max"),
+                    "cnop_tos_physical_abs_max": optional_float(cnop, "tos_physical_abs_max"),
+                    "cnop_zos_physical_abs_max": optional_float(cnop, "zos_physical_abs_max"),
                     "random_mean_objective": mean(random),
                     "random_p95_objective": percentile(random, 0.95),
                     "cnop_random_percentile": 100.0
@@ -112,6 +120,7 @@ def main() -> None:
                 "max_constraint_ratio": max(
                     max(float(row["cnop_constraint_ratio"]), float(row["gradient_constraint_ratio"])) for row in group
                 ),
+                "max_cnop_normalized_abs": max(float(row["cnop_normalized_abs_max"]) for row in group),
             }
         )
     with (output_dir / "constraint_scale_pilot_by_scale.csv").open("w", newline="", encoding="utf-8") as handle:
