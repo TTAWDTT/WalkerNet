@@ -7,6 +7,7 @@ import torch
 
 from scripts.cnop.compute_tos_zos_cnop import (
     NeutralCase,
+    accepts_objective_update,
     build_domain_mask,
     cnop_objective,
     load_warm_start_deltas,
@@ -79,6 +80,12 @@ def test_late_three_month_objective_uses_leads_10_to_12() -> None:
     args = Namespace(objective_mode="late_3m_delta", objective_lead=12, horizon=12, objective_temperature=0.25)
 
     assert torch.isclose(cnop_objective(forecast, baseline, args), torch.tensor(11.0))
+
+
+def test_accepted_adam_policy_rejects_objective_regressions() -> None:
+    assert accepts_objective_update(0.5, 0.5)
+    assert accepts_objective_update(0.5, 0.49, tolerance=0.01)
+    assert not accepts_objective_update(0.5, 0.49)
 
 
 def test_candidate_selection_removes_nearly_identical_fields() -> None:

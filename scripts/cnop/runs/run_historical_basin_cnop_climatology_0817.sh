@@ -11,6 +11,10 @@ FORECAST_CLIM="${WALKERNET_FORECAST_CLIM:-${ROOT}/outputs/cnop_tos_zos_patch_070
 CONSTRAINT_ROOT="${WALKERNET_CONSTRAINT_ROOT:-${ROOT}/outputs/cnop_basin_constraints_0817}"
 OUT="${WALKERNET_OUTPUT_DIR:-${ROOT}/outputs/cnop_basin_gfdl1995_clim_scale01_steps1000_0817}"
 LOG_DIR="${WALKERNET_LOG_DIR:-${ROOT}/outputs/logs/cnop_basin_gfdl1995_clim_scale01_steps1000_0817}"
+OPTIMIZER_MODE="${WALKERNET_OPTIMIZER_MODE:-accepted_adam}"
+ACCEPTANCE_TOLERANCE="${WALKERNET_ACCEPTANCE_TOLERANCE:-0.0}"
+BACKTRACK_FACTOR="${WALKERNET_BACKTRACK_FACTOR:-0.5}"
+MIN_LR="${WALKERNET_MIN_LR:-0.0001}"
 
 mkdir -p "${CONSTRAINT_ROOT}" "${OUT}/shards" "${OUT}/combined" "${OUT}/random_controls" "${OUT}/gradient_baseline" "${LOG_DIR}"
 cd "${ROOT}"
@@ -86,6 +90,10 @@ run_shard() {
     --horizon 12 \
     --steps 1000 \
     --lr 0.08 \
+    --optimizer-mode "${OPTIMIZER_MODE}" \
+    --acceptance-tolerance "${ACCEPTANCE_TOLERANCE}" \
+    --backtrack-factor "${BACKTRACK_FACTOR}" \
+    --min-lr "${MIN_LR}" \
     --num-starts 8 \
     --start-index-offset "${offset}" \
     --top-k 5 \
