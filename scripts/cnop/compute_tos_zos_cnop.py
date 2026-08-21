@@ -15,6 +15,7 @@ Example:
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import json
 import math
@@ -74,6 +75,34 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--horizon", type=int, default=12, help="Rollout months for the CNOP objective.")
     parser.add_argument("--steps", type=int, default=80, help="Projected-gradient optimization steps per case.")
     parser.add_argument("--lr", type=float, default=0.08)
+    parser.add_argument(
+        "--optimizer-mode",
+        type=str,
+        default="adam",
+        choices=("adam", "accepted_adam"),
+        help=(
+            "adam reproduces the original projected Adam search. accepted_adam "
+            "keeps an update only when the unregularized CNOP objective does not decrease."
+        ),
+    )
+    parser.add_argument(
+        "--acceptance-tolerance",
+        type=float,
+        default=0.0,
+        help="Allowed objective decrease when --optimizer-mode=accepted_adam.",
+    )
+    parser.add_argument(
+        "--backtrack-factor",
+        type=float,
+        default=0.5,
+        help="Learning-rate multiplier after an objective-rejected Adam proposal.",
+    )
+    parser.add_argument(
+        "--min-lr",
+        type=float,
+        default=1.0e-5,
+        help="Minimum learning rate used by accepted_adam backtracking.",
+    )
     parser.add_argument("--num-starts", type=int, default=16, help="Number of initial perturbations optimized per case.")
     parser.add_argument("--start-index-offset", type=int, default=0, help="Global start-index offset used by parallel shards.")
     parser.add_argument(
@@ -506,6 +535,12 @@ def cnop_objective(nino_anom: torch.Tensor, baseline_nino: torch.Tensor, args: a
     return temp * torch.logsumexp(rolling / temp, dim=0)
 
 
+def accepts_objective_update(current_objective: float, trial_objective: float, tolerance: float = 0.0) -> bool:
+    """Whether a proposed projected update preserves the declared CNOP objective."""
+
+    return float(trial_objective) + float(tolerance) >= float(current_objective)
+
+
 def initialize_delta_param(
     shape: tuple[int, int, int, int],
     x0: torch.Tensor,
@@ -616,7 +651,7 @@ def optimize_single_start(
     initial_delta: torch.Tensor | None = None,
     init_label: str = "random",
 ) -> dict[str, Any]:
-    """从一个初值出发做 projected Adam，上山寻找一个局部 CNOP。"""
+    """从一个初值出发做受约束的局地 CNOP 搜索。"""
 
     delta_param = initialize_delta_param(
         (1, 2, param_hw[0], param_hw[1]),
@@ -635,6 +670,8 @@ def optimize_single_start(
     history: list[dict[str, float]] = []
     best_objective = -float("inf")
     best_delta_param = delta_param.detach().clone()
+    rejected_steps = 0
+    accepted_steps = 0
 
     for step in range(1, int(args.steps) + 1):
         optimizer.zero_grad(set_to_none=True)
@@ -662,6 +699,8 @@ def optimize_single_start(
             best_objective = objective_value
             best_delta_param = delta_param.detach().clone()
         loss.backward()
+        previous_param = delta_param.detach().clone()
+        previous_optimizer_state = copy.deepcopy(optimizer.state_dict()) if args.optimizer_mode == "accepted_adam" else None
         optimizer.step()
         project_delta_param(
             delta_param,
@@ -676,6 +715,41 @@ def optimize_single_start(
             case=case,
         )
 
+        accepted = True
+        if args.optimizer_mode == "accepted_adam":
+            with torch.no_grad():
+                trial_delta = expand_delta(delta_param, target_hw, args.perturb_grid)
+                trial_metrics = evaluate_delta(
+                    model,
+                    dataset,
+                    case,
+                    x0,
+                    trial_delta,
+                    mask,
+                    climatology,
+                    args,
+                    trained_rollout_steps,
+                    lat,
+                    lon,
+                    baseline_nino,
+                    baseline_3m,
+                    use_checkpoint=False,
+                )
+                trial_objective = float(trial_metrics["objective"].item())
+            accepted = accepts_objective_update(objective_value, trial_objective, args.acceptance_tolerance)
+            if accepted:
+                accepted_steps += 1
+                if trial_objective > best_objective:
+                    best_objective = trial_objective
+                    best_delta_param = delta_param.detach().clone()
+            else:
+                rejected_steps += 1
+                with torch.no_grad():
+                    delta_param.copy_(previous_param)
+                optimizer.load_state_dict(previous_optimizer_state)
+                for group in optimizer.param_groups:
+                    group["lr"] = max(float(args.min_lr), float(group["lr"]) * float(args.backtrack_factor))
+
         if step == 1 or step == int(args.steps) or step % max(1, int(args.steps) // 10) == 0:
             history.append(
                 {
@@ -686,6 +760,8 @@ def optimize_single_start(
                     "max_3m": float(metrics["max_3m"].detach().cpu().item()),
                     "mean_3m": float(metrics["mean_3m"].detach().cpu().item()),
                     "loss": float(loss.detach().cpu().item()),
+                    "accepted": float(accepted),
+                    "learning_rate": float(optimizer.param_groups[0]["lr"]),
                 }
             )
 
@@ -741,6 +817,10 @@ def optimize_single_start(
         "start_idx": start_idx,
         "seed": seed,
         "init_label": init_label,
+        "optimizer_mode": args.optimizer_mode,
+        "accepted_steps": accepted_steps,
+        "rejected_steps": rejected_steps,
+        "final_learning_rate": float(optimizer.param_groups[0]["lr"]),
         "delta_norm": final_delta.detach().cpu().numpy()[0],
         "delta_param": delta_param.detach(),
         "delta_phys": normalized_delta_to_physical(dataset, final_delta.detach())[0],
@@ -1498,6 +1578,10 @@ def write_method_json(output_dir: Path, args: argparse.Namespace, checkpoint: di
         "horizon": args.horizon,
         "steps": args.steps,
         "lr": args.lr,
+        "optimizer_mode": args.optimizer_mode,
+        "acceptance_tolerance": args.acceptance_tolerance,
+        "backtrack_factor": args.backtrack_factor,
+        "min_lr": args.min_lr,
         "num_starts": args.num_starts,
         "start_index_offset": args.start_index_offset,
         "top_k": args.top_k,

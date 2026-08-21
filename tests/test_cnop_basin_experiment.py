@@ -7,6 +7,7 @@ import torch
 
 from scripts.cnop.compute_tos_zos_cnop import (
     NeutralCase,
+    accepts_objective_update,
     build_domain_mask,
     cnop_objective,
     load_warm_start_deltas,
@@ -106,6 +107,12 @@ def test_delayed_lead_objective_penalizes_excess_early_response() -> None:
 
     # lead-4 gain = 1.2; early excesses are 0.3 and 0.4, so penalty = 0.25.
     assert torch.isclose(cnop_objective(forecast, baseline, args), torch.tensor(0.95))
+
+
+def test_accepted_adam_policy_rejects_objective_regressions() -> None:
+    assert accepts_objective_update(0.5, 0.5)
+    assert accepts_objective_update(0.5, 0.49, tolerance=0.01)
+    assert not accepts_objective_update(0.5, 0.49)
 
 
 def test_candidate_selection_removes_nearly_identical_fields() -> None:
