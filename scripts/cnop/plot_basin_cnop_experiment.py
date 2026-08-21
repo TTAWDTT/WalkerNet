@@ -224,8 +224,12 @@ def add_cyclic(field: np.ndarray, lon: np.ndarray) -> tuple[np.ndarray, np.ndarr
 def setup_map(ax: plt.Axes, show_x: bool, show_y: bool, nino_box: bool = True) -> None:
     ax.set_extent(MAP_EXTENT, crs=DATA_CRS)
     ax.set_facecolor("#F7FAFC")
-    ax.add_feature(cfeature.LAND.with_scale("110m"), facecolor="#E8E5DE", edgecolor="none", zorder=8)
-    ax.coastlines(resolution="110m", color="#4B5563", linewidth=0.32, zorder=9)
+    # Natural Earth geometries are fetched lazily by Cartopy.  The production
+    # GPU nodes are deliberately offline, so requesting them at draw time
+    # would make an otherwise complete experiment fail while saving figures.
+    # The plotted ocean fields already retain the model land mask; omit the
+    # optional coastline overlay to keep figure generation fully reproducible
+    # from the experiment artifacts alone.
     x_ticks = [0, 60, 120, 180, 240, 300]
     y_ticks = [-60, -30, 0, 30, 60]
     ax.set_xticks(x_ticks, crs=DATA_CRS)
