@@ -311,6 +311,12 @@ def load_or_compute_forecast_climatology(
                 and all(source_idx in cached_sources for source_idx in source_indices)
             ):
                 clim = np.asarray(data["climatology"], dtype=np.float32)
+                # The field-level cache used by the numerical audit contains
+                # all variables; this overview needs only TOS (variable 0).
+                if clim.ndim == 6:
+                    clim = clim[:, :, :, 0]
+                if clim.ndim != 5:
+                    raise ValueError(f"Unexpected forecast climatology shape in {cache_path}: {clim.shape}")
                 print(f"[forecast-clim] using cache {cache_path}", flush=True)
                 return {source_idx: clim[cached_sources.index(source_idx)] for source_idx in source_indices}
 
