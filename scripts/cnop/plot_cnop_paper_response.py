@@ -684,7 +684,7 @@ def plot_paper_figure(
             return fig.add_axes(rect, projection=proj)
         return fig.add_axes(rect)
 
-    ax_main = add_axis((0.017, 0.389, 0.293, 0.306))
+    ax_main = add_axis((0.008, 0.389, 0.293, 0.306))
     summary_idx = min(max(summary_month, 1), response.shape[0]) - 1
     main = contour_map(ax_main, lon, lat, plot_response[summary_idx, 0], tos_levels, TOS_CMAP, zero_contour)
     quiver_map(
@@ -703,7 +703,7 @@ def plot_paper_figure(
     tos_mappable = main
     zos_mappable = None
     panel_ord = 1
-    x_positions = (0.347, 0.567, 0.787)
+    x_positions = (0.338, 0.558, 0.778)
     for pos, month in enumerate(months[:6]):
         row, col = divmod(pos, 3)
         y_tos = 0.729 if row == 0 else 0.314
