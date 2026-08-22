@@ -130,10 +130,27 @@ def nino_truth_anomaly(dataset: WalkerDataset, climatology: np.ndarray, source_i
 
 
 def nino_forecast_anomaly(fields: np.ndarray, model_climatology: np.ndarray, months: np.ndarray, lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
+    """Forecast anomaly under the model's lead-dependent field climatology.
+
+    This is useful for diagnosing model bias, but it must not be compared
+    directly with observed anomalies based on the source climatology.
+    """
     tos = np.asarray(fields[:, 0], dtype=np.float32).copy()
     for lead_idx, month in enumerate(months):
         tos[lead_idx] = tos[lead_idx] - np.asarray(model_climatology[lead_idx, int(month)], dtype=np.float32)
     return compute_nino34_numpy(tos, lat, lon)
+
+
+def nino_forecast_anomaly_source_reference(
+    fields: np.ndarray,
+    source_nino_climatology: np.ndarray,
+    months: np.ndarray,
+    lat: np.ndarray,
+    lon: np.ndarray,
+) -> np.ndarray:
+    """Forecast anomaly on the same source-month Niño3.4 reference as truth."""
+    raw = compute_nino34_numpy(np.asarray(fields[:, 0], dtype=np.float32), lat, lon)
+    return raw - np.asarray(source_nino_climatology, dtype=np.float32)[months]
 
 
 def baseline_is_eligible(
@@ -203,7 +220,17 @@ def main() -> None:
         )
         x0 = make_case_input(dataset, case, device)
         baseline = rollout_fields(model, dataset, case, x0, args.horizon, trained_rollout_steps).numpy()
-        baseline_nino = nino_forecast_anomaly(
+        # The fidelity screen must compare two series with the same anomaly
+        # zero point: the source-wise monthly Niño3.4 climatology.  CNOP's
+        # own baseline and perturbed series use this reference as well.
+        baseline_nino = nino_forecast_anomaly_source_reference(
+            baseline,
+            observed_climatology[source_idx],
+            months,
+            np.asarray(payload["lat"]),
+            np.asarray(payload["lon"]),
+        )
+        baseline_forecast_clim_nino = nino_forecast_anomaly(
             baseline,
             forecast_climatology[source_idx],
             months,
@@ -236,10 +263,13 @@ def main() -> None:
                 "baseline_lead12_abs_error": baseline_lead12_abs_error,
                 "truth_max_3m": float(np.nanmax(truth_3m)),
                 "baseline_max_3m": baseline_max_3m,
+                "baseline_forecast_clim_lead12_nino": float(baseline_forecast_clim_nino[args.horizon - 1]),
+                "baseline_forecast_clim_max_3m": float(np.nanmax(three_month_mean_np(baseline_forecast_clim_nino))),
                 "baseline_truth_nino_rmse": baseline_rmse,
                 "baseline_truth_nino_mae": baseline_mae,
                 "selection_score": baseline_rmse + 0.25 * baseline_lead12_abs_error,
                 "baseline_eligible": eligible,
+                "selection_anomaly_reference": "source_training_nino34_climatology",
             }
         )
         if len(rows) % 25 == 0:
