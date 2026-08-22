@@ -132,6 +132,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--forecast-climatology-cache", type=Path, default=None)
     parser.add_argument("--climatology-batch-size", type=int, default=2)
     parser.add_argument("--no-cartopy", action="store_true", help="Disable Cartopy features for offline rendering.")
+    parser.add_argument("--title-suffix", default="", help="Optional text appended to the response-evolution title.")
     return parser.parse_args()
 
 
@@ -664,6 +665,7 @@ def plot_paper_figure(
     zos_vmax: float,
     contour_levels: int,
     zero_contour: bool,
+    title_suffix: str,
 ) -> Path:
     plot_response = lowpass_response(response, smooth_sigma, vector_sigma)
     tos_levels = np.linspace(-tos_vmax, tos_vmax, contour_levels)
@@ -723,8 +725,9 @@ def plot_paper_figure(
     cb2.set_label("ZOS response")
     fig.text(0.86, 0.087, "vectors: wind stress response", fontsize=7.5, color="#263238")
 
+    suffix = f", {title_suffix}" if title_suffix else ""
     fig.suptitle(
-        f"CNOP response evolution: {source} {year}, candidate rank {rank}",
+        f"CNOP response evolution: {source} {year}, candidate rank {rank}{suffix}",
         fontsize=12,
         fontweight="bold",
         y=0.97,
@@ -855,6 +858,7 @@ def main() -> None:
                 args.zos_vmax,
                 args.contour_levels,
                 args.zero_contour,
+                args.title_suffix,
             )
             print(f"wrote {path}")
     if len(products_by_rank) > 1 and not args.skip_perturbation and not args.skip_multi_perturbation:
