@@ -676,14 +676,15 @@ def plot_paper_figure(
     # Match the original paper layout: one centered summary map at left and
     # two rows of three compact TOS/ZOS month pairs at right.  Explicit axes
     # rectangles keep the relative panel sizes stable across output DPI.
-    fig = plt.figure(figsize=(12.8, 5.05))
+    # Reference delivery is 1800 x 712 px (12 x 4.7467 in at 150 dpi).
+    fig = plt.figure(figsize=(12.0, 4.7467))
 
     def add_axis(rect: tuple[float, float, float, float]) -> plt.Axes:
         if HAS_CARTOPY:
             return fig.add_axes(rect, projection=proj)
         return fig.add_axes(rect)
 
-    ax_main = add_axis((0.025, 0.365, 0.30, 0.30))
+    ax_main = add_axis((0.025, 0.389, 0.293, 0.306))
     summary_idx = min(max(summary_month, 1), response.shape[0]) - 1
     main = contour_map(ax_main, lon, lat, plot_response[summary_idx, 0], tos_levels, TOS_CMAP, zero_contour)
     quiver_map(
@@ -705,10 +706,10 @@ def plot_paper_figure(
     x_positions = (0.355, 0.575, 0.795)
     for pos, month in enumerate(months[:6]):
         row, col = divmod(pos, 3)
-        y_tos = 0.705 if row == 0 else 0.305
-        y_zos = 0.535 if row == 0 else 0.135
-        ax_tos = add_axis((x_positions[col], y_tos, 0.18, 0.17))
-        ax_zos = add_axis((x_positions[col], y_zos, 0.18, 0.13))
+        y_tos = 0.721 if row == 0 else 0.306
+        y_zos = 0.586 if row == 0 else 0.172
+        ax_tos = add_axis((x_positions[col], y_tos, 0.182, 0.191))
+        ax_zos = add_axis((x_positions[col], y_zos, 0.182, 0.129))
         idx = month - 1
 
         tos_mappable = contour_map(ax_tos, lon, lat, plot_response[idx, 0], tos_levels, TOS_CMAP, zero_contour)
@@ -722,8 +723,8 @@ def plot_paper_figure(
         add_map_features(ax_zos, show_xticks=row == 1, show_yticks=col == 0)
         add_layer_label(ax_zos, "ZOS")
 
-    cax_tos = fig.add_axes([0.105, 0.055, 0.27, 0.020])
-    cax_zos = fig.add_axes([0.50, 0.055, 0.34, 0.020])
+    cax_tos = fig.add_axes([0.098, 0.078, 0.268, 0.022])
+    cax_zos = fig.add_axes([0.500, 0.078, 0.345, 0.022])
     cb1 = fig.colorbar(tos_mappable, cax=cax_tos, orientation="horizontal")
     cb1.set_label("TOS response")
     cb2 = fig.colorbar(zos_mappable, cax=cax_zos, orientation="horizontal")
@@ -733,14 +734,14 @@ def plot_paper_figure(
     suffix = f", {title_suffix}" if title_suffix else ""
     fig.suptitle(
         f"CNOP response evolution: {source} {year}, candidate rank {rank}{suffix}",
-        fontsize=9.0,
+        fontsize=12.0,
         fontweight="bold",
         y=0.985,
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / f"cnop_paper_response_{source}_{year}_rank{rank}.png"
-    fig.savefig(path, dpi=dpi)
-    fig.savefig(path.with_suffix(".pdf"), dpi=dpi)
+    fig.savefig(path, dpi=dpi, bbox_inches=None)
+    fig.savefig(path.with_suffix(".pdf"), dpi=dpi, bbox_inches=None)
     plt.close(fig)
     return path
 
