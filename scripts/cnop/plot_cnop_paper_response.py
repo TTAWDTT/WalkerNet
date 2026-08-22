@@ -72,6 +72,7 @@ class CaseProducts:
     baseline: np.ndarray
     perturbed: np.ndarray
     response: np.ndarray
+    field_climatology: np.ndarray
     lat: np.ndarray
     lon: np.ndarray
     labels: list[str]
@@ -111,6 +112,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-perturbation", action="store_true")
     parser.add_argument("--skip-comparison", action="store_true")
     parser.add_argument("--skip-multi-perturbation", action="store_true")
+    parser.add_argument(
+        "--comparison-anomaly",
+        action="store_true",
+        help="Plot truth and forecasts as source-wise training-period monthly anomalies.",
+    )
     return parser.parse_args()
 
 
@@ -313,12 +319,19 @@ def build_case_products(
     lat = np.asarray(payload["lat"], dtype=np.float64)
     lon = np.asarray(payload["lon"], dtype=np.float64)
     labels = month_labels(case, dataset, horizon)
+    train_start, train_end = dataset.data_config["train_years"]
+    train_mask = (payload["years"] >= int(train_start)) & (payload["years"] <= int(train_end))
+    field_climatology = np.empty_like(truth)
+    for lead, month in enumerate(payload["months"][case.target_t : case.target_t + horizon]):
+        month_mask = train_mask & (payload["months"] == month)
+        field_climatology[lead] = np.nanmean(payload["data"][month_mask], axis=0, dtype=np.float64)
     return CaseProducts(
         perturbation=perturbation,
         truth=truth,
         baseline=baseline.numpy(),
         perturbed=perturbed.numpy(),
         response=response,
+        field_climatology=field_climatology,
         lat=lat,
         lon=lon,
         labels=labels,
@@ -491,6 +504,7 @@ def plot_comparison_figure(
     baseline: np.ndarray,
     perturbed: np.ndarray,
     response: np.ndarray,
+    field_climatology: np.ndarray,
     lat: np.ndarray,
     lon: np.ndarray,
     labels: list[str],
@@ -505,19 +519,34 @@ def plot_comparison_figure(
     zos_vmax: float,
     contour_levels: int,
     zero_contour: bool,
+    comparison_anomaly: bool,
 ) -> Path:
     """画真值、baseline、叠加扰动后预测、二者差值，明确展示对比链条。"""
 
     idx = min(max(lead, 1), baseline.shape[0]) - 1
-    obs = np.stack([smooth_field(truth[idx, 0], smooth_sigma), smooth_field(truth[idx, 1], smooth_sigma)])
-    base = np.stack([smooth_field(baseline[idx, 0], smooth_sigma), smooth_field(baseline[idx, 1], smooth_sigma)])
-    pert = np.stack([smooth_field(perturbed[idx, 0], smooth_sigma), smooth_field(perturbed[idx, 1], smooth_sigma)])
+    obs_fields = truth[idx, :2].copy()
+    base_fields = baseline[idx, :2].copy()
+    pert_fields = perturbed[idx, :2].copy()
+    if comparison_anomaly:
+        climatology = field_climatology[idx, :2]
+        obs_fields -= climatology
+        base_fields -= climatology
+        pert_fields -= climatology
+    obs = np.stack([smooth_field(obs_fields[0], smooth_sigma), smooth_field(obs_fields[1], smooth_sigma)])
+    base = np.stack([smooth_field(base_fields[0], smooth_sigma), smooth_field(base_fields[1], smooth_sigma)])
+    pert = np.stack([smooth_field(pert_fields[0], smooth_sigma), smooth_field(pert_fields[1], smooth_sigma)])
     diff = np.stack([smooth_field(response[idx, 0], smooth_sigma), smooth_field(response[idx, 1], smooth_sigma)])
 
-    tos_abs_min = float(np.nanpercentile(np.stack([obs[0], base[0], pert[0]]), 2))
-    tos_abs_max = float(np.nanpercentile(np.stack([obs[0], base[0], pert[0]]), 98))
-    zos_abs_min = float(np.nanpercentile(np.stack([obs[1], base[1], pert[1]]), 2))
-    zos_abs_max = float(np.nanpercentile(np.stack([obs[1], base[1], pert[1]]), 98))
+    if comparison_anomaly:
+        tos_abs_max = symmetric_vmax(np.stack([obs[0], base[0], pert[0]]), 0.0)
+        zos_abs_max = symmetric_vmax(np.stack([obs[1], base[1], pert[1]]), 0.0)
+        tos_abs_min = -tos_abs_max
+        zos_abs_min = -zos_abs_max
+    else:
+        tos_abs_min = float(np.nanpercentile(np.stack([obs[0], base[0], pert[0]]), 2))
+        tos_abs_max = float(np.nanpercentile(np.stack([obs[0], base[0], pert[0]]), 98))
+        zos_abs_min = float(np.nanpercentile(np.stack([obs[1], base[1], pert[1]]), 2))
+        zos_abs_max = float(np.nanpercentile(np.stack([obs[1], base[1], pert[1]]), 98))
     tos_abs_levels = np.linspace(tos_abs_min, tos_abs_max, contour_levels)
     zos_abs_levels = np.linspace(zos_abs_min, zos_abs_max, contour_levels)
     tos_diff_levels = np.linspace(-tos_vmax, tos_vmax, contour_levels)
@@ -526,26 +555,32 @@ def plot_comparison_figure(
     proj = projection()
     fig = plt.figure(figsize=(15.6, 5.6))
     gs = fig.add_gridspec(2, 4, wspace=0.08, hspace=0.16)
-    col_titles = ("Observed truth", "Baseline forecast", "CNOP-perturbed forecast", "Difference")
+    prefix = "anomaly" if comparison_anomaly else ""
+    col_titles = (
+        f"Observed truth {prefix}".strip(),
+        f"Baseline forecast {prefix}".strip(),
+        f"CNOP-perturbed forecast {prefix}".strip(),
+        "Difference",
+    )
     row_labels = ("TOS", "ZOS")
     mappables: list[object] = []
     for row in range(2):
         for col in range(4):
             ax = fig.add_subplot(gs[row, col], projection=proj) if HAS_CARTOPY else fig.add_subplot(gs[row, col])
             if row == 0 and col == 0:
-                m = plain_contour_map(ax, lon, lat, obs[0], tos_abs_levels, "Spectral_r")
+                m = plain_contour_map(ax, lon, lat, obs[0], tos_abs_levels, "RdBu_r" if comparison_anomaly else "Spectral_r")
             elif row == 0 and col == 1:
-                m = plain_contour_map(ax, lon, lat, base[0], tos_abs_levels, "Spectral_r")
+                m = plain_contour_map(ax, lon, lat, base[0], tos_abs_levels, "RdBu_r" if comparison_anomaly else "Spectral_r")
             elif row == 0 and col == 2:
-                m = plain_contour_map(ax, lon, lat, pert[0], tos_abs_levels, "Spectral_r")
+                m = plain_contour_map(ax, lon, lat, pert[0], tos_abs_levels, "RdBu_r" if comparison_anomaly else "Spectral_r")
             elif row == 0 and col == 3:
                 m = contour_map(ax, lon, lat, diff[0], tos_diff_levels, TOS_CMAP, zero_contour)
             elif row == 1 and col == 0:
-                m = plain_contour_map(ax, lon, lat, obs[1], zos_abs_levels, "viridis")
+                m = plain_contour_map(ax, lon, lat, obs[1], zos_abs_levels, "BrBG" if comparison_anomaly else "viridis")
             elif row == 1 and col == 1:
-                m = plain_contour_map(ax, lon, lat, base[1], zos_abs_levels, "viridis")
+                m = plain_contour_map(ax, lon, lat, base[1], zos_abs_levels, "BrBG" if comparison_anomaly else "viridis")
             elif row == 1 and col == 2:
-                m = plain_contour_map(ax, lon, lat, pert[1], zos_abs_levels, "viridis")
+                m = plain_contour_map(ax, lon, lat, pert[1], zos_abs_levels, "BrBG" if comparison_anomaly else "viridis")
             else:
                 m = contour_map(ax, lon, lat, diff[1], zos_diff_levels, ZOS_CMAP, zero_contour)
             mappables.append(m)
@@ -562,10 +597,10 @@ def plot_comparison_figure(
     ]
     cb_abs_tos = fig.colorbar(mappables[0], cax=caxes[0], orientation="horizontal")
     cb_abs_tos.ax.xaxis.set_major_formatter(FormatStrFormatter("%.1f"))
-    cb_abs_tos.set_label("absolute TOS")
+    cb_abs_tos.set_label("TOS anomaly" if comparison_anomaly else "absolute TOS")
     cb_abs_zos = fig.colorbar(mappables[4], cax=caxes[1], orientation="horizontal")
     cb_abs_zos.ax.xaxis.set_major_formatter(FormatStrFormatter("%.2f"))
-    cb_abs_zos.set_label("absolute ZOS")
+    cb_abs_zos.set_label("ZOS anomaly" if comparison_anomaly else "absolute ZOS")
     cb_diff_tos = fig.colorbar(mappables[3], cax=caxes[2], orientation="horizontal")
     cb_diff_tos.ax.xaxis.set_major_formatter(FormatStrFormatter("%.2f"))
     cb_diff_tos.set_label("TOS difference")
@@ -727,6 +762,7 @@ def main() -> None:
                 products.baseline,
                 products.perturbed,
                 products.response,
+                products.field_climatology,
                 products.lat,
                 products.lon,
                 products.labels,
@@ -741,6 +777,7 @@ def main() -> None:
                 args.zos_vmax,
                 args.contour_levels,
                 args.zero_contour,
+                args.comparison_anomaly,
             )
             print(f"wrote {path}")
         if not args.skip_response:
