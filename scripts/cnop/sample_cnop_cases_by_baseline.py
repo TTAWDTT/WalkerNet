@@ -53,6 +53,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--horizon", type=int, default=12)
     parser.add_argument("--neutral-threshold", type=float, default=0.5)
     parser.add_argument(
+        "--stratum",
+        choices=("all", "central", "warm"),
+        default="all",
+        help="Optional preregistered neutral stratum selected from the observed 3-month Niño3.4 series.",
+    )
+    parser.add_argument(
+        "--central-neutral-threshold",
+        type=float,
+        default=0.20,
+        help="Central-neutral cases require all observed 3-month Niño3.4 values to lie within ± this value.",
+    )
+    parser.add_argument(
+        "--warm-neutral-min",
+        type=float,
+        default=0.20,
+        help="Warm-neutral cases require their observed positive 3-month Niño3.4 peak to reach this value.",
+    )
+    parser.add_argument(
+        "--warm-neutral-max",
+        type=float,
+        default=0.40,
+        help="Warm-neutral cases require their observed positive 3-month Niño3.4 peak not to exceed this value.",
+    )
+    parser.add_argument(
         "--baseline-event-threshold",
         type=float,
         default=0.5,
@@ -167,6 +191,19 @@ def baseline_is_eligible(
     return not (args.max_lead12_abs_error > 0 and baseline_lead12_abs_error > args.max_lead12_abs_error)
 
 
+def observed_stratum(truth_3m: np.ndarray, args: argparse.Namespace) -> str | None:
+    """Classify a truth-neutral target year before looking at CNOP output."""
+    max_abs = float(np.nanmax(np.abs(truth_3m)))
+    if max_abs > args.neutral_threshold:
+        return None
+    if max_abs <= args.central_neutral_threshold:
+        return "central"
+    max_positive = float(np.nanmax(truth_3m))
+    if args.warm_neutral_min <= max_positive <= args.warm_neutral_max:
+        return "warm"
+    return "other_neutral"
+
+
 def load_dataset(config: dict[str, Any], split: str) -> WalkerDataset:
     data_config = config.get("data", config)
     return WalkerDataset(data_config.get("data_path"), config, split=split)
@@ -207,7 +244,8 @@ def main() -> None:
         truth = nino_truth_anomaly(dataset, observed_climatology, source_idx, target_t, args.horizon)
         truth_3m = three_month_mean_np(truth)
         observed_max_abs = float(np.nanmax(np.abs(truth_3m)))
-        if observed_max_abs > args.neutral_threshold:
+        stratum = observed_stratum(truth_3m, args)
+        if stratum is None:
             continue
 
         case = NeutralCase(
@@ -258,10 +296,12 @@ def main() -> None:
                 "target_year": year,
                 "target_t": target_t,
                 "observed_max_3m_abs": observed_max_abs,
+                "truth_min_3m": float(np.nanmin(truth_3m)),
                 "truth_lead12_nino": float(truth[args.horizon - 1]),
                 "baseline_lead12_nino": float(baseline_nino[args.horizon - 1]),
                 "baseline_lead12_abs_error": baseline_lead12_abs_error,
                 "truth_max_3m": float(np.nanmax(truth_3m)),
+                "neutral_stratum": stratum,
                 "baseline_max_3m": baseline_max_3m,
                 "baseline_forecast_clim_lead12_nino": float(baseline_forecast_clim_nino[args.horizon - 1]),
                 "baseline_forecast_clim_max_3m": float(np.nanmax(three_month_mean_np(baseline_forecast_clim_nino))),
@@ -286,10 +326,12 @@ def main() -> None:
         writer.writerows(rows)
 
     eligible_rows = [row for row in rows if row["baseline_eligible"]]
+    if args.stratum != "all":
+        eligible_rows = [row for row in eligible_rows if row["neutral_stratum"] == args.stratum]
     if len(eligible_rows) < args.num_cases:
         raise RuntimeError(
             "Only "
-            f"{len(eligible_rows)} candidates passed the preregistered baseline screen; "
+            f"{len(eligible_rows)} candidates passed the preregistered {args.stratum} baseline screen; "
             f"need {args.num_cases}. Relax an explicit threshold and rerun rather than silently using ineligible cases."
         )
     selected: list[dict[str, Any]] = []
