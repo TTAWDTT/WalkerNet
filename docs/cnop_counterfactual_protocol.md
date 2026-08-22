@@ -19,6 +19,16 @@
 `selected_cases.csv`。如果样本不足，程序会显式失败；不得以较差的
 case 静默补足。
 
+### Anomaly reference
+
+The truth, baseline forecast, and CNOP-perturbed forecast used for the
+counterfactual gates are all expressed relative to the **same source-wise
+monthly Niño3.4 climatology estimated from the training years**.  Thus their
+thresholds and baseline--truth RMSE share one zero point.  A separate,
+lead-dependent forecast climatology may be recorded for model-bias diagnosis,
+but it is never mixed with source-referenced truth in a fidelity RMSE or an
+event-threshold decision.
+
 ## CNOP 后资格
 
 对 **同一份** `selected_cases.csv`，分别在 `pacific`、`atlantic_indian`
