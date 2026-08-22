@@ -55,16 +55,9 @@ except Exception:  # pragma: no cover - optional plotting dependency
 
 
 MAP_BOX = (120.0, 290.0, -35.0, 35.0)
-TOS_CMAP = LinearSegmentedColormap.from_list(
-    "soft_tos_response",
-    ["#4B56A6", "#8FC7D9", "#F7F3D0", "#F0A35A", "#B61732"],
-    N=256,
-)
-ZOS_CMAP = LinearSegmentedColormap.from_list(
-    "soft_zos_response",
-    ["#7B4A12", "#D2A450", "#F5F2E6", "#78C5BD", "#006B61"],
-    N=256,
-)
+# Match the original paper-style monthly response palette exactly.
+TOS_CMAP = "RdYlBu_r"
+ZOS_CMAP = "BrBG"
 
 
 @dataclass
@@ -106,8 +99,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vector-sigma", type=float, default=4.0)
     parser.add_argument("--arrow-stride", type=int, default=9)
     parser.add_argument("--arrow-scale", type=float, default=4.5)
-    parser.add_argument("--tos-vmax", type=float, default=2.6)
-    parser.add_argument("--zos-vmax", type=float, default=0.08)
+    parser.add_argument("--tos-vmax", type=float, default=0.0, help="0 means the old 98th-percentile response scaling.")
+    parser.add_argument("--zos-vmax", type=float, default=0.0, help="0 means the old 98th-percentile response scaling.")
     parser.add_argument("--perturb-tos-vmax", type=float, default=0.0, help="0 means auto percentile.")
     parser.add_argument("--perturb-zos-vmax", type=float, default=0.0, help="0 means auto percentile.")
     parser.add_argument("--constraint-label", type=str, default="", help="Optional perturbation constraint label shown on perturbation figures.")
@@ -233,7 +226,7 @@ def contour_map(
     lat: np.ndarray,
     field: np.ndarray,
     levels: np.ndarray,
-    cmap: LinearSegmentedColormap,
+    cmap: str | LinearSegmentedColormap,
     draw_zero: bool,
 ):
     kwargs = {"levels": levels, "cmap": cmap, "extend": "both"}
@@ -668,6 +661,11 @@ def plot_paper_figure(
     title_suffix: str,
 ) -> Path:
     plot_response = lowpass_response(response, smooth_sigma, vector_sigma)
+    view_mask = (lat[:, None] >= MAP_BOX[2]) & (lat[:, None] <= MAP_BOX[3]) & (lon[None, :] >= MAP_BOX[0]) & (lon[None, :] <= MAP_BOX[1])
+    if tos_vmax <= 0:
+        tos_vmax = max(float(np.nanpercentile(np.abs(plot_response[:, 0][..., view_mask]), 98)), 1.0e-6)
+    if zos_vmax <= 0:
+        zos_vmax = max(float(np.nanpercentile(np.abs(plot_response[:, 1][..., view_mask]), 98)), 1.0e-6)
     tos_levels = np.linspace(-tos_vmax, tos_vmax, contour_levels)
     zos_levels = np.linspace(-zos_vmax, zos_vmax, contour_levels)
     tau = np.sqrt(plot_response[:, 2] ** 2 + plot_response[:, 3] ** 2)
