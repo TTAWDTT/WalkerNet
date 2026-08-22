@@ -14,6 +14,12 @@
 | Endpoint fidelity | lead-12 absolute error $\leq 0.50^\circ$C | 排除末期明显漂移的预报 |
 | Baseline neutral | baseline maximum 3-month Ni\~no3.4 $< 0.5^\circ$C | 排除模型本身已经预报 El Ni\~no 的个例 |
 
+The formal case set has two frozen strata.  ``central`` requires every observed
+three-month Ni\~no3.4 value to be within $\pm0.2^\circ$C.  ``warm`` requires a
+positive observed three-month peak in $[0.2, 0.4]^\circ$C while still satisfying
+the truth-neutral gate.  They are selected before CNOP output is available and
+are analyzed separately before any pooled summary is made.
+
 `scripts/cnop/sample_cnop_cases_by_baseline.py` 将所有中性候选写入
 `neutral_baseline_candidates.csv`，并只把通过所有 gate 的样本写入
 `selected_cases.csv`。如果样本不足，程序会显式失败；不得以较差的
