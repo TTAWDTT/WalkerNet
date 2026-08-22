@@ -673,10 +673,17 @@ def plot_paper_figure(
     tau_ref = max(float(np.nanpercentile(tau[..., view_mask], 94)), 1.0e-6)
 
     proj = projection()
-    fig = plt.figure(figsize=(15.5, 6.05))
-    outer = fig.add_gridspec(2, 4, width_ratios=(1.45, 1.0, 1.0, 1.0), wspace=0.13, hspace=0.28)
+    # Match the original paper layout: one centered summary map at left and
+    # two rows of three compact TOS/ZOS month pairs at right.  Explicit axes
+    # rectangles keep the relative panel sizes stable across output DPI.
+    fig = plt.figure(figsize=(10.8, 5.4))
 
-    ax_main = fig.add_subplot(outer[:, 0], projection=proj) if HAS_CARTOPY else fig.add_subplot(outer[:, 0])
+    def add_axis(rect: tuple[float, float, float, float]) -> plt.Axes:
+        if HAS_CARTOPY:
+            return fig.add_axes(rect, projection=proj)
+        return fig.add_axes(rect)
+
+    ax_main = add_axis((0.025, 0.30, 0.30, 0.25))
     summary_idx = min(max(summary_month, 1), response.shape[0]) - 1
     main = contour_map(ax_main, lon, lat, plot_response[summary_idx, 0], tos_levels, TOS_CMAP, zero_contour)
     quiver_map(
@@ -692,45 +699,44 @@ def plot_paper_figure(
     add_map_features(ax_main, show_xticks=True, show_yticks=True)
     ax_main.set_title(f"(a) Lead {summary_month}: {labels[summary_idx]} TOS + wind response", y=1.025, fontweight="bold")
 
-    right_axes: list[plt.Axes] = []
     tos_mappable = main
     zos_mappable = None
     panel_ord = 1
+    x_positions = (0.355, 0.575, 0.795)
     for pos, month in enumerate(months[:6]):
         row, col = divmod(pos, 3)
-        cell = outer[row, col + 1].subgridspec(2, 1, height_ratios=(1.0, 0.68), hspace=0.04)
-        ax_tos = fig.add_subplot(cell[0, 0], projection=proj) if HAS_CARTOPY else fig.add_subplot(cell[0, 0])
-        ax_zos = fig.add_subplot(cell[1, 0], projection=proj) if HAS_CARTOPY else fig.add_subplot(cell[1, 0], sharex=ax_tos)
-        right_axes.extend([ax_tos, ax_zos])
+        y_tos = 0.69 if row == 0 else 0.30
+        y_zos = 0.535 if row == 0 else 0.145
+        ax_tos = add_axis((x_positions[col], y_tos, 0.18, 0.145))
+        ax_zos = add_axis((x_positions[col], y_zos, 0.18, 0.095))
         idx = month - 1
 
         tos_mappable = contour_map(ax_tos, lon, lat, plot_response[idx, 0], tos_levels, TOS_CMAP, zero_contour)
         quiver_map(ax_tos, lon, lat, plot_response[idx, 2], plot_response[idx, 3], tau_ref, arrow_stride, arrow_scale)
         add_map_features(ax_tos, show_xticks=False, show_yticks=col == 0)
         add_layer_label(ax_tos, "TOS + wind")
-        ax_tos.set_title(f"({chr(97 + panel_ord)}) Lead {month}: {labels[idx]}", y=1.02, fontweight="bold")
+        ax_tos.set_title(f"({chr(97 + panel_ord)}) Lead {month}: {labels[idx]}", y=1.02, fontsize=8.2, fontweight="bold")
         panel_ord += 1
 
         zos_mappable = contour_map(ax_zos, lon, lat, plot_response[idx, 1], zos_levels, ZOS_CMAP, zero_contour)
         add_map_features(ax_zos, show_xticks=row == 1, show_yticks=col == 0)
         add_layer_label(ax_zos, "ZOS")
 
-    cax_tos = fig.add_axes([0.11, 0.08, 0.26, 0.022])
-    cax_zos = fig.add_axes([0.50, 0.08, 0.34, 0.022])
+    cax_tos = fig.add_axes([0.105, 0.055, 0.27, 0.020])
+    cax_zos = fig.add_axes([0.50, 0.055, 0.34, 0.020])
     cb1 = fig.colorbar(tos_mappable, cax=cax_tos, orientation="horizontal")
     cb1.set_label("TOS response")
     cb2 = fig.colorbar(zos_mappable, cax=cax_zos, orientation="horizontal")
     cb2.set_label("ZOS response")
-    fig.text(0.86, 0.087, "vectors: wind stress response", fontsize=7.5, color="#263238")
+    fig.text(0.86, 0.063, "vectors: wind stress response", fontsize=7.2, color="#263238")
 
     suffix = f", {title_suffix}" if title_suffix else ""
     fig.suptitle(
         f"CNOP response evolution: {source} {year}, candidate rank {rank}{suffix}",
-        fontsize=12,
+        fontsize=10.5,
         fontweight="bold",
-        y=0.97,
+        y=0.985,
     )
-    fig.subplots_adjust(left=0.04, right=0.99, top=0.90, bottom=0.17)
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / f"cnop_paper_response_{source}_{year}_rank{rank}.png"
     fig.savefig(path, dpi=dpi)
