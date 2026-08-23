@@ -58,6 +58,12 @@ def parse_args() -> argparse.Namespace:
         required=True,
     )
     parser.add_argument("--cnop-dir", type=Path, default=Path("outputs/cnop_relative_l2_3pct_lead12_0704"))
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=None,
+        help="CSV with source,target_year,cnop_dir and optional scale; supports rows from different CNOP runs.",
+    )
     parser.add_argument("--split", type=str, default="test")
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--candidate-rank", type=int, default=1)
@@ -112,6 +118,34 @@ def read_summary_rows(cnop_dir: Path, max_cases: int) -> list[dict[str, str]]:
     with summary_path.open("r", newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     return rows[:max_cases]
+
+
+def read_manifest_rows(manifest_path: Path, max_cases: int) -> list[dict[str, str]]:
+    """Resolve selected case rows from one or more CNOP output directories."""
+
+    with manifest_path.open("r", newline="", encoding="utf-8") as handle:
+        selections = list(csv.DictReader(handle))
+    required = {"source", "target_year", "cnop_dir"}
+    if not selections or not required.issubset(selections[0]):
+        raise ValueError(f"{manifest_path} must contain columns: {', '.join(sorted(required))}")
+    rows: list[dict[str, str]] = []
+    for selection in selections[:max_cases]:
+        source = selection["source"]
+        year = int(selection["target_year"])
+        cnop_dir = Path(selection["cnop_dir"])
+        with (cnop_dir / "cnop_summary.csv").open("r", newline="", encoding="utf-8") as handle:
+            matches = [
+                row
+                for row in csv.DictReader(handle)
+                if row["source"] == source and int(row["target_year"]) == year
+            ]
+        if len(matches) != 1:
+            raise ValueError(f"Expected one summary row for {source} {year} in {cnop_dir}, found {len(matches)}")
+        row = matches[0]
+        row["cnop_dir"] = str(cnop_dir)
+        row["scale"] = selection.get("scale", "")
+        rows.append(row)
+    return rows
 
 
 def symmetric_limit(values: list[np.ndarray], fallback: float, percentile: float = 99.0) -> float:
@@ -340,10 +374,10 @@ def main() -> None:
     if args.lead_month < 1 or args.lead_month > args.horizon:
         raise ValueError(f"--lead-month must be in [1, {args.horizon}], got {args.lead_month}")
 
-    rows = read_summary_rows(args.cnop_dir, args.max_cases)
+    rows = read_manifest_rows(args.manifest, args.max_cases) if args.manifest else read_summary_rows(args.cnop_dir, args.max_cases)
     if args.require_cases and len(rows) < args.require_cases:
         raise ValueError(
-            f"{args.cnop_dir} only has {len(rows)} cases in cnop_summary.csv; "
+            f"Selected input only has {len(rows)} cases; "
             f"expected at least {args.require_cases}. Re-run CNOP with --num-cases {args.require_cases}, "
             "or pass --require-cases 0 to draw the available cases."
         )
@@ -360,7 +394,8 @@ def main() -> None:
         source_indices = [dataset.source_names.index(row["source"]) for row in rows]
         cache_path = args.forecast_climatology_cache
         if cache_path is None:
-            cache_path = args.cnop_dir / f"forecast_tos_climatology_{args.forecast_climatology}_h{args.horizon}.npz"
+            cache_root = args.manifest.parent if args.manifest else args.cnop_dir
+            cache_path = cache_root / f"forecast_tos_climatology_{args.forecast_climatology}_h{args.horizon}.npz"
         forecast_climatology = load_or_compute_forecast_climatology(
             model,
             dataset,
@@ -385,7 +420,8 @@ def main() -> None:
         target_t = int(row["target_t"])
         observed = float(row["observed_max_3m_abs"])
         case = make_case(dataset, source, year, target_t, observed)
-        delta_norm, _npz_path = load_case_npz(args.cnop_dir, source, year, args.candidate_rank)
+        case_cnop_dir = Path(row.get("cnop_dir", str(args.cnop_dir)))
+        delta_norm, _npz_path = load_case_npz(case_cnop_dir, source, year, args.candidate_rank)
 
         x0 = make_case_input(dataset, case, device)
         delta = torch.from_numpy(delta_norm).to(device=device, dtype=x0.dtype).unsqueeze(0)
@@ -441,6 +477,7 @@ def main() -> None:
             {
                 "source": source,
                 "year": year,
+                "scale": row.get("scale", ""),
                 "label": labels[lead_idx],
                 "lat": lat,
                 "lon": lon,
@@ -478,7 +515,8 @@ def main() -> None:
     for row_idx, item in enumerate(cases):
         lat = item["lat"]
         lon = item["lon"]
-        row_label = f"{item['source']} {item['year']} {item['label']}"
+        scale_label = f", scale={item['scale']}" if item["scale"] else ""
+        row_label = f"{item['source']} {item['year']}{scale_label}\n{item['label']}"
         second_field = item["truth"] if args.second_column == "truth" else item["response"]
         fields = (item["perturb"], second_field, item["baseline"], item["perturbed"])
         if args.second_column == "truth":
