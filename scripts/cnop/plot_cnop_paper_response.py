@@ -684,7 +684,7 @@ def plot_paper_figure(
             return fig.add_axes(rect, projection=proj)
         return fig.add_axes(rect)
 
-    ax_main = add_axis((0.025, 0.389, 0.293, 0.306))
+    ax_main = add_axis((0.017, 0.389, 0.293, 0.306))
     summary_idx = min(max(summary_month, 1), response.shape[0]) - 1
     main = contour_map(ax_main, lon, lat, plot_response[summary_idx, 0], tos_levels, TOS_CMAP, zero_contour)
     quiver_map(
@@ -703,11 +703,11 @@ def plot_paper_figure(
     tos_mappable = main
     zos_mappable = None
     panel_ord = 1
-    x_positions = (0.355, 0.575, 0.795)
+    x_positions = (0.347, 0.567, 0.787)
     for pos, month in enumerate(months[:6]):
         row, col = divmod(pos, 3)
-        y_tos = 0.721 if row == 0 else 0.306
-        y_zos = 0.586 if row == 0 else 0.172
+        y_tos = 0.729 if row == 0 else 0.314
+        y_zos = 0.596 if row == 0 else 0.189
         ax_tos = add_axis((x_positions[col], y_tos, 0.182, 0.191))
         ax_zos = add_axis((x_positions[col], y_zos, 0.182, 0.129))
         idx = month - 1
@@ -727,8 +727,10 @@ def plot_paper_figure(
     cax_zos = fig.add_axes([0.500, 0.078, 0.345, 0.022])
     cb1 = fig.colorbar(tos_mappable, cax=cax_tos, orientation="horizontal")
     cb1.set_label("TOS response")
+    cb1.set_ticks(np.linspace(-tos_vmax, tos_vmax, 7))
     cb2 = fig.colorbar(zos_mappable, cax=cax_zos, orientation="horizontal")
     cb2.set_label("ZOS response")
+    cb2.set_ticks(np.linspace(-zos_vmax, zos_vmax, 7))
     fig.text(0.86, 0.063, "vectors: wind stress response", fontsize=7.2, color="#263238")
 
     suffix = f", {title_suffix}" if title_suffix else ""
