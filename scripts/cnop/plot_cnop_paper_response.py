@@ -38,6 +38,10 @@ from scripts.cnop.plot_cnop_monthly_response import (  # noqa: E402
     rollout_fields,
     smooth_field,
 )
+from scripts.cnop.forecast_field_climatology import (  # noqa: E402
+    load_or_compute_forecast_field_climatology,
+    monthly_observed_field_climatology,
+)
 from src.dataset import WalkerDataset  # noqa: E402
 from src.utils import load_config  # noqa: E402
 
@@ -72,7 +76,9 @@ class CaseProducts:
     baseline: np.ndarray
     perturbed: np.ndarray
     response: np.ndarray
-    field_climatology: np.ndarray
+    observed_field_climatology: np.ndarray
+    source_idx: int
+    target_months: np.ndarray
     lat: np.ndarray
     lon: np.ndarray
     labels: list[str]
@@ -115,8 +121,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--comparison-anomaly",
         action="store_true",
-        help="Plot truth and forecasts as source-wise training-period monthly anomalies.",
+        help="Plot truth and forecasts as anomalies in their respective observed/model climatological worlds.",
     )
+    parser.add_argument(
+        "--forecast-climatology",
+        choices=("train", "split", "all"),
+        default="train",
+        help="Reference period for the lead/month-specific model forecast climatology.",
+    )
+    parser.add_argument("--forecast-climatology-cache", type=Path, default=None)
+    parser.add_argument("--climatology-batch-size", type=int, default=2)
     return parser.parse_args()
 
 
@@ -319,19 +333,17 @@ def build_case_products(
     lat = np.asarray(payload["lat"], dtype=np.float64)
     lon = np.asarray(payload["lon"], dtype=np.float64)
     labels = month_labels(case, dataset, horizon)
-    train_start, train_end = dataset.data_config["train_years"]
-    train_mask = (payload["years"] >= int(train_start)) & (payload["years"] <= int(train_end))
-    field_climatology = np.empty_like(truth)
-    for lead, month in enumerate(payload["months"][case.target_t : case.target_t + horizon]):
-        month_mask = train_mask & (payload["months"] == month)
-        field_climatology[lead] = np.nanmean(payload["data"][month_mask], axis=0, dtype=np.float64)
+    target_months = np.asarray(payload["months"][case.target_t : case.target_t + horizon], dtype=np.int64)
+    observed_field_climatology = monthly_observed_field_climatology(dataset, case.source_idx, target_months)
     return CaseProducts(
         perturbation=perturbation,
         truth=truth,
         baseline=baseline.numpy(),
         perturbed=perturbed.numpy(),
         response=response,
-        field_climatology=field_climatology,
+        observed_field_climatology=observed_field_climatology,
+        source_idx=case.source_idx,
+        target_months=target_months,
         lat=lat,
         lon=lon,
         labels=labels,
@@ -504,7 +516,9 @@ def plot_comparison_figure(
     baseline: np.ndarray,
     perturbed: np.ndarray,
     response: np.ndarray,
-    field_climatology: np.ndarray,
+    observed_field_climatology: np.ndarray,
+    forecast_field_climatology: np.ndarray | None,
+    target_months: np.ndarray,
     lat: np.ndarray,
     lon: np.ndarray,
     labels: list[str],
@@ -528,10 +542,16 @@ def plot_comparison_figure(
     base_fields = baseline[idx, :2].copy()
     pert_fields = perturbed[idx, :2].copy()
     if comparison_anomaly:
-        climatology = field_climatology[idx, :2]
-        obs_fields -= climatology
-        base_fields -= climatology
-        pert_fields -= climatology
+        if forecast_field_climatology is None:
+            raise ValueError("forecast_field_climatology is required when --comparison-anomaly is set")
+        month = int(target_months[idx])
+        observed_climatology = observed_field_climatology[idx, :2]
+        model_climatology = forecast_field_climatology[idx, month, :2]
+        if not np.isfinite(model_climatology).all():
+            raise ValueError(f"No model forecast climatology for lead={lead}, month={month}")
+        obs_fields -= observed_climatology
+        base_fields -= model_climatology
+        pert_fields -= model_climatology
     obs = np.stack([smooth_field(obs_fields[0], smooth_sigma), smooth_field(obs_fields[1], smooth_sigma)])
     base = np.stack([smooth_field(base_fields[0], smooth_sigma), smooth_field(base_fields[1], smooth_sigma)])
     pert = np.stack([smooth_field(pert_fields[0], smooth_sigma), smooth_field(pert_fields[1], smooth_sigma)])
@@ -723,6 +743,33 @@ def main() -> None:
     months = parse_months(args.months)
     ranks = parse_ranks(args.candidate_ranks, args.candidate_rank)
     output_dir = args.output_dir or args.cnop_dir / "figures"
+    forecast_climatology_by_source: dict[int, np.ndarray] = {}
+    if args.comparison_anomaly and not args.skip_comparison:
+        if not args.case_source:
+            raise ValueError("--case-source is required with --comparison-anomaly")
+        device = torch.device(args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu")
+        config = load_config(args.config)
+        dataset = WalkerDataset(config["data"]["path"], config, split=args.split)
+        model, _checkpoint = load_model(config, args.checkpoint, device)
+        source_idx = dataset.source_names.index(args.case_source)
+        cache_path = args.forecast_climatology_cache
+        if cache_path is None:
+            cache_path = args.cnop_dir / f"forecast_field_climatology_{args.forecast_climatology}_h{args.horizon}.npz"
+        forecast_climatology_by_source = load_or_compute_forecast_field_climatology(
+            model,
+            dataset,
+            [source_idx],
+            args.horizon,
+            int(args.trained_rollout_steps or config.get("training", {}).get("rollout_steps", args.horizon)),
+            device,
+            args.forecast_climatology,
+            args.split,
+            args.climatology_batch_size,
+            cache_path,
+        )
+        del model, dataset
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
     products_by_rank: list[tuple[int, CaseProducts]] = []
     for rank in ranks:
         products = build_case_products(
@@ -738,6 +785,7 @@ def main() -> None:
             args.trained_rollout_steps,
         )
         products_by_rank.append((rank, products))
+        forecast_field_climatology = forecast_climatology_by_source.get(products.source_idx)
         if not args.skip_perturbation:
             path = plot_perturbation_figure(
                 products.perturbation,
@@ -762,7 +810,9 @@ def main() -> None:
                 products.baseline,
                 products.perturbed,
                 products.response,
-                products.field_climatology,
+                products.observed_field_climatology,
+                forecast_field_climatology,
+                products.target_months,
                 products.lat,
                 products.lon,
                 products.labels,
