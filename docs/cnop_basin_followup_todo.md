@@ -9,7 +9,7 @@
 - [x] Generate overview, response-evolution, and basin comparison figures on GPU005.
 - [x] Pull and visually inspect the local figure bundle; SHA-256 hashes match the GPU005 artifact manifest.
 - [ ] Decide whether the optional 1%/2%/3% sensitivity is needed.
-- [ ] Launch Pacific delayed-onset paired experiment (10 cases × normal/delayed; 12 starts, 100 Adam steps, 3% relative initial L2; top-3 per branch).
-- [ ] Audit paired outputs: constraint ratios, early-lead response, lead-12 gain, and complete top-3 records.
-- [ ] Generate one 2×3 candidate-panel figure per case (normal rank 1–3 / delayed rank 1–3; leads 2,4,6,8,10,12; shared scales).
+- [x] Launch Pacific delayed-onset paired experiment (10 cases × normal/delayed; 12 starts, 100 Adam steps, 3% relative initial L2; top-3 per branch).
+- [x] Audit paired outputs: 20/20 summaries, no failures, constraint ratios within 5e-5, delayed rank-1 early response lower in all 10 cases, and complete top-3 records.
+- [x] Generate one 2×3 candidate-panel figure per case (normal rank 1–3 / delayed rank 1–3; leads 2,4,6,8,10,12; shared scales) and copy to `docs/assets/cnop_pacific_delayed_onset_24starts_steps100_v2_top3/figures/`.
 - [ ] Compare delayed vs normal candidates and decide whether to extend to other basins.
