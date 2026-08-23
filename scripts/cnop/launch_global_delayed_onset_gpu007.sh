@@ -8,7 +8,7 @@ CONFIG="$REPO/configs/server_gpu006_historical_mixed5.yaml"
 CHECKPOINT="$ROOT/input/artifacts/historical_mixed5_best_skill.pt"
 OUT="${OUT:-$ROOT/outputs/cnop_global_delayed_onset_24starts_steps100_v1}"
 CANDIDATE_MAX_SIM="${CANDIDATE_MAX_SIM:-1.0}"
-MANIFEST="$ROOT/outputs/cnop_basin_relative3pct_lead12_steps100_v1/formal_manifest_v1.csv"
+MANIFEST="$ROOT/outputs/cnop_pacific_delayed_onset_24starts_steps100_v2_top3/metadata/formal_manifest_v1.csv"
 LOGDIR="$OUT/logs"
 mkdir -p "$LOGDIR" "$OUT/delayed" "$OUT/metadata"
 
