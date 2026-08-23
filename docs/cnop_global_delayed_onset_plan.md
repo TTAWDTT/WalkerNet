@@ -2,7 +2,7 @@
 
 ## Frozen protocol
 
-- Cases: the existing ten-case `formal_manifest_v1.csv` used by the formal basin run.
+- Cases: the existing ten-case `formal_manifest_v1.csv` frozen in the Pacific delayed v2 metadata bundle (same formal ten cases).
 - Perturbation domain: all valid ocean cells (`domain=global`).
 - Objective: `delayed_lead_delta`, maximizing the lead-12 Niño3.4 increment while penalizing excessive response over the first three leads.
 - Optimizer: Adam, 100 steps, learning rate 0.08.
