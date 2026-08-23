@@ -7,5 +7,5 @@
 - [x] Run Pacific, Indian, and Global CNOP production (30 jobs, GPU005 only).
 - [x] Audit summary/NPZ values and baseline/truth consistency; 30/30 rows, no missing outputs, no failures, constraint ratio 0.9999999-1.0000001.
 - [x] Generate overview, response-evolution, and basin comparison figures on GPU005.
-- [ ] Pull and visually inspect the local figure bundle; remote-to-local transfer remains blocked by the GateShell-only route.
+- [x] Pull and visually inspect the local figure bundle; SHA-256 hashes match the GPU005 artifact manifest.
 - [ ] Decide whether the optional 1%/2%/3% sensitivity is needed.
