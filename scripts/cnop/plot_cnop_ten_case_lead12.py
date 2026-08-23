@@ -58,6 +58,12 @@ def parse_args() -> argparse.Namespace:
         required=True,
     )
     parser.add_argument("--cnop-dir", type=Path, default=Path("outputs/cnop_relative_l2_3pct_lead12_0704"))
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=None,
+        help="CSV with source,target_year,cnop_dir and optional scale; supports rows from different CNOP runs.",
+    )
     parser.add_argument("--split", type=str, default="test")
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--candidate-rank", type=int, default=1)
@@ -85,6 +91,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--climatology-batch-size", type=int, default=2)
     parser.add_argument("--trained-rollout-steps", type=int, default=0)
     parser.add_argument("--smooth-sigma", type=float, default=0.8)
+    parser.add_argument(
+        "--initial-map-extent",
+        type=str,
+        default="",
+        help=(
+            "Optional lon_min,lon_max,lat_min,lat_max view used only for the initial-delta column. "
+            "For example, 20,120,-35,35 makes an Indian-sector CNOP visible while "
+            "the forecast columns remain Pacific-centered."
+        ),
+    )
     parser.add_argument("--require-cases", type=int, default=10)
     parser.add_argument("--max-cases", type=int, default=10)
     parser.add_argument("--dpi", type=int, default=320)
@@ -114,6 +130,34 @@ def read_summary_rows(cnop_dir: Path, max_cases: int) -> list[dict[str, str]]:
     return rows[:max_cases]
 
 
+def read_manifest_rows(manifest_path: Path, max_cases: int) -> list[dict[str, str]]:
+    """Resolve selected case rows from one or more CNOP output directories."""
+
+    with manifest_path.open("r", newline="", encoding="utf-8") as handle:
+        selections = list(csv.DictReader(handle))
+    required = {"source", "target_year", "cnop_dir"}
+    if not selections or not required.issubset(selections[0]):
+        raise ValueError(f"{manifest_path} must contain columns: {', '.join(sorted(required))}")
+    rows: list[dict[str, str]] = []
+    for selection in selections[:max_cases]:
+        source = selection["source"]
+        year = int(selection["target_year"])
+        cnop_dir = Path(selection["cnop_dir"])
+        with (cnop_dir / "cnop_summary.csv").open("r", newline="", encoding="utf-8") as handle:
+            matches = [
+                row
+                for row in csv.DictReader(handle)
+                if row["source"] == source and int(row["target_year"]) == year
+            ]
+        if len(matches) != 1:
+            raise ValueError(f"Expected one summary row for {source} {year} in {cnop_dir}, found {len(matches)}")
+        row = matches[0]
+        row["cnop_dir"] = str(cnop_dir)
+        row["scale"] = selection.get("scale", "")
+        rows.append(row)
+    return rows
+
+
 def symmetric_limit(values: list[np.ndarray], fallback: float, percentile: float = 99.0) -> float:
     if not values:
         return fallback
@@ -128,6 +172,60 @@ def field_limit(values: list[np.ndarray], fallback: float, percentile: float = 9
     stacked = np.concatenate([np.ravel(np.asarray(value, dtype=np.float32)) for value in values])
     vmax = float(np.nanpercentile(np.abs(stacked), percentile))
     return max(vmax, fallback)
+
+
+def parse_map_extent(value: str) -> tuple[float, float, float, float] | None:
+    """Parse an optional geographic view extent for the initial perturbation maps."""
+
+    if not value.strip():
+        return None
+    try:
+        lon_min, lon_max, lat_min, lat_max = (float(item.strip()) for item in value.split(","))
+    except ValueError as exc:
+        raise ValueError("--initial-map-extent must be lon_min,lon_max,lat_min,lat_max") from exc
+    if lon_min >= lon_max or lat_min >= lat_max:
+        raise ValueError("--initial-map-extent must have increasing longitude and latitude bounds")
+    return lon_min, lon_max, lat_min, lat_max
+
+
+def setup_initial_axis(
+    ax: plt.Axes,
+    extent: tuple[float, float, float, float] | None,
+    show_xticks: bool,
+    show_yticks: bool,
+) -> None:
+    """Use the legacy Pacific view unless an initial-perturbation sector was requested."""
+
+    if extent is None:
+        setup_axis(ax, show_xticks=show_xticks, show_yticks=show_yticks)
+        return
+
+    lon_min, lon_max, lat_min, lat_max = extent
+    ax.set_xlim(lon_min, lon_max)
+    ax.set_ylim(lat_min, lat_max)
+    lon_ticks = np.linspace(lon_min, lon_max, 6)
+    lat_ticks = np.linspace(lat_min, lat_max, 5)
+    ax.set_xticks(lon_ticks)
+    ax.set_yticks(lat_ticks)
+    if show_xticks:
+        def format_lon(lon: float) -> str:
+            if np.isclose(lon, 180.0):
+                return "180"
+            return f"{lon:.0f}E" if lon < 180.0 else f"{360.0 - lon:.0f}W"
+
+        ax.set_xticklabels([format_lon(lon) for lon in lon_ticks])
+    else:
+        ax.set_xticklabels([])
+    if show_yticks:
+        def format_lat(lat: float) -> str:
+            if np.isclose(lat, 0.0):
+                return "0"
+            return f"{abs(lat):.0f}{'S' if lat < 0 else 'N'}"
+
+        ax.set_yticklabels([format_lat(lat) for lat in lat_ticks])
+    else:
+        ax.set_yticklabels([])
+    ax.grid(color="#9AA3AF", alpha=0.32, linewidth=0.45)
 
 
 def monthly_tos_climatology(dataset: WalkerDataset, source_idx: int, month: int) -> np.ndarray:
@@ -277,6 +375,12 @@ def load_or_compute_forecast_climatology(
                 and all(source_idx in cached_sources for source_idx in source_indices)
             ):
                 clim = np.asarray(data["climatology"], dtype=np.float32)
+                # The field-level cache used by the numerical audit contains
+                # all variables; this overview needs only TOS (variable 0).
+                if clim.ndim == 6:
+                    clim = clim[:, :, :, 0]
+                if clim.ndim != 5:
+                    raise ValueError(f"Unexpected forecast climatology shape in {cache_path}: {clim.shape}")
                 print(f"[forecast-clim] using cache {cache_path}", flush=True)
                 return {source_idx: clim[cached_sources.index(source_idx)] for source_idx in source_indices}
 
@@ -339,11 +443,12 @@ def main() -> None:
     args = parse_args()
     if args.lead_month < 1 or args.lead_month > args.horizon:
         raise ValueError(f"--lead-month must be in [1, {args.horizon}], got {args.lead_month}")
+    initial_map_extent = parse_map_extent(args.initial_map_extent)
 
-    rows = read_summary_rows(args.cnop_dir, args.max_cases)
+    rows = read_manifest_rows(args.manifest, args.max_cases) if args.manifest else read_summary_rows(args.cnop_dir, args.max_cases)
     if args.require_cases and len(rows) < args.require_cases:
         raise ValueError(
-            f"{args.cnop_dir} only has {len(rows)} cases in cnop_summary.csv; "
+            f"Selected input only has {len(rows)} cases; "
             f"expected at least {args.require_cases}. Re-run CNOP with --num-cases {args.require_cases}, "
             "or pass --require-cases 0 to draw the available cases."
         )
@@ -360,7 +465,8 @@ def main() -> None:
         source_indices = [dataset.source_names.index(row["source"]) for row in rows]
         cache_path = args.forecast_climatology_cache
         if cache_path is None:
-            cache_path = args.cnop_dir / f"forecast_tos_climatology_{args.forecast_climatology}_h{args.horizon}.npz"
+            cache_root = args.manifest.parent if args.manifest else args.cnop_dir
+            cache_path = cache_root / f"forecast_tos_climatology_{args.forecast_climatology}_h{args.horizon}.npz"
         forecast_climatology = load_or_compute_forecast_climatology(
             model,
             dataset,
@@ -385,7 +491,8 @@ def main() -> None:
         target_t = int(row["target_t"])
         observed = float(row["observed_max_3m_abs"])
         case = make_case(dataset, source, year, target_t, observed)
-        delta_norm, _npz_path = load_case_npz(args.cnop_dir, source, year, args.candidate_rank)
+        case_cnop_dir = Path(row.get("cnop_dir", str(args.cnop_dir)))
+        delta_norm, _npz_path = load_case_npz(case_cnop_dir, source, year, args.candidate_rank)
 
         x0 = make_case_input(dataset, case, device)
         delta = torch.from_numpy(delta_norm).to(device=device, dtype=x0.dtype).unsqueeze(0)
@@ -441,6 +548,7 @@ def main() -> None:
             {
                 "source": source,
                 "year": year,
+                "scale": row.get("scale", ""),
                 "label": labels[lead_idx],
                 "lat": lat,
                 "lon": lon,
@@ -478,7 +586,8 @@ def main() -> None:
     for row_idx, item in enumerate(cases):
         lat = item["lat"]
         lon = item["lon"]
-        row_label = f"{item['source']} {item['year']} {item['label']}"
+        scale_label = f", scale={item['scale']}" if item["scale"] else ""
+        row_label = f"{item['source']} {item['year']}{scale_label}\n{item['label']}"
         second_field = item["truth"] if args.second_column == "truth" else item["response"]
         fields = (item["perturb"], second_field, item["baseline"], item["perturbed"])
         if args.second_column == "truth":
@@ -489,10 +598,19 @@ def main() -> None:
             cmaps = ("RdBu_r", "RdBu_r", TOS_CMAP, TOS_CMAP)
         for col_idx in range(4):
             ax = axes[row_idx, col_idx]
-            setup_axis(ax, show_xticks=row_idx == nrows - 1, show_yticks=col_idx == 0)
+            if col_idx == 0:
+                setup_initial_axis(
+                    ax,
+                    initial_map_extent,
+                    show_xticks=row_idx == nrows - 1,
+                    show_yticks=True,
+                )
+            else:
+                setup_axis(ax, show_xticks=row_idx == nrows - 1, show_yticks=False)
             mappable = ax.contourf(lon, lat, fields[col_idx], levels=levels[col_idx], cmap=cmaps[col_idx], extend="both")
             ax.contour(lon, lat, fields[col_idx], levels=[0.0], colors="#263238", linewidths=0.22, alpha=0.5)
-            add_nino34_box(ax)
+            if col_idx != 0 or initial_map_extent is None:
+                add_nino34_box(ax)
             if row_idx == 0:
                 ax.set_title(col_titles[col_idx], pad=3)
             if col_idx == 0:

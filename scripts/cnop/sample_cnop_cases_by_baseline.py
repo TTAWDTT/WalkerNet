@@ -1,10 +1,17 @@
-"""Sample neutral CNOP cases whose baseline forecast is close to truth.
+"""Sample scientifically eligible neutral CNOP cases.
 
 筛选逻辑：
 1. 目标年必须是完整的一月到十二月，且上一年一月到十二月可作为输入。
 2. truth 的 Niño3.4 anomaly 三月滑动平均不超过 neutral threshold，表示没有 ENSO。
 3. 对每个 neutral case 做 baseline 12 个月滚动预报，用 Niño3.4 anomaly RMSE
-   衡量 baseline 与 truth 的接近程度，取最接近的若干个。
+   衡量 baseline 与 truth 的接近程度。
+4. baseline 本身不得达到 El Niño 阈值；否则不能称为由 CNOP 诱发的
+   counterfactual event。
+
+This is deliberately a *hard* screen.  The previous implementation fell back
+to lower-ranked cases when a requested sample size was unavailable.  That is
+useful for exploratory work, but invalid for the preregistered workshop case
+set because it can silently admit a poor baseline forecast.
 """
 
 from __future__ import annotations
@@ -45,6 +52,48 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-cases", type=int, default=64)
     parser.add_argument("--horizon", type=int, default=12)
     parser.add_argument("--neutral-threshold", type=float, default=0.5)
+    parser.add_argument(
+        "--stratum",
+        choices=("all", "central", "warm"),
+        default="all",
+        help="Optional preregistered neutral stratum selected from the observed 3-month Niño3.4 series.",
+    )
+    parser.add_argument(
+        "--central-neutral-threshold",
+        type=float,
+        default=0.20,
+        help="Central-neutral cases require all observed 3-month Niño3.4 values to lie within ± this value.",
+    )
+    parser.add_argument(
+        "--warm-neutral-min",
+        type=float,
+        default=0.20,
+        help="Warm-neutral cases require their observed positive 3-month Niño3.4 peak to reach this value.",
+    )
+    parser.add_argument(
+        "--warm-neutral-max",
+        type=float,
+        default=0.40,
+        help="Warm-neutral cases require their observed positive 3-month Niño3.4 peak not to exceed this value.",
+    )
+    parser.add_argument(
+        "--baseline-event-threshold",
+        type=float,
+        default=0.5,
+        help="Maximum baseline 3-month Nino3.4 anomaly permitted for a neutral counterfactual.",
+    )
+    parser.add_argument(
+        "--max-baseline-rmse",
+        type=float,
+        default=0.40,
+        help="Hard upper bound for 12-month baseline-versus-truth Nino3.4 RMSE; <= 0 disables it.",
+    )
+    parser.add_argument(
+        "--max-lead12-abs-error",
+        type=float,
+        default=0.50,
+        help="Hard upper bound for lead-12 baseline-versus-truth Nino3.4 absolute error; <= 0 disables it.",
+    )
     parser.add_argument("--case-year-range", type=str, default="")
     parser.add_argument("--max-per-source", type=int, default=0)
     parser.add_argument("--forecast-climatology-cache", type=Path, required=True)
@@ -105,10 +154,54 @@ def nino_truth_anomaly(dataset: WalkerDataset, climatology: np.ndarray, source_i
 
 
 def nino_forecast_anomaly(fields: np.ndarray, model_climatology: np.ndarray, months: np.ndarray, lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
+    """Forecast anomaly under the model's lead-dependent field climatology.
+
+    This is useful for diagnosing model bias, but it must not be compared
+    directly with observed anomalies based on the source climatology.
+    """
     tos = np.asarray(fields[:, 0], dtype=np.float32).copy()
     for lead_idx, month in enumerate(months):
         tos[lead_idx] = tos[lead_idx] - np.asarray(model_climatology[lead_idx, int(month)], dtype=np.float32)
     return compute_nino34_numpy(tos, lat, lon)
+
+
+def nino_forecast_anomaly_source_reference(
+    fields: np.ndarray,
+    source_nino_climatology: np.ndarray,
+    months: np.ndarray,
+    lat: np.ndarray,
+    lon: np.ndarray,
+) -> np.ndarray:
+    """Forecast anomaly on the same source-month Niño3.4 reference as truth."""
+    raw = compute_nino34_numpy(np.asarray(fields[:, 0], dtype=np.float32), lat, lon)
+    return raw - np.asarray(source_nino_climatology, dtype=np.float32)[months]
+
+
+def baseline_is_eligible(
+    baseline_max_3m: float,
+    baseline_rmse: float,
+    baseline_lead12_abs_error: float,
+    args: argparse.Namespace,
+) -> bool:
+    """Return whether a neutral case is eligible before CNOP is solved."""
+    if baseline_max_3m >= args.baseline_event_threshold:
+        return False
+    if args.max_baseline_rmse > 0 and baseline_rmse > args.max_baseline_rmse:
+        return False
+    return not (args.max_lead12_abs_error > 0 and baseline_lead12_abs_error > args.max_lead12_abs_error)
+
+
+def observed_stratum(truth_3m: np.ndarray, args: argparse.Namespace) -> str | None:
+    """Classify a truth-neutral target year before looking at CNOP output."""
+    max_abs = float(np.nanmax(np.abs(truth_3m)))
+    if max_abs > args.neutral_threshold:
+        return None
+    if max_abs <= args.central_neutral_threshold:
+        return "central"
+    max_positive = float(np.nanmax(truth_3m))
+    if args.warm_neutral_min <= max_positive <= args.warm_neutral_max:
+        return "warm"
+    return "other_neutral"
 
 
 def load_dataset(config: dict[str, Any], split: str) -> WalkerDataset:
@@ -151,7 +244,8 @@ def main() -> None:
         truth = nino_truth_anomaly(dataset, observed_climatology, source_idx, target_t, args.horizon)
         truth_3m = three_month_mean_np(truth)
         observed_max_abs = float(np.nanmax(np.abs(truth_3m)))
-        if observed_max_abs > args.neutral_threshold:
+        stratum = observed_stratum(truth_3m, args)
+        if stratum is None:
             continue
 
         case = NeutralCase(
@@ -164,7 +258,17 @@ def main() -> None:
         )
         x0 = make_case_input(dataset, case, device)
         baseline = rollout_fields(model, dataset, case, x0, args.horizon, trained_rollout_steps).numpy()
-        baseline_nino = nino_forecast_anomaly(
+        # The fidelity screen must compare two series with the same anomaly
+        # zero point: the source-wise monthly Niño3.4 climatology.  CNOP's
+        # own baseline and perturbed series use this reference as well.
+        baseline_nino = nino_forecast_anomaly_source_reference(
+            baseline,
+            observed_climatology[source_idx],
+            months,
+            np.asarray(payload["lat"]),
+            np.asarray(payload["lon"]),
+        )
+        baseline_forecast_clim_nino = nino_forecast_anomaly(
             baseline,
             forecast_climatology[source_idx],
             months,
@@ -177,6 +281,13 @@ def main() -> None:
         baseline_lead12_abs_error = float(abs(baseline_nino[args.horizon - 1] - truth[args.horizon - 1]))
         baseline_3m = three_month_mean_np(baseline_nino)
 
+        baseline_max_3m = float(np.nanmax(baseline_3m))
+        eligible = baseline_is_eligible(
+            baseline_max_3m,
+            baseline_rmse,
+            baseline_lead12_abs_error,
+            args,
+        )
         rows.append(
             {
                 "rank_source_order": idx,
@@ -185,27 +296,48 @@ def main() -> None:
                 "target_year": year,
                 "target_t": target_t,
                 "observed_max_3m_abs": observed_max_abs,
+                "truth_min_3m": float(np.nanmin(truth_3m)),
                 "truth_lead12_nino": float(truth[args.horizon - 1]),
                 "baseline_lead12_nino": float(baseline_nino[args.horizon - 1]),
                 "baseline_lead12_abs_error": baseline_lead12_abs_error,
                 "truth_max_3m": float(np.nanmax(truth_3m)),
-                "baseline_max_3m": float(np.nanmax(baseline_3m)),
+                "neutral_stratum": stratum,
+                "baseline_max_3m": baseline_max_3m,
+                "baseline_forecast_clim_lead12_nino": float(baseline_forecast_clim_nino[args.horizon - 1]),
+                "baseline_forecast_clim_max_3m": float(np.nanmax(three_month_mean_np(baseline_forecast_clim_nino))),
                 "baseline_truth_nino_rmse": baseline_rmse,
                 "baseline_truth_nino_mae": baseline_mae,
                 "selection_score": baseline_rmse + 0.25 * baseline_lead12_abs_error,
+                "baseline_eligible": eligible,
+                "selection_anomaly_reference": "source_training_nino34_climatology",
             }
         )
         if len(rows) % 25 == 0:
             print(f"[sample] neutral candidates scored: {len(rows)}", flush=True)
 
-    if len(rows) < args.num_cases:
-        raise RuntimeError(f"Only {len(rows)} neutral candidates found; need {args.num_cases}.")
-
     rows = sorted(rows, key=lambda row: (row["selection_score"], row["baseline_truth_nino_rmse"], row["observed_max_3m_abs"]))
+    if not rows:
+        raise RuntimeError("No complete neutral Jan-Dec candidate cases were found.")
+    all_path = args.output_dir / "neutral_baseline_candidates.csv"
+    fields = list(rows[0].keys())
+    with all_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    eligible_rows = [row for row in rows if row["baseline_eligible"]]
+    if args.stratum != "all":
+        eligible_rows = [row for row in eligible_rows if row["neutral_stratum"] == args.stratum]
+    if len(eligible_rows) < args.num_cases:
+        raise RuntimeError(
+            "Only "
+            f"{len(eligible_rows)} candidates passed the preregistered {args.stratum} baseline screen; "
+            f"need {args.num_cases}. Relax an explicit threshold and rerun rather than silently using ineligible cases."
+        )
     selected: list[dict[str, Any]] = []
     source_counts: dict[str, int] = {}
     max_per_source = int(args.max_per_source)
-    for row in rows:
+    for row in eligible_rows:
         source = str(row["source"])
         if max_per_source > 0 and source_counts.get(source, 0) >= max_per_source:
             continue
@@ -214,15 +346,11 @@ def main() -> None:
         if len(selected) >= args.num_cases:
             break
     if len(selected) < args.num_cases:
-        selected = rows[: args.num_cases]
+        raise RuntimeError(
+            f"Only {len(selected)} eligible cases remain after max-per-source={max_per_source}; need {args.num_cases}."
+        )
 
-    all_path = args.output_dir / "neutral_baseline_candidates.csv"
     selected_path = args.output_dir / "selected_cases.csv"
-    fields = list(rows[0].keys())
-    with all_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        writer.writerows(rows)
     with selected_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
@@ -230,7 +358,10 @@ def main() -> None:
 
     case_lines = [f'{row["source"]} {int(row["target_year"])} {idx % 8}' for idx, row in enumerate(selected)]
     (args.output_dir / "selected_cases_for_bash.txt").write_text("\n".join(case_lines) + "\n", encoding="utf-8")
-    print(f"[sample] candidates={len(rows)} selected={len(selected)}", flush=True)
+    print(
+        f"[sample] neutral_candidates={len(rows)} baseline_eligible={len(eligible_rows)} selected={len(selected)}",
+        flush=True,
+    )
     print(f"[sample] selected source counts={source_counts}", flush=True)
     print(f"[sample] wrote {selected_path}", flush=True)
 
