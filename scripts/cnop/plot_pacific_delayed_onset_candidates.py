@@ -33,6 +33,19 @@ MAP_BOX = (100.0, 300.0, -35.0, 35.0)
 NINO34_BOX = (190.0, 240.0, -5.0, 5.0)
 
 
+def set_legacy_style() -> None:
+    mpl.rcParams.update(
+        {
+            "font.family": "DejaVu Sans",
+            "axes.linewidth": 0.65,
+            "axes.titlesize": 8,
+            "xtick.labelsize": 6.5,
+            "ytick.labelsize": 6.5,
+            "savefig.dpi": 220,
+        }
+    )
+
+
 def smooth_field(field: np.ndarray, sigma: float) -> np.ndarray:
     return gaussian_filter(np.asarray(field, dtype=np.float32), sigma=sigma, mode="nearest")
 
@@ -78,7 +91,7 @@ def plot_legacy_candidate(
     zos_levels = np.linspace(-zos_vmax, zos_vmax, 23)
     response = np.asarray(response, dtype=np.float32)
     fig = plt.figure(figsize=(12.0, 4.7467))
-    ax_main = fig.add_axes((0.008, 0.389, 0.293, 0.306))
+    ax_main = fig.add_axes((0.030, 0.389, 0.270, 0.306))
     tos_mesh = draw_legacy_field(ax_main, lon, lat, smooth_field(response[11, 0], 3.0), tos_levels, "RdYlBu_r")
     style_legacy_axis(ax_main, show_x=True, show_y=True)
     ax_main.set_title("(a) Lead 12: TOS response", y=1.025, fontweight="bold")
@@ -106,8 +119,7 @@ def plot_legacy_candidate(
     zos_bar = fig.colorbar(zos_mesh, cax=fig.add_axes((0.500, 0.078, 0.345, 0.022)), orientation="horizontal")
     zos_bar.set_label("ZOS response")
     zos_bar.set_ticks(np.linspace(-zos_vmax, zos_vmax, 7))
-    fig.text(0.86, 0.063, f"{branch} rank-{rank} | lead12 ΔNiño={lead_delta:+.2f}", fontsize=7.2, color="#263238")
-    fig.suptitle(f"CNOP response evolution: {source} {year}, {branch} candidate rank {rank}", fontsize=12.0, fontweight="bold", y=0.985)
+    fig.suptitle(f"CNOP response evolution: {source} {year}, {branch} candidate rank {rank} (lead12 ΔNiño={lead_delta:+.2f})", fontsize=12.0, fontweight="bold", y=0.985)
     output.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output, dpi=dpi)
     plt.close(fig)
@@ -155,6 +167,7 @@ def load_case_response(
 
 
 def main() -> None:
+    set_legacy_style()
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--config", type=Path, required=True)
