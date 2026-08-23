@@ -67,6 +67,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--split", type=str, default="test")
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--candidate-rank", type=int, default=1)
+    parser.add_argument(
+        "--layout",
+        choices=("four", "three"),
+        default="four",
+        help="four columns include the initial perturbation; three columns show truth, baseline, and perturbed only.",
+    )
     parser.add_argument("--horizon", type=int, default=12)
     parser.add_argument("--lead-month", type=int, default=12, help="1-based forecast lead to plot.")
     parser.add_argument(
@@ -91,6 +97,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--climatology-batch-size", type=int, default=2)
     parser.add_argument("--trained-rollout-steps", type=int, default=0)
     parser.add_argument("--smooth-sigma", type=float, default=0.8)
+    parser.add_argument("--tos-vmax", type=float, default=None, help="Fixed symmetric SSTA color limit.")
+    parser.add_argument("--delta-vmax", type=float, default=None, help="Fixed symmetric initial-perturbation color limit.")
     parser.add_argument(
         "--initial-map-extent",
         type=str,
@@ -570,9 +578,71 @@ def main() -> None:
     perturb_vmax = symmetric_limit(perturb_fields, fallback=0.01)
     response_vmax = symmetric_limit(response_fields, fallback=0.01)
     tos_vmax = field_limit(lead_fields, fallback=0.3)
+    if args.delta_vmax is not None:
+        perturb_vmax = float(args.delta_vmax)
+    if args.tos_vmax is not None:
+        tos_vmax = float(args.tos_vmax)
     perturb_levels = np.linspace(-perturb_vmax, perturb_vmax, 25)
     response_levels = np.linspace(-response_vmax, response_vmax, 25)
     tos_levels = np.linspace(-tos_vmax, tos_vmax, 31)
+    tos_label = "SSTA" if args.tos_mode == "anomaly" else "TOS"
+
+    if args.layout == "three":
+        fig, axes = plt.subplots(
+            nrows,
+            3,
+            figsize=(9.7, 1.58 * nrows + 0.9),
+            squeeze=False,
+        )
+        fig.subplots_adjust(left=0.115, right=0.91, top=0.955, bottom=0.055, wspace=0.045, hspace=0.11)
+        col_titles = (
+            f"Observed lead-{args.lead_month} {tos_label}",
+            f"Baseline lead-{args.lead_month} {tos_label}",
+            f"Perturbed lead-{args.lead_month} {tos_label}",
+        )
+        tos_mappable = None
+        for row_idx, item in enumerate(cases):
+            lat = item["lat"]
+            lon = item["lon"]
+            scale_label = f", scale={item['scale']}" if item["scale"] else ""
+            row_label = f"{item['source']} {item['year']}{scale_label}\n{item['label']}"
+            fields = (item["truth"], item["baseline"], item["perturbed"])
+            nino_values = (item["truth_nino"], item["baseline_nino"], item["perturbed_nino"])
+            for col_idx, field in enumerate(fields):
+                ax = axes[row_idx, col_idx]
+                setup_axis(
+                    ax,
+                    show_xticks=row_idx == nrows - 1,
+                    show_yticks=col_idx == 0,
+                )
+                tos_mappable = ax.contourf(
+                    lon,
+                    lat,
+                    field,
+                    levels=tos_levels,
+                    cmap=TOS_CMAP,
+                    extend="both",
+                )
+                ax.contour(lon, lat, field, levels=[0.0], colors="#263238", linewidths=0.22, alpha=0.5)
+                add_nino34_box(ax)
+                if row_idx == 0:
+                    ax.set_title(col_titles[col_idx], pad=3)
+                if col_idx == 0:
+                    ax.set_ylabel(row_label, rotation=0, ha="right", va="center", labelpad=42, fontsize=7.1)
+                add_panel_label(ax, f"Nino3.4={nino_values[col_idx]:+.2f}")
+        assert tos_mappable is not None
+        cb_ax = fig.add_axes([0.93, 0.14, 0.012, 0.72])
+        fig.colorbar(tos_mappable, cax=cb_ax).set_label(tos_label, fontsize=7)
+        fig.suptitle(
+            f"Rank-{args.candidate_rank} delayed CNOP cases: lead-{args.lead_month} {tos_label} and Nino3.4",
+            fontsize=10,
+            y=0.992,
+        )
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(args.output, dpi=args.dpi)
+        plt.close(fig)
+        print(args.output)
+        return
 
     tos_label = "SSTA" if args.tos_mode == "anomaly" else "TOS"
     second_title = f"Observed lead-{args.lead_month} {tos_label}" if args.second_column == "truth" else f"Lead-{args.lead_month} TOS response"

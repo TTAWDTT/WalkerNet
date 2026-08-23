@@ -13,4 +13,5 @@
 - [x] Audit paired outputs: 20/20 summaries, no failures, constraint ratios within 5e-5, delayed rank-1 early response lower in all 10 cases, and complete top-3 records.
 - [x] Generate one 2×3 candidate-panel figure per case (normal rank 1–3 / delayed rank 1–3; leads 2,4,6,8,10,12; shared scales) and copy to `docs/assets/cnop_pacific_delayed_onset_24starts_steps100_v2_top3/figures/`.
 - [x] Re-render all 60 retained candidates with the established wide response-evolution layer (TOS + ZOS, smoothing, shared fixed ranges) under `docs/assets/cnop_pacific_delayed_onset_24starts_steps100_v2_top3/legacy_response_evolution/`.
+- [x] Create a delayed rank-1 lead-12 overview with the three requested fields (truth, baseline, perturbed) under `docs/assets/cnop_pacific_delayed_onset_24starts_steps100_v2_top3/`.
 - [ ] Compare delayed vs normal candidates and decide whether to extend to other basins.
