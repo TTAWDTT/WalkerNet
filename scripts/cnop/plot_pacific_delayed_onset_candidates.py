@@ -85,8 +85,11 @@ def main() -> None:
     checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model"])
     model.eval()
-    height, width = int(dataset._std.shape[-2]), int(dataset._std.shape[-1])  # noqa: SLF001
-    std = dataset._std[:4].to(device=device, dtype=torch.float32).view(1, 1, 4, height, width)  # noqa: SLF001
+    # WalkerDataset stores per-variable statistics as a 1-D vector.  Keep the
+    # broadcast dimensions explicit so response fields are denormalised over
+    # (batch, lead, variable, latitude, longitude) without assuming a spatial
+    # statistics array.
+    std = dataset._std[:4].to(device=device, dtype=torch.float32).view(1, 1, 4, 1, 1)  # noqa: SLF001
     trained_steps = int(config.get("training", {}).get("rollout_steps", 18))
     with (args.root / "metadata" / "formal_manifest_v1.csv").open(newline="", encoding="utf-8") as handle:
         manifest = list(csv.DictReader(handle))
