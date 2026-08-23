@@ -676,14 +676,14 @@ def plot_paper_figure(
     # Match the original paper layout: one centered summary map at left and
     # two rows of three compact TOS/ZOS month pairs at right.  Explicit axes
     # rectangles keep the relative panel sizes stable across output DPI.
-    fig = plt.figure(figsize=(10.8, 5.4))
+    fig = plt.figure(figsize=(12.8, 5.05))
 
     def add_axis(rect: tuple[float, float, float, float]) -> plt.Axes:
         if HAS_CARTOPY:
             return fig.add_axes(rect, projection=proj)
         return fig.add_axes(rect)
 
-    ax_main = add_axis((0.025, 0.30, 0.30, 0.25))
+    ax_main = add_axis((0.025, 0.365, 0.30, 0.30))
     summary_idx = min(max(summary_month, 1), response.shape[0]) - 1
     main = contour_map(ax_main, lon, lat, plot_response[summary_idx, 0], tos_levels, TOS_CMAP, zero_contour)
     quiver_map(
@@ -705,17 +705,17 @@ def plot_paper_figure(
     x_positions = (0.355, 0.575, 0.795)
     for pos, month in enumerate(months[:6]):
         row, col = divmod(pos, 3)
-        y_tos = 0.69 if row == 0 else 0.30
-        y_zos = 0.535 if row == 0 else 0.145
-        ax_tos = add_axis((x_positions[col], y_tos, 0.18, 0.145))
-        ax_zos = add_axis((x_positions[col], y_zos, 0.18, 0.095))
+        y_tos = 0.705 if row == 0 else 0.305
+        y_zos = 0.535 if row == 0 else 0.135
+        ax_tos = add_axis((x_positions[col], y_tos, 0.18, 0.17))
+        ax_zos = add_axis((x_positions[col], y_zos, 0.18, 0.13))
         idx = month - 1
 
         tos_mappable = contour_map(ax_tos, lon, lat, plot_response[idx, 0], tos_levels, TOS_CMAP, zero_contour)
         quiver_map(ax_tos, lon, lat, plot_response[idx, 2], plot_response[idx, 3], tau_ref, arrow_stride, arrow_scale)
         add_map_features(ax_tos, show_xticks=False, show_yticks=col == 0)
         add_layer_label(ax_tos, "TOS + wind")
-        ax_tos.set_title(f"({chr(97 + panel_ord)}) Lead {month}: {labels[idx]}", y=1.02, fontsize=8.2, fontweight="bold")
+        ax_tos.set_title(f"({chr(97 + panel_ord)}) Lead {month}: {labels[idx]}", y=1.02, fontsize=7.2, fontweight="bold")
         panel_ord += 1
 
         zos_mappable = contour_map(ax_zos, lon, lat, plot_response[idx, 1], zos_levels, ZOS_CMAP, zero_contour)
@@ -733,7 +733,7 @@ def plot_paper_figure(
     suffix = f", {title_suffix}" if title_suffix else ""
     fig.suptitle(
         f"CNOP response evolution: {source} {year}, candidate rank {rank}{suffix}",
-        fontsize=10.5,
+        fontsize=9.0,
         fontweight="bold",
         y=0.985,
     )
