@@ -108,7 +108,7 @@ def parse_args() -> argparse.Namespace:
         "--domain",
         type=str,
         default="tropical_pacific",
-        choices=("tropical_pacific", "pacific", "atlantic_indian", "global"),
+        choices=("tropical_pacific", "pacific", "indian", "atlantic_indian", "global"),
     )
     parser.add_argument("--perturb-grid", type=str, default="patch", choices=("patch", "full"))
     parser.add_argument("--perturb-patch-size", type=int, default=4)
@@ -325,11 +325,20 @@ def build_domain_mask(
         lon_mask = (lon_360 >= lon_bounds[0]) & (lon_360 <= lon_bounds[1])
         region = lat_mask[:, None] & lon_mask[None, :]
     else:
-        # Transparent longitude-sector definitions keep the two basin experiments
-        # disjoint while avoiding a runtime dependency on external shapefiles.
+        # Transparent longitude-sector definitions keep the basin experiments
+        # reproducible without a runtime dependency on external shapefiles.
         lat_mask = (lat >= basin_lat_bounds[0]) & (lat <= basin_lat_bounds[1])
         pacific_lon = (lon_360 >= 120.0) & (lon_360 <= 290.0)
-        lon_mask = pacific_lon if domain == "pacific" else ~pacific_lon
+        if domain == "pacific":
+            lon_mask = pacific_lon
+        elif domain == "indian":
+            # Indian Ocean sector: 20E-120E, restricted to the common basin
+            # latitude band. This excludes the Atlantic for a clean comparison.
+            lon_mask = (lon_360 >= 20.0) & (lon_360 < 120.0)
+        else:
+            # Complement of the Pacific sector, retained for the historical
+            # Atlantic+Indian diagnostic mode.
+            lon_mask = ~pacific_lon
         region = lat_mask[:, None] & lon_mask[None, :]
 
     valid = dataset.source_payloads[case.source_idx]["valid_mask"][:2].to(device=device, dtype=torch.bool)
@@ -1395,6 +1404,7 @@ def write_method_json(output_dir: Path, args: argparse.Namespace, checkpoint: di
         "objective": "lead_delta maximizes perturbed-minus-baseline Nino3.4 at objective_lead; softmax_3m maximizes target-year 3-month mean Nino3.4 anomaly",
         "basin_mask_definition": {
             "pacific": "valid ocean, 120E-290E, within basin_lat_bounds",
+            "indian": "valid ocean, 20E-120E, within basin_lat_bounds",
             "atlantic_indian": "valid ocean outside 120E-290E, within basin_lat_bounds",
             "global": "all valid ocean cells",
         },
