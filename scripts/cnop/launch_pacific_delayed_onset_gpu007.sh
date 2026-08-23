@@ -6,7 +6,8 @@ REPO="$ROOT/repo"
 PY="$ROOT/venv313/bin/python"
 CONFIG="$REPO/configs/server_gpu006_historical_mixed5.yaml"
 CHECKPOINT="$ROOT/input/artifacts/historical_mixed5_best_skill.pt"
-OUT="$ROOT/outputs/cnop_pacific_delayed_onset_24starts_steps100_v1"
+OUT="${OUT:-$ROOT/outputs/cnop_pacific_delayed_onset_24starts_steps100_v1}"
+CANDIDATE_MAX_SIM="${CANDIDATE_MAX_SIM:-1.0}"
 MANIFEST="$OUT/metadata/formal_manifest_v1.csv"
 LOGDIR="$OUT/logs"
 mkdir -p "$LOGDIR" "$OUT/normal" "$OUT/delayed"
@@ -46,6 +47,7 @@ launch_job() {
     --lr 0.08 \
     --num-starts 12 \
     --top-k 3 \
+    --candidate-max-cosine-similarity "$CANDIDATE_MAX_SIM" \
     --seed 42 \
     --constraint-mode relative_initial_l2 \
     --relative-l2-fraction 0.03 \
