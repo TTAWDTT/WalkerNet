@@ -131,6 +131,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--forecast-climatology-cache", type=Path, default=None)
     parser.add_argument("--climatology-batch-size", type=int, default=2)
+    parser.add_argument("--no-cartopy", action="store_true", help="Disable Cartopy features for offline rendering.")
     return parser.parse_args()
 
 
@@ -738,7 +739,10 @@ def plot_paper_figure(
 
 
 def main() -> None:
+    global HAS_CARTOPY
     args = parse_args()
+    if args.no_cartopy:
+        HAS_CARTOPY = False
     set_style()
     months = parse_months(args.months)
     ranks = parse_ranks(args.candidate_ranks, args.candidate_rank)
