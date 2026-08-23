@@ -18,7 +18,7 @@ from pathlib import Path
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FormatStrFormatter
-from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.colors import LinearSegmentedColormap, Normalize
 import numpy as np
 import torch
 
@@ -58,6 +58,37 @@ MAP_BOX = (120.0, 290.0, -35.0, 35.0)
 # Match the original paper-style monthly response palette exactly.
 TOS_CMAP = "RdYlBu_r"
 ZOS_CMAP = "BrBG"
+
+
+class CenteredPowerNorm(Normalize):
+    """Symmetric nonlinear display stretch while retaining linear data ticks."""
+
+    def __init__(self, vcenter: float = 0.0, gamma: float = 1.0, **kwargs):
+        if gamma <= 0:
+            raise ValueError("gamma must be positive")
+        self.vcenter = float(vcenter)
+        self.gamma = float(gamma)
+        super().__init__(**kwargs)
+
+    def __call__(self, value, clip=None):
+        result, is_scalar = self.process_value(value)
+        data = result.data.astype(float)
+        vmin = float(self.vmin)
+        vmax = float(self.vmax)
+        if not np.isfinite(vmin) or not np.isfinite(vmax) or vmax <= vmin:
+            return np.ma.masked_invalid(result)
+        span = max(abs(vmax - self.vcenter), abs(self.vcenter - vmin), 1.0e-12)
+        centered = np.clip((data - self.vcenter) / span, -1.0, 1.0)
+        stretched = np.sign(centered) * np.power(np.abs(centered), self.gamma)
+        mapped = 0.5 * (stretched + 1.0)
+        output = np.ma.array(mapped, mask=np.ma.getmask(result), copy=False)
+        return output[0] if is_scalar else output
+
+    def inverse(self, value):
+        values = np.asarray(value, dtype=float)
+        span = max(abs(float(self.vmax) - self.vcenter), abs(self.vcenter - float(self.vmin)), 1.0e-12)
+        centered = 2.0 * values - 1.0
+        return self.vcenter + span * np.sign(centered) * np.power(np.abs(centered), 1.0 / self.gamma)
 
 
 @dataclass
@@ -101,6 +132,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--arrow-scale", type=float, default=4.5)
     parser.add_argument("--tos-vmax", type=float, default=0.0, help="0 means the old 98th-percentile response scaling.")
     parser.add_argument("--zos-vmax", type=float, default=0.0, help="0 means the old 98th-percentile response scaling.")
+    parser.add_argument("--tos-color-gamma", type=float, default=1.0, help="Centered power stretch for response-map colors; <1 increases mid-range contrast.")
+    parser.add_argument("--zos-color-gamma", type=float, default=1.0, help="Centered power stretch for response-map colors; <1 increases mid-range contrast.")
     parser.add_argument("--perturb-tos-vmax", type=float, default=0.0, help="0 means auto percentile.")
     parser.add_argument("--perturb-zos-vmax", type=float, default=0.0, help="0 means auto percentile.")
     parser.add_argument("--constraint-label", type=str, default="", help="Optional perturbation constraint label shown on perturbation figures.")
@@ -228,8 +261,11 @@ def contour_map(
     levels: np.ndarray,
     cmap: str | LinearSegmentedColormap,
     draw_zero: bool,
+    norm: Normalize | None = None,
 ):
     kwargs = {"levels": levels, "cmap": cmap, "extend": "both"}
+    if norm is not None:
+        kwargs["norm"] = norm
     if HAS_CARTOPY:
         kwargs["transform"] = ccrs.PlateCarree()
     mappable = ax.contourf(lon, lat, field, **kwargs)
@@ -656,6 +692,8 @@ def plot_paper_figure(
     arrow_scale: float,
     tos_vmax: float,
     zos_vmax: float,
+    tos_color_gamma: float,
+    zos_color_gamma: float,
     contour_levels: int,
     zero_contour: bool,
     title_suffix: str,
@@ -668,6 +706,8 @@ def plot_paper_figure(
         zos_vmax = max(float(np.nanpercentile(np.abs(plot_response[:, 1][..., view_mask]), 98)), 1.0e-6)
     tos_levels = np.linspace(-tos_vmax, tos_vmax, contour_levels)
     zos_levels = np.linspace(-zos_vmax, zos_vmax, contour_levels)
+    tos_norm = CenteredPowerNorm(vmin=-tos_vmax, vmax=tos_vmax, vcenter=0.0, gamma=tos_color_gamma)
+    zos_norm = CenteredPowerNorm(vmin=-zos_vmax, vmax=zos_vmax, vcenter=0.0, gamma=zos_color_gamma)
     tau = np.sqrt(plot_response[:, 2] ** 2 + plot_response[:, 3] ** 2)
     view_mask = (lat[:, None] >= MAP_BOX[2]) & (lat[:, None] <= MAP_BOX[3]) & (lon[None, :] >= MAP_BOX[0]) & (lon[None, :] <= MAP_BOX[1])
     tau_ref = max(float(np.nanpercentile(tau[..., view_mask], 94)), 1.0e-6)
@@ -686,7 +726,7 @@ def plot_paper_figure(
 
     ax_main = add_axis((0.008, 0.389, 0.293, 0.306))
     summary_idx = min(max(summary_month, 1), response.shape[0]) - 1
-    main = contour_map(ax_main, lon, lat, plot_response[summary_idx, 0], tos_levels, TOS_CMAP, zero_contour)
+    main = contour_map(ax_main, lon, lat, plot_response[summary_idx, 0], tos_levels, TOS_CMAP, zero_contour, tos_norm)
     quiver_map(
         ax_main,
         lon,
@@ -716,14 +756,14 @@ def plot_paper_figure(
         ax_zos = add_axis((zos_x, y_zos, zos_width, 0.129))
         idx = month - 1
 
-        tos_mappable = contour_map(ax_tos, lon, lat, plot_response[idx, 0], tos_levels, TOS_CMAP, zero_contour)
+        tos_mappable = contour_map(ax_tos, lon, lat, plot_response[idx, 0], tos_levels, TOS_CMAP, zero_contour, tos_norm)
         quiver_map(ax_tos, lon, lat, plot_response[idx, 2], plot_response[idx, 3], tau_ref, arrow_stride, arrow_scale)
         add_map_features(ax_tos, show_xticks=False, show_yticks=col == 0)
         add_layer_label(ax_tos, "TOS + wind")
         ax_tos.set_title(f"({chr(97 + panel_ord)}) Lead {month}: {labels[idx]}", y=1.02, fontsize=7.2, fontweight="bold")
         panel_ord += 1
 
-        zos_mappable = contour_map(ax_zos, lon, lat, plot_response[idx, 1], zos_levels, ZOS_CMAP, zero_contour)
+        zos_mappable = contour_map(ax_zos, lon, lat, plot_response[idx, 1], zos_levels, ZOS_CMAP, zero_contour, zos_norm)
         add_map_features(ax_zos, show_xticks=row == 1, show_yticks=col == 0)
         add_layer_label(ax_zos, "ZOS")
 
@@ -867,6 +907,8 @@ def main() -> None:
                 args.arrow_scale,
                 args.tos_vmax,
                 args.zos_vmax,
+                args.tos_color_gamma,
+                args.zos_color_gamma,
                 args.contour_levels,
                 args.zero_contour,
                 args.title_suffix,
