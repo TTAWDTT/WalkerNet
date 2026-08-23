@@ -17,13 +17,13 @@
 3. Launch at most eight concurrent jobs on genuinely idle GPU007 L20X devices; schedule 20 jobs total (10 normal + 10 delayed) and preserve per-job logs/PIDs.
 4. Audit all 20 summaries and candidate files before plotting.
 5. Replay the retained top-3 perturbations and create one six-panel candidate figure per case: normal rank 1–3 on the first row, delayed rank 1–3 on the second; each candidate contains TOS/ZOS at leads 2, 4, 6, 8, 10, 12 with shared scales and labels.
-6. Copy the final figures and audit metadata to `docs/assets/cnop_pacific_delayed_onset_24starts_steps100_v1/` and update the TODO.
+6. Copy the final figures and audit metadata to `docs/assets/cnop_pacific_delayed_onset_24starts_steps100_v2_top3/` and update the TODO.
 
 ## Storage
 
-- Remote results: `/data/WalkerNet/outputs/cnop_pacific_delayed_onset_24starts_steps100_v1/`.
+- Remote results: `/data/WalkerNet/outputs/cnop_pacific_delayed_onset_24starts_steps100_v2_top3/` (the original v1 run is retained for provenance).
 - Remote code: `/data/WalkerNet/repo` at the delayed-objective branch/commit.
-- Local figures and audit bundle: `docs/assets/cnop_pacific_delayed_onset_24starts_steps100_v1/`.
+- Local figures and audit bundle: `docs/assets/cnop_pacific_delayed_onset_24starts_steps100_v2_top3/`.
 
 ## Stop/continue criteria
 
