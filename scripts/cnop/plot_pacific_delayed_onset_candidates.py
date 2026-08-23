@@ -9,9 +9,11 @@ import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 import numpy as np
 import torch
 from matplotlib.colors import TwoSlopeNorm
+from scipy.ndimage import gaussian_filter
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -26,6 +28,89 @@ from scripts.cnop.compute_tos_zos_cnop import (  # noqa: E402
 from src.dataset import WalkerDataset  # noqa: E402
 from src.model import WalkerNet  # noqa: E402
 from src.utils import load_config  # noqa: E402
+
+MAP_BOX = (100.0, 300.0, -35.0, 35.0)
+NINO34_BOX = (190.0, 240.0, -5.0, 5.0)
+
+
+def smooth_field(field: np.ndarray, sigma: float) -> np.ndarray:
+    return gaussian_filter(np.asarray(field, dtype=np.float32), sigma=sigma, mode="nearest")
+
+
+def draw_legacy_field(ax: plt.Axes, lon: np.ndarray, lat: np.ndarray, field: np.ndarray, levels: np.ndarray, cmap: str) -> mpl.contour.QuadContourSet:
+    mesh = ax.contourf(lon, lat, field, levels=levels, cmap=cmap, extend="both")
+    ax.contour(lon, lat, field, levels=[0.0], colors="#263238", linewidths=0.28, alpha=0.52)
+    ax.set_xlim(MAP_BOX[:2])
+    ax.set_ylim(MAP_BOX[2:])
+    ax.set_xticks(np.linspace(MAP_BOX[0], MAP_BOX[1], 7))
+    ax.set_yticks([-30, -10, 10, 30])
+    ax.grid(color="#9AA3AF", alpha=0.28, linewidth=0.4)
+    ax.plot(
+        [NINO34_BOX[0], NINO34_BOX[1], NINO34_BOX[1], NINO34_BOX[0], NINO34_BOX[0]],
+        [NINO34_BOX[2], NINO34_BOX[2], NINO34_BOX[3], NINO34_BOX[3], NINO34_BOX[2]],
+        color="#007C78", linewidth=0.8,
+    )
+    return mesh
+
+
+def style_legacy_axis(ax: plt.Axes, show_x: bool, show_y: bool) -> None:
+    labels = ["150E", "180", "150W", "120W", "90W", "60W", "30W"]
+    ax.set_xticklabels(labels if show_x else [])
+    ax.set_yticklabels(["30S", "10S", "10N", "30N"] if show_y else [])
+    ax.tick_params(length=2, pad=1)
+
+
+def plot_legacy_candidate(
+    response: np.ndarray,
+    lat: np.ndarray,
+    lon: np.ndarray,
+    output: Path,
+    source: str,
+    year: int,
+    branch: str,
+    rank: int,
+    lead_delta: float,
+    tos_vmax: float,
+    zos_vmax: float,
+    dpi: int = 220,
+) -> None:
+    tos_levels = np.linspace(-tos_vmax, tos_vmax, 23)
+    zos_levels = np.linspace(-zos_vmax, zos_vmax, 23)
+    response = np.asarray(response, dtype=np.float32)
+    fig = plt.figure(figsize=(12.0, 4.7467))
+    ax_main = fig.add_axes((0.008, 0.389, 0.293, 0.306))
+    tos_mesh = draw_legacy_field(ax_main, lon, lat, smooth_field(response[11, 0], 3.0), tos_levels, "RdYlBu_r")
+    style_legacy_axis(ax_main, show_x=True, show_y=True)
+    ax_main.set_title("(a) Lead 12: TOS response", y=1.025, fontweight="bold")
+    ax_main.text(0.02, 0.92, "TOS", transform=ax_main.transAxes, fontsize=6.4, fontweight="bold", va="top")
+    zos_mesh = None
+    for order, lead in enumerate((2, 4, 6, 8, 10, 12), start=1):
+        row, col = divmod(order - 1, 3)
+        xpos = (0.338, 0.558, 0.778)[col]
+        y_tos = 0.729 if row == 0 else 0.314
+        y_zos = 0.596 if row == 0 else 0.189
+        tos_ax = fig.add_axes((xpos, y_tos, 0.182, 0.191))
+        zos_ax = fig.add_axes((xpos + 0.0285, y_zos, 0.125, 0.129))
+        idx = lead - 1
+        draw_legacy_field(tos_ax, lon, lat, smooth_field(response[idx, 0], 3.0), tos_levels, "RdYlBu_r")
+        style_legacy_axis(tos_ax, show_x=False, show_y=col == 0)
+        tos_ax.text(0.02, 0.92, "TOS", transform=tos_ax.transAxes, fontsize=6.4, fontweight="bold", va="top")
+        tos_ax.set_title(f"({chr(97 + order)}) Lead {lead}", y=1.02, fontsize=7.2, fontweight="bold")
+        zos_mesh = draw_legacy_field(zos_ax, lon, lat, smooth_field(response[idx, 1], 4.0), zos_levels, "BrBG")
+        style_legacy_axis(zos_ax, show_x=row == 1, show_y=col == 0)
+        zos_ax.text(0.02, 0.92, "ZOS", transform=zos_ax.transAxes, fontsize=6.4, fontweight="bold", va="top")
+    assert zos_mesh is not None
+    tos_bar = fig.colorbar(tos_mesh, cax=fig.add_axes((0.098, 0.078, 0.268, 0.022)), orientation="horizontal")
+    tos_bar.set_label("TOS response (degC)")
+    tos_bar.set_ticks(np.linspace(-tos_vmax, tos_vmax, 7))
+    zos_bar = fig.colorbar(zos_mesh, cax=fig.add_axes((0.500, 0.078, 0.345, 0.022)), orientation="horizontal")
+    zos_bar.set_label("ZOS response")
+    zos_bar.set_ticks(np.linspace(-zos_vmax, zos_vmax, 7))
+    fig.text(0.86, 0.063, f"{branch} rank-{rank} | lead12 ΔNiño={lead_delta:+.2f}", fontsize=7.2, color="#263238")
+    fig.suptitle(f"CNOP response evolution: {source} {year}, {branch} candidate rank {rank}", fontsize=12.0, fontweight="bold", y=0.985)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output, dpi=dpi)
+    plt.close(fig)
 
 
 def rollout_fields(model: WalkerNet, x0: torch.Tensor, dataset: WalkerDataset, case: object, horizon: int, trained_steps: int) -> torch.Tensor:
@@ -104,10 +189,22 @@ def main() -> None:
             artifact_path = args.root / branch / key / f"case_{key}.npz"
             branch_data[branch] = load_case_response(model, dataset, case, artifact_path, device, std, trained_steps)
         all_response = np.concatenate([branch_data["normal"][0], branch_data["delayed"][0]], axis=0)
-        tos_vmax = max(0.6, float(np.nanpercentile(np.abs(all_response[:, :, 0]), 99.5)))
-        zos_vmax = max(0.8, float(np.nanpercentile(np.abs(all_response[:, :, 1]), 99.5)))
+        tos_vmax = max(0.8, float(np.nanpercentile(np.abs(all_response[:, :, 0]), 99.5)))
+        zos_vmax = max(0.03, float(np.nanpercentile(np.abs(all_response[:, :, 1]), 99.5)))
         tos_vmax = min(tos_vmax, 1.2)
-        zos_vmax = min(zos_vmax, 2.0)
+        zos_vmax = min(zos_vmax, 0.10)
+        # Re-render every retained candidate with the established paper-style
+        # response-evolution layer (wide TOS panel + six TOS/ZOS lead pairs).
+        legacy_dir = args.output_dir / "legacy_response_evolution"
+        for branch in ("normal", "delayed"):
+            responses, starts, lead_delta, _baseline_nino, lat, lon = branch_data[branch]
+            for rank in range(3):
+                plot_legacy_candidate(
+                    responses[rank], lat, lon,
+                    legacy_dir / f"response_evolution_{branch}_rank{rank + 1}_{key}.png",
+                    source, year, branch, rank + 1, float(lead_delta[rank]),
+                    tos_vmax, zos_vmax,
+                )
         fig = plt.figure(figsize=(24, 10), constrained_layout=False)
         outer = fig.add_gridspec(2, 3, left=0.025, right=0.93, bottom=0.065, top=0.93, wspace=0.04, hspace=0.13)
         leads = [1, 3, 5, 7, 9, 11]
