@@ -50,9 +50,9 @@ launch_job() {
     --constraint-mode relative_initial_l2 \
     --relative-l2-fraction 0.03 \
     --domain pacific \
-    --basin-lat-bounds -60,60 \
-    --lat-bounds -20,20 \
-    --lon-bounds 120,290 \
+    --basin-lat-bounds=-60,60 \
+    --lat-bounds=-20,20 \
+    --lon-bounds=120,290 \
     --objective-mode "$mode" \
     --objective-lead 12 \
     --delay-early-leads 3 \
