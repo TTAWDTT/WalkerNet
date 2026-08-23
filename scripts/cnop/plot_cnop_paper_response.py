@@ -18,7 +18,7 @@ from pathlib import Path
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FormatStrFormatter
-from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.colors import LinearSegmentedColormap, Normalize
 import numpy as np
 import torch
 
@@ -38,6 +38,10 @@ from scripts.cnop.plot_cnop_monthly_response import (  # noqa: E402
     rollout_fields,
     smooth_field,
 )
+from scripts.cnop.forecast_field_climatology import (  # noqa: E402
+    load_or_compute_forecast_field_climatology,
+    monthly_observed_field_climatology,
+)
 from src.dataset import WalkerDataset  # noqa: E402
 from src.utils import load_config  # noqa: E402
 
@@ -51,16 +55,40 @@ except Exception:  # pragma: no cover - optional plotting dependency
 
 
 MAP_BOX = (120.0, 290.0, -35.0, 35.0)
-TOS_CMAP = LinearSegmentedColormap.from_list(
-    "soft_tos_response",
-    ["#4B56A6", "#8FC7D9", "#F7F3D0", "#F0A35A", "#B61732"],
-    N=256,
-)
-ZOS_CMAP = LinearSegmentedColormap.from_list(
-    "soft_zos_response",
-    ["#7B4A12", "#D2A450", "#F5F2E6", "#78C5BD", "#006B61"],
-    N=256,
-)
+# Match the original paper-style monthly response palette exactly.
+TOS_CMAP = "RdYlBu_r"
+ZOS_CMAP = "BrBG"
+
+
+class CenteredPowerNorm(Normalize):
+    """Symmetric nonlinear display stretch while retaining linear data ticks."""
+
+    def __init__(self, vcenter: float = 0.0, gamma: float = 1.0, **kwargs):
+        if gamma <= 0:
+            raise ValueError("gamma must be positive")
+        self.vcenter = float(vcenter)
+        self.gamma = float(gamma)
+        super().__init__(**kwargs)
+
+    def __call__(self, value, clip=None):
+        result, is_scalar = self.process_value(value)
+        data = result.data.astype(float)
+        vmin = float(self.vmin)
+        vmax = float(self.vmax)
+        if not np.isfinite(vmin) or not np.isfinite(vmax) or vmax <= vmin:
+            return np.ma.masked_invalid(result)
+        span = max(abs(vmax - self.vcenter), abs(self.vcenter - vmin), 1.0e-12)
+        centered = np.clip((data - self.vcenter) / span, -1.0, 1.0)
+        stretched = np.sign(centered) * np.power(np.abs(centered), self.gamma)
+        mapped = 0.5 * (stretched + 1.0)
+        output = np.ma.array(mapped, mask=np.ma.getmask(result), copy=False)
+        return output[0] if is_scalar else output
+
+    def inverse(self, value):
+        values = np.asarray(value, dtype=float)
+        span = max(abs(float(self.vmax) - self.vcenter), abs(self.vcenter - float(self.vmin)), 1.0e-12)
+        centered = 2.0 * values - 1.0
+        return self.vcenter + span * np.sign(centered) * np.power(np.abs(centered), 1.0 / self.gamma)
 
 
 @dataclass
@@ -72,6 +100,9 @@ class CaseProducts:
     baseline: np.ndarray
     perturbed: np.ndarray
     response: np.ndarray
+    observed_field_climatology: np.ndarray
+    source_idx: int
+    target_months: np.ndarray
     lat: np.ndarray
     lon: np.ndarray
     labels: list[str]
@@ -99,8 +130,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vector-sigma", type=float, default=4.0)
     parser.add_argument("--arrow-stride", type=int, default=9)
     parser.add_argument("--arrow-scale", type=float, default=4.5)
-    parser.add_argument("--tos-vmax", type=float, default=2.6)
-    parser.add_argument("--zos-vmax", type=float, default=0.08)
+    parser.add_argument("--tos-vmax", type=float, default=0.0, help="0 means the old 98th-percentile response scaling.")
+    parser.add_argument("--zos-vmax", type=float, default=0.0, help="0 means the old 98th-percentile response scaling.")
+    parser.add_argument("--tos-color-gamma", type=float, default=1.0, help="Centered power stretch for response-map colors; <1 increases mid-range contrast.")
+    parser.add_argument("--zos-color-gamma", type=float, default=1.0, help="Centered power stretch for response-map colors; <1 increases mid-range contrast.")
     parser.add_argument("--perturb-tos-vmax", type=float, default=0.0, help="0 means auto percentile.")
     parser.add_argument("--perturb-zos-vmax", type=float, default=0.0, help="0 means auto percentile.")
     parser.add_argument("--constraint-label", type=str, default="", help="Optional perturbation constraint label shown on perturbation figures.")
@@ -111,6 +144,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-perturbation", action="store_true")
     parser.add_argument("--skip-comparison", action="store_true")
     parser.add_argument("--skip-multi-perturbation", action="store_true")
+    parser.add_argument(
+        "--comparison-anomaly",
+        action="store_true",
+        help="Plot truth and forecasts as anomalies in their respective observed/model climatological worlds.",
+    )
+    parser.add_argument(
+        "--forecast-climatology",
+        choices=("train", "split", "all"),
+        default="train",
+        help="Reference period for the lead/month-specific model forecast climatology.",
+    )
+    parser.add_argument("--forecast-climatology-cache", type=Path, default=None)
+    parser.add_argument("--climatology-batch-size", type=int, default=2)
+    parser.add_argument("--no-cartopy", action="store_true", help="Disable Cartopy features for offline rendering.")
+    parser.add_argument("--title-suffix", default="", help="Optional text appended to the response-evolution title.")
     return parser.parse_args()
 
 
@@ -211,10 +259,13 @@ def contour_map(
     lat: np.ndarray,
     field: np.ndarray,
     levels: np.ndarray,
-    cmap: LinearSegmentedColormap,
+    cmap: str | LinearSegmentedColormap,
     draw_zero: bool,
+    norm: Normalize | None = None,
 ):
     kwargs = {"levels": levels, "cmap": cmap, "extend": "both"}
+    if norm is not None:
+        kwargs["norm"] = norm
     if HAS_CARTOPY:
         kwargs["transform"] = ccrs.PlateCarree()
     mappable = ax.contourf(lon, lat, field, **kwargs)
@@ -313,12 +364,17 @@ def build_case_products(
     lat = np.asarray(payload["lat"], dtype=np.float64)
     lon = np.asarray(payload["lon"], dtype=np.float64)
     labels = month_labels(case, dataset, horizon)
+    target_months = np.asarray(payload["months"][case.target_t : case.target_t + horizon], dtype=np.int64)
+    observed_field_climatology = monthly_observed_field_climatology(dataset, case.source_idx, target_months)
     return CaseProducts(
         perturbation=perturbation,
         truth=truth,
         baseline=baseline.numpy(),
         perturbed=perturbed.numpy(),
         response=response,
+        observed_field_climatology=observed_field_climatology,
+        source_idx=case.source_idx,
+        target_months=target_months,
         lat=lat,
         lon=lon,
         labels=labels,
@@ -491,6 +547,9 @@ def plot_comparison_figure(
     baseline: np.ndarray,
     perturbed: np.ndarray,
     response: np.ndarray,
+    observed_field_climatology: np.ndarray,
+    forecast_field_climatology: np.ndarray | None,
+    target_months: np.ndarray,
     lat: np.ndarray,
     lon: np.ndarray,
     labels: list[str],
@@ -505,19 +564,40 @@ def plot_comparison_figure(
     zos_vmax: float,
     contour_levels: int,
     zero_contour: bool,
+    comparison_anomaly: bool,
 ) -> Path:
     """画真值、baseline、叠加扰动后预测、二者差值，明确展示对比链条。"""
 
     idx = min(max(lead, 1), baseline.shape[0]) - 1
-    obs = np.stack([smooth_field(truth[idx, 0], smooth_sigma), smooth_field(truth[idx, 1], smooth_sigma)])
-    base = np.stack([smooth_field(baseline[idx, 0], smooth_sigma), smooth_field(baseline[idx, 1], smooth_sigma)])
-    pert = np.stack([smooth_field(perturbed[idx, 0], smooth_sigma), smooth_field(perturbed[idx, 1], smooth_sigma)])
+    obs_fields = truth[idx, :2].copy()
+    base_fields = baseline[idx, :2].copy()
+    pert_fields = perturbed[idx, :2].copy()
+    if comparison_anomaly:
+        if forecast_field_climatology is None:
+            raise ValueError("forecast_field_climatology is required when --comparison-anomaly is set")
+        month = int(target_months[idx])
+        observed_climatology = observed_field_climatology[idx, :2]
+        model_climatology = forecast_field_climatology[idx, month, :2]
+        if not np.isfinite(model_climatology).all():
+            raise ValueError(f"No model forecast climatology for lead={lead}, month={month}")
+        obs_fields -= observed_climatology
+        base_fields -= model_climatology
+        pert_fields -= model_climatology
+    obs = np.stack([smooth_field(obs_fields[0], smooth_sigma), smooth_field(obs_fields[1], smooth_sigma)])
+    base = np.stack([smooth_field(base_fields[0], smooth_sigma), smooth_field(base_fields[1], smooth_sigma)])
+    pert = np.stack([smooth_field(pert_fields[0], smooth_sigma), smooth_field(pert_fields[1], smooth_sigma)])
     diff = np.stack([smooth_field(response[idx, 0], smooth_sigma), smooth_field(response[idx, 1], smooth_sigma)])
 
-    tos_abs_min = float(np.nanpercentile(np.stack([obs[0], base[0], pert[0]]), 2))
-    tos_abs_max = float(np.nanpercentile(np.stack([obs[0], base[0], pert[0]]), 98))
-    zos_abs_min = float(np.nanpercentile(np.stack([obs[1], base[1], pert[1]]), 2))
-    zos_abs_max = float(np.nanpercentile(np.stack([obs[1], base[1], pert[1]]), 98))
+    if comparison_anomaly:
+        tos_abs_max = symmetric_vmax(np.stack([obs[0], base[0], pert[0]]), 0.0)
+        zos_abs_max = symmetric_vmax(np.stack([obs[1], base[1], pert[1]]), 0.0)
+        tos_abs_min = -tos_abs_max
+        zos_abs_min = -zos_abs_max
+    else:
+        tos_abs_min = float(np.nanpercentile(np.stack([obs[0], base[0], pert[0]]), 2))
+        tos_abs_max = float(np.nanpercentile(np.stack([obs[0], base[0], pert[0]]), 98))
+        zos_abs_min = float(np.nanpercentile(np.stack([obs[1], base[1], pert[1]]), 2))
+        zos_abs_max = float(np.nanpercentile(np.stack([obs[1], base[1], pert[1]]), 98))
     tos_abs_levels = np.linspace(tos_abs_min, tos_abs_max, contour_levels)
     zos_abs_levels = np.linspace(zos_abs_min, zos_abs_max, contour_levels)
     tos_diff_levels = np.linspace(-tos_vmax, tos_vmax, contour_levels)
@@ -526,26 +606,32 @@ def plot_comparison_figure(
     proj = projection()
     fig = plt.figure(figsize=(15.6, 5.6))
     gs = fig.add_gridspec(2, 4, wspace=0.08, hspace=0.16)
-    col_titles = ("Observed truth", "Baseline forecast", "CNOP-perturbed forecast", "Difference")
+    prefix = "anomaly" if comparison_anomaly else ""
+    col_titles = (
+        f"Observed truth {prefix}".strip(),
+        f"Baseline forecast {prefix}".strip(),
+        f"CNOP-perturbed forecast {prefix}".strip(),
+        "Difference",
+    )
     row_labels = ("TOS", "ZOS")
     mappables: list[object] = []
     for row in range(2):
         for col in range(4):
             ax = fig.add_subplot(gs[row, col], projection=proj) if HAS_CARTOPY else fig.add_subplot(gs[row, col])
             if row == 0 and col == 0:
-                m = plain_contour_map(ax, lon, lat, obs[0], tos_abs_levels, "Spectral_r")
+                m = plain_contour_map(ax, lon, lat, obs[0], tos_abs_levels, "RdBu_r" if comparison_anomaly else "Spectral_r")
             elif row == 0 and col == 1:
-                m = plain_contour_map(ax, lon, lat, base[0], tos_abs_levels, "Spectral_r")
+                m = plain_contour_map(ax, lon, lat, base[0], tos_abs_levels, "RdBu_r" if comparison_anomaly else "Spectral_r")
             elif row == 0 and col == 2:
-                m = plain_contour_map(ax, lon, lat, pert[0], tos_abs_levels, "Spectral_r")
+                m = plain_contour_map(ax, lon, lat, pert[0], tos_abs_levels, "RdBu_r" if comparison_anomaly else "Spectral_r")
             elif row == 0 and col == 3:
                 m = contour_map(ax, lon, lat, diff[0], tos_diff_levels, TOS_CMAP, zero_contour)
             elif row == 1 and col == 0:
-                m = plain_contour_map(ax, lon, lat, obs[1], zos_abs_levels, "viridis")
+                m = plain_contour_map(ax, lon, lat, obs[1], zos_abs_levels, "BrBG" if comparison_anomaly else "viridis")
             elif row == 1 and col == 1:
-                m = plain_contour_map(ax, lon, lat, base[1], zos_abs_levels, "viridis")
+                m = plain_contour_map(ax, lon, lat, base[1], zos_abs_levels, "BrBG" if comparison_anomaly else "viridis")
             elif row == 1 and col == 2:
-                m = plain_contour_map(ax, lon, lat, pert[1], zos_abs_levels, "viridis")
+                m = plain_contour_map(ax, lon, lat, pert[1], zos_abs_levels, "BrBG" if comparison_anomaly else "viridis")
             else:
                 m = contour_map(ax, lon, lat, diff[1], zos_diff_levels, ZOS_CMAP, zero_contour)
             mappables.append(m)
@@ -562,10 +648,10 @@ def plot_comparison_figure(
     ]
     cb_abs_tos = fig.colorbar(mappables[0], cax=caxes[0], orientation="horizontal")
     cb_abs_tos.ax.xaxis.set_major_formatter(FormatStrFormatter("%.1f"))
-    cb_abs_tos.set_label("absolute TOS")
+    cb_abs_tos.set_label("TOS anomaly" if comparison_anomaly else "absolute TOS")
     cb_abs_zos = fig.colorbar(mappables[4], cax=caxes[1], orientation="horizontal")
     cb_abs_zos.ax.xaxis.set_major_formatter(FormatStrFormatter("%.2f"))
-    cb_abs_zos.set_label("absolute ZOS")
+    cb_abs_zos.set_label("ZOS anomaly" if comparison_anomaly else "absolute ZOS")
     cb_diff_tos = fig.colorbar(mappables[3], cax=caxes[2], orientation="horizontal")
     cb_diff_tos.ax.xaxis.set_major_formatter(FormatStrFormatter("%.2f"))
     cb_diff_tos.set_label("TOS difference")
@@ -606,23 +692,41 @@ def plot_paper_figure(
     arrow_scale: float,
     tos_vmax: float,
     zos_vmax: float,
+    tos_color_gamma: float,
+    zos_color_gamma: float,
     contour_levels: int,
     zero_contour: bool,
+    title_suffix: str,
 ) -> Path:
     plot_response = lowpass_response(response, smooth_sigma, vector_sigma)
+    view_mask = (lat[:, None] >= MAP_BOX[2]) & (lat[:, None] <= MAP_BOX[3]) & (lon[None, :] >= MAP_BOX[0]) & (lon[None, :] <= MAP_BOX[1])
+    if tos_vmax <= 0:
+        tos_vmax = max(float(np.nanpercentile(np.abs(plot_response[:, 0][..., view_mask]), 98)), 1.0e-6)
+    if zos_vmax <= 0:
+        zos_vmax = max(float(np.nanpercentile(np.abs(plot_response[:, 1][..., view_mask]), 98)), 1.0e-6)
     tos_levels = np.linspace(-tos_vmax, tos_vmax, contour_levels)
     zos_levels = np.linspace(-zos_vmax, zos_vmax, contour_levels)
+    tos_norm = CenteredPowerNorm(vmin=-tos_vmax, vmax=tos_vmax, vcenter=0.0, gamma=tos_color_gamma)
+    zos_norm = CenteredPowerNorm(vmin=-zos_vmax, vmax=zos_vmax, vcenter=0.0, gamma=zos_color_gamma)
     tau = np.sqrt(plot_response[:, 2] ** 2 + plot_response[:, 3] ** 2)
     view_mask = (lat[:, None] >= MAP_BOX[2]) & (lat[:, None] <= MAP_BOX[3]) & (lon[None, :] >= MAP_BOX[0]) & (lon[None, :] <= MAP_BOX[1])
     tau_ref = max(float(np.nanpercentile(tau[..., view_mask], 94)), 1.0e-6)
 
     proj = projection()
-    fig = plt.figure(figsize=(15.5, 6.05))
-    outer = fig.add_gridspec(2, 4, width_ratios=(1.45, 1.0, 1.0, 1.0), wspace=0.13, hspace=0.28)
+    # Match the original paper layout: one centered summary map at left and
+    # two rows of three compact TOS/ZOS month pairs at right.  Explicit axes
+    # rectangles keep the relative panel sizes stable across output DPI.
+    # Reference delivery is 1800 x 712 px (12 x 4.7467 in at 150 dpi).
+    fig = plt.figure(figsize=(12.0, 4.7467))
 
-    ax_main = fig.add_subplot(outer[:, 0], projection=proj) if HAS_CARTOPY else fig.add_subplot(outer[:, 0])
+    def add_axis(rect: tuple[float, float, float, float]) -> plt.Axes:
+        if HAS_CARTOPY:
+            return fig.add_axes(rect, projection=proj)
+        return fig.add_axes(rect)
+
+    ax_main = add_axis((0.008, 0.389, 0.293, 0.306))
     summary_idx = min(max(summary_month, 1), response.shape[0]) - 1
-    main = contour_map(ax_main, lon, lat, plot_response[summary_idx, 0], tos_levels, TOS_CMAP, zero_contour)
+    main = contour_map(ax_main, lon, lat, plot_response[summary_idx, 0], tos_levels, TOS_CMAP, zero_contour, tos_norm)
     quiver_map(
         ax_main,
         lon,
@@ -636,58 +740,94 @@ def plot_paper_figure(
     add_map_features(ax_main, show_xticks=True, show_yticks=True)
     ax_main.set_title(f"(a) Lead {summary_month}: {labels[summary_idx]} TOS + wind response", y=1.025, fontweight="bold")
 
-    right_axes: list[plt.Axes] = []
     tos_mappable = main
     zos_mappable = None
     panel_ord = 1
+    x_positions = (0.338, 0.558, 0.778)
     for pos, month in enumerate(months[:6]):
         row, col = divmod(pos, 3)
-        cell = outer[row, col + 1].subgridspec(2, 1, height_ratios=(1.0, 0.68), hspace=0.04)
-        ax_tos = fig.add_subplot(cell[0, 0], projection=proj) if HAS_CARTOPY else fig.add_subplot(cell[0, 0])
-        ax_zos = fig.add_subplot(cell[1, 0], projection=proj) if HAS_CARTOPY else fig.add_subplot(cell[1, 0], sharex=ax_tos)
-        right_axes.extend([ax_tos, ax_zos])
+        y_tos = 0.729 if row == 0 else 0.314
+        y_zos = 0.596 if row == 0 else 0.189
+        ax_tos = add_axis((x_positions[col], y_tos, 0.182, 0.191))
+        # The legacy figure uses a narrower, centered ZOS map beneath each
+        # TOS panel (about 69% of the TOS width).
+        zos_width = 0.125
+        zos_x = x_positions[col] + (0.182 - zos_width) / 2.0
+        ax_zos = add_axis((zos_x, y_zos, zos_width, 0.129))
         idx = month - 1
 
-        tos_mappable = contour_map(ax_tos, lon, lat, plot_response[idx, 0], tos_levels, TOS_CMAP, zero_contour)
+        tos_mappable = contour_map(ax_tos, lon, lat, plot_response[idx, 0], tos_levels, TOS_CMAP, zero_contour, tos_norm)
         quiver_map(ax_tos, lon, lat, plot_response[idx, 2], plot_response[idx, 3], tau_ref, arrow_stride, arrow_scale)
         add_map_features(ax_tos, show_xticks=False, show_yticks=col == 0)
         add_layer_label(ax_tos, "TOS + wind")
-        ax_tos.set_title(f"({chr(97 + panel_ord)}) Lead {month}: {labels[idx]}", y=1.02, fontweight="bold")
+        ax_tos.set_title(f"({chr(97 + panel_ord)}) Lead {month}: {labels[idx]}", y=1.02, fontsize=7.2, fontweight="bold")
         panel_ord += 1
 
-        zos_mappable = contour_map(ax_zos, lon, lat, plot_response[idx, 1], zos_levels, ZOS_CMAP, zero_contour)
+        zos_mappable = contour_map(ax_zos, lon, lat, plot_response[idx, 1], zos_levels, ZOS_CMAP, zero_contour, zos_norm)
         add_map_features(ax_zos, show_xticks=row == 1, show_yticks=col == 0)
         add_layer_label(ax_zos, "ZOS")
 
-    cax_tos = fig.add_axes([0.11, 0.08, 0.26, 0.022])
-    cax_zos = fig.add_axes([0.50, 0.08, 0.34, 0.022])
+    cax_tos = fig.add_axes([0.098, 0.078, 0.268, 0.022])
+    cax_zos = fig.add_axes([0.500, 0.078, 0.345, 0.022])
     cb1 = fig.colorbar(tos_mappable, cax=cax_tos, orientation="horizontal")
     cb1.set_label("TOS response")
+    cb1.set_ticks(np.linspace(-tos_vmax, tos_vmax, 7))
     cb2 = fig.colorbar(zos_mappable, cax=cax_zos, orientation="horizontal")
     cb2.set_label("ZOS response")
-    fig.text(0.86, 0.087, "vectors: wind stress response", fontsize=7.5, color="#263238")
+    cb2.set_ticks(np.linspace(-zos_vmax, zos_vmax, 7))
+    fig.text(0.86, 0.063, "vectors: wind stress response", fontsize=7.2, color="#263238")
 
+    suffix = f", {title_suffix}" if title_suffix else ""
     fig.suptitle(
-        f"CNOP response evolution: {source} {year}, candidate rank {rank}",
-        fontsize=12,
+        f"CNOP response evolution: {source} {year}, candidate rank {rank}{suffix}",
+        fontsize=12.0,
         fontweight="bold",
-        y=0.97,
+        y=0.985,
     )
-    fig.subplots_adjust(left=0.04, right=0.99, top=0.90, bottom=0.17)
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / f"cnop_paper_response_{source}_{year}_rank{rank}.png"
-    fig.savefig(path, dpi=dpi)
-    fig.savefig(path.with_suffix(".pdf"), dpi=dpi)
+    fig.savefig(path, dpi=dpi, bbox_inches=None)
+    fig.savefig(path.with_suffix(".pdf"), dpi=dpi, bbox_inches=None)
     plt.close(fig)
     return path
 
 
 def main() -> None:
+    global HAS_CARTOPY
     args = parse_args()
+    if args.no_cartopy:
+        HAS_CARTOPY = False
     set_style()
     months = parse_months(args.months)
     ranks = parse_ranks(args.candidate_ranks, args.candidate_rank)
     output_dir = args.output_dir or args.cnop_dir / "figures"
+    forecast_climatology_by_source: dict[int, np.ndarray] = {}
+    if args.comparison_anomaly and not args.skip_comparison:
+        if not args.case_source:
+            raise ValueError("--case-source is required with --comparison-anomaly")
+        device = torch.device(args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu")
+        config = load_config(args.config)
+        dataset = WalkerDataset(config["data"]["path"], config, split=args.split)
+        model, _checkpoint = load_model(config, args.checkpoint, device)
+        source_idx = dataset.source_names.index(args.case_source)
+        cache_path = args.forecast_climatology_cache
+        if cache_path is None:
+            cache_path = args.cnop_dir / f"forecast_field_climatology_{args.forecast_climatology}_h{args.horizon}.npz"
+        forecast_climatology_by_source = load_or_compute_forecast_field_climatology(
+            model,
+            dataset,
+            [source_idx],
+            args.horizon,
+            int(args.trained_rollout_steps or config.get("training", {}).get("rollout_steps", args.horizon)),
+            device,
+            args.forecast_climatology,
+            args.split,
+            args.climatology_batch_size,
+            cache_path,
+        )
+        del model, dataset
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
     products_by_rank: list[tuple[int, CaseProducts]] = []
     for rank in ranks:
         products = build_case_products(
@@ -703,6 +843,7 @@ def main() -> None:
             args.trained_rollout_steps,
         )
         products_by_rank.append((rank, products))
+        forecast_field_climatology = forecast_climatology_by_source.get(products.source_idx)
         if not args.skip_perturbation:
             path = plot_perturbation_figure(
                 products.perturbation,
@@ -727,6 +868,9 @@ def main() -> None:
                 products.baseline,
                 products.perturbed,
                 products.response,
+                products.observed_field_climatology,
+                forecast_field_climatology,
+                products.target_months,
                 products.lat,
                 products.lon,
                 products.labels,
@@ -741,6 +885,7 @@ def main() -> None:
                 args.zos_vmax,
                 args.contour_levels,
                 args.zero_contour,
+                args.comparison_anomaly,
             )
             print(f"wrote {path}")
         if not args.skip_response:
@@ -762,8 +907,11 @@ def main() -> None:
                 args.arrow_scale,
                 args.tos_vmax,
                 args.zos_vmax,
+                args.tos_color_gamma,
+                args.zos_color_gamma,
                 args.contour_levels,
                 args.zero_contour,
+                args.title_suffix,
             )
             print(f"wrote {path}")
     if len(products_by_rank) > 1 and not args.skip_perturbation and not args.skip_multi_perturbation:

@@ -49,6 +49,17 @@ def test_global_mask_contains_both_basin_masks() -> None:
     assert torch.all(global_mask | ~remote)
 
 
+def test_indian_mask_is_distinct_from_pacific_and_excludes_atlantic() -> None:
+    dataset = _DatasetStub()
+    indian = build_domain_mask(dataset, CASE, "indian", (-60, 60), (120, 290), torch.device("cpu"))
+    pacific = build_domain_mask(dataset, CASE, "pacific", (-60, 60), (120, 290), torch.device("cpu"))
+
+    assert indian[0, 0, 2, 1]  # 100E
+    assert not indian[0, 0, 2, 0]  # 0E, Atlantic sector
+    assert not indian[0, 0, 2, 2]  # 120E belongs to neither Indian interval endpoint
+    assert not torch.any(indian & pacific)
+
+
 def test_late_three_month_objective_uses_leads_10_to_12() -> None:
     forecast = torch.arange(1.0, 13.0)
     baseline = torch.zeros(12)
