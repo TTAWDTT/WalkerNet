@@ -709,7 +709,11 @@ def plot_paper_figure(
         y_tos = 0.729 if row == 0 else 0.314
         y_zos = 0.596 if row == 0 else 0.189
         ax_tos = add_axis((x_positions[col], y_tos, 0.182, 0.191))
-        ax_zos = add_axis((x_positions[col], y_zos, 0.182, 0.129))
+        # The legacy figure uses a narrower, centered ZOS map beneath each
+        # TOS panel (about 69% of the TOS width).
+        zos_width = 0.125
+        zos_x = x_positions[col] + (0.182 - zos_width) / 2.0
+        ax_zos = add_axis((zos_x, y_zos, zos_width, 0.129))
         idx = month - 1
 
         tos_mappable = contour_map(ax_tos, lon, lat, plot_response[idx, 0], tos_levels, TOS_CMAP, zero_contour)
