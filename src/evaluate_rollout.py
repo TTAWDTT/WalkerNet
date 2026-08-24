@@ -256,6 +256,51 @@ def _write_nino_lead_csv(path: Path, nino_metrics: dict[str, Any], leads: list[i
                     writer.writerow([mode, lead, system, row["rmse"], row["mae"], row["corr"], row["num_samples"]])
 
 
+def _start_month_nino12_metrics(
+    start_month: torch.Tensor,
+    model_nino: torch.Tensor,
+    persistence_nino: torch.Tensor,
+    target_nino: torch.Tensor,
+) -> dict[str, dict[str, dict[str, float]]]:
+    """按输入窗口结束/首个预测目标月份汇总 lead-12 Niño3.4 skill。"""
+    result: dict[str, dict[str, dict[str, float]]] = {}
+    for month in range(1, 13):
+        mask = start_month == month
+        result[str(month)] = {
+            "model": _nino_summary(model_nino[mask], target_nino[mask]),
+            "persistence": _nino_summary(persistence_nino[mask], target_nino[mask]),
+        }
+    return result
+
+
+def _write_month_grouped_csv(path: Path, metrics: dict[str, dict[str, dict[str, float]]]) -> None:
+    """写出按起始月份分组的 lead-12 anomaly skill。"""
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["start_month", "lead", "system", "rmse", "mae", "acc", "num_samples"])
+        for month in range(1, 13):
+            month_metrics = metrics[str(month)]
+            for system in ("model", "persistence"):
+                row = month_metrics[system]
+                writer.writerow([month, 12, system, row["rmse"], row["mae"], row["corr"], row["num_samples"]])
+
+
+def _write_canonical_lead_files(output_dir: Path, nino_metrics: dict[str, Any], leads: list[int]) -> None:
+    """写出论文后处理使用的完整 lead-1--18 monthly/3-month 表。"""
+    csv_path = output_dir / "eval_rollout_best_skill_monthly_lead1_18.csv"
+    _write_nino_lead_csv(csv_path, nino_metrics, leads)
+    payload = {
+        "leads": leads,
+        "monthly": nino_metrics["monthly"],
+        "three_month_mean": nino_metrics["three_month_mean"],
+        "effective_lead": nino_metrics["effective_lead"],
+        "metric": "Niño3.4 anomaly ACC (corr), RMSE and MAE",
+    }
+    (output_dir / "eval_rollout_best_skill_monthly_lead1_18.json").write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+
 def _maybe_plot_lead_skill(path: Path, nino_metrics: dict[str, Any]) -> bool:
     """如果 matplotlib 可用，则画 lead ACC。"""
     try:
@@ -306,6 +351,7 @@ def evaluate_rollout(
     model_nino: dict[int, list[torch.Tensor]] = {lead: [] for lead in range(1, max_lead + 1)}
     persistence_nino: dict[int, list[torch.Tensor]] = {lead: [] for lead in range(1, max_lead + 1)}
     target_nino: dict[int, list[torch.Tensor]] = {lead: [] for lead in range(1, max_lead + 1)}
+    start_month_values: list[torch.Tensor] = []
 
     lat = torch.as_tensor(dataset.lat, dtype=torch.float32, device=device)
     lon = torch.as_tensor(dataset.lon, dtype=torch.float32, device=device)
@@ -321,6 +367,7 @@ def evaluate_rollout(
         persistence_norm = window[:, -1:].contiguous()
         persistence_phys = dataset.denormalize(persistence_norm, source_index)
         base_target_t = batch["time_index"].to(device=device, dtype=torch.long)
+        start_month_values.append(_target_months(dataset, source_index, base_target_t).detach().cpu())
 
         for step in range(1, max_lead + 1):
             target_t = base_target_t + step - 1
@@ -368,6 +415,7 @@ def evaluate_rollout(
     nino_model = {lead: torch.cat(values) for lead, values in model_nino.items()}
     nino_persistence = {lead: torch.cat(values) for lead, values in persistence_nino.items()}
     nino_target = {lead: torch.cat(values) for lead, values in target_nino.items()}
+    start_month = torch.cat(start_month_values)
 
     field_metrics: dict[int, dict[str, dict[str, Any]]] = {}
     for lead in leads:
@@ -395,9 +443,16 @@ def evaluate_rollout(
         }
 
     nino_metrics = _series_summary(nino_model, nino_persistence, nino_target, leads)
+    start_month_metrics = _start_month_nino12_metrics(
+        start_month,
+        nino_model[12],
+        nino_persistence[12],
+        nino_target[12],
+    ) if max_lead >= 12 else {}
     return {
         "field": field_metrics,
         "nino34_anomaly": nino_metrics,
+        "lead12_by_start_month": start_month_metrics,
     }
 
 
@@ -462,22 +517,46 @@ def main() -> None:
             },
             "effective_lead": result["nino34_anomaly"]["effective_lead"],
         },
+        "lead12_by_start_month": result["lead12_by_start_month"],
     }
 
     metrics_json = output_dir / f"{args.split}_rollout_metrics.json"
     field_csv = output_dir / f"{args.split}_rollout_field_metrics.csv"
     nino_csv = output_dir / f"{args.split}_rollout_nino34_lead_metrics.csv"
     lead_png = output_dir / f"{args.split}_rollout_nino34_lead_acc.png"
+    start_month_csv = output_dir / "eval_rollout_best_skill_lead12_by_start_month.csv"
+    start_month_json = output_dir / "eval_rollout_best_skill_lead12_by_start_month.json"
 
     metrics_json.write_text(json.dumps(json_payload, indent=2, ensure_ascii=False), encoding="utf-8")
     _write_field_csv(field_csv, result["field"], leads)
     _write_nino_lead_csv(nino_csv, result["nino34_anomaly"], leads)
+    _write_canonical_lead_files(output_dir, result["nino34_anomaly"], leads)
+    if result["lead12_by_start_month"]:
+        _write_month_grouped_csv(start_month_csv, result["lead12_by_start_month"])
+        start_month_json.write_text(
+            json.dumps(
+                {
+                    "lead": 12,
+                    "grouping": "input-window end / first forecast target month",
+                    "metric": "Niño3.4 anomaly ACC (corr), RMSE and MAE",
+                    "by_start_month": result["lead12_by_start_month"],
+                },
+                indent=2,
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
     plotted = _maybe_plot_lead_skill(lead_png, result["nino34_anomaly"])
 
     print(json.dumps(json_payload["nino34_anomaly"], indent=2, ensure_ascii=False))
     print(f"wrote {metrics_json}")
     print(f"wrote {field_csv}")
     print(f"wrote {nino_csv}")
+    print(f"wrote {output_dir / 'eval_rollout_best_skill_monthly_lead1_18.csv'}")
+    print(f"wrote {output_dir / 'eval_rollout_best_skill_monthly_lead1_18.json'}")
+    if result["lead12_by_start_month"]:
+        print(f"wrote {start_month_csv}")
+        print(f"wrote {start_month_json}")
     if plotted:
         print(f"wrote {lead_png}")
     else:
