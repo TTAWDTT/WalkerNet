@@ -14,4 +14,11 @@
 - [x] Generate one 2×3 candidate-panel figure per case (normal rank 1–3 / delayed rank 1–3; leads 2,4,6,8,10,12; shared scales) and copy to `docs/assets/cnop_pacific_delayed_onset_24starts_steps100_v2_top3/figures/`.
 - [x] Re-render all 60 retained candidates with the established wide response-evolution layer (TOS + ZOS, smoothing, shared fixed ranges) under `docs/assets/cnop_pacific_delayed_onset_24starts_steps100_v2_top3/legacy_response_evolution/`.
 - [x] Create a delayed rank-1 lead-12 overview with the three requested fields (truth, baseline, perturbed) under `docs/assets/cnop_pacific_delayed_onset_24starts_steps100_v2_top3/`.
+- [x] Run Global delayed-onset CNOP paired experiment (10 cases; 24 starts, 100 Adam steps, 3% relative initial L2; top-3 retained) and complete the numerical audit.
+- [x] Generate and visually inspect Global delayed overview, top-3 initial-perturbation panels, and rank-1 response-evolution figures under `docs/assets/cnop_pacific_delayed_onset_24starts_steps100_v2_top3/legacy_response_evolution/global_delayed/`.
+- [x] Redraw the Global delayed overview with the common basin-comparison view (`100–300°E`, `35°S–35°N`) without recomputing CNOP: `cnop_overview_10cases_global_delayed_tropical.png`.
+- [x] Consolidate the current figure products into the non-destructive paper-ready bundle `docs/assets/cnop_pacific_delayed_onset_24starts_steps100_v2_top3/legacy_response_evolution/paper_ready_v1/`.
+- [x] Record the Global delayed response-evolution display convention (`TOS ±0.8 °C`, `ZOS ±0.03`) and archive the obsolete auto-scaled layout separately.
+- [x] Add a plotting-entry-point index at `scripts/cnop/plotting/README.md`, distinguishing canonical paper renderers, compatibility scripts, and diagnostics.
+- [ ] Redraw Pacific normal/delayed response-evolution figures with the same fixed display scales before cross-basin visual comparison (plot-only; no CNOP recomputation).
 - [ ] Compare delayed vs normal candidates and decide whether to extend to other basins.
