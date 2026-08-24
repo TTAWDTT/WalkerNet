@@ -20,5 +20,5 @@
 - [x] Consolidate the current figure products into the non-destructive paper-ready bundle `docs/assets/cnop_pacific_delayed_onset_24starts_steps100_v2_top3/legacy_response_evolution/paper_ready_v1/`.
 - [x] Record the Global delayed response-evolution display convention (`TOS ±0.8 °C`, `ZOS ±0.03`) and archive the obsolete auto-scaled layout separately.
 - [x] Add a plotting-entry-point index at `scripts/cnop/plotting/README.md`, distinguishing canonical paper renderers, compatibility scripts, and diagnostics.
-- [ ] Redraw Pacific normal/delayed response-evolution figures with the same fixed display scales before cross-basin visual comparison (plot-only; no CNOP recomputation).
+- [x] Redraw Pacific normal/delayed response-evolution figures with the same fixed display scales before cross-basin visual comparison (plot-only; no CNOP recomputation); store the 80-file set in `legacy_response_evolution/paper_ready_v2/common_scale_tos08_zos003/`.
 - [ ] Compare delayed vs normal candidates and decide whether to extend to other basins.
