@@ -124,11 +124,14 @@ def parse_args() -> argparse.Namespace:
         "--objective-mode",
         type=str,
         default="softmax_3m",
-        choices=("softmax_3m", "lead_delta", "late_3m_delta"),
-        help="late_3m_delta maximizes the lead 10-12 mean response for a 12-month rollout.",
+        choices=("softmax_3m", "lead_delta", "late_3m_delta", "delayed_lead_delta"),
+        help="delayed_lead_delta maximizes lead_delta while penalizing excessive early response.",
     )
     parser.add_argument("--objective-lead", type=int, default=12, help="1-based forecast lead used by objective-mode=lead_delta.")
     parser.add_argument("--objective-temperature", type=float, default=0.25)
+    parser.add_argument("--delay-early-leads", type=int, default=3, help="Number of initial leads included in delayed-onset penalty.")
+    parser.add_argument("--delay-early-threshold", type=float, default=0.2, help="Absolute early perturbed-minus-baseline Nino3.4 threshold in degC.")
+    parser.add_argument("--delay-penalty-weight", type=float, default=2.0, help="Weight on the delayed-onset early-response penalty.")
     parser.add_argument("--smoothness-weight", type=float, default=0.001)
     parser.set_defaults(amp=True, checkpoint_rollout=True)
     parser.add_argument("--amp", dest="amp", action="store_true")
@@ -471,11 +474,31 @@ def smoothness_penalty(delta: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     return ((dx.square() * mx).sum() + (dy.square() * my).sum()) / (mx.sum() + my.sum()).clamp_min(1.0)
 
 
+def delayed_early_penalty(
+    nino_anom: torch.Tensor,
+    baseline_nino: torch.Tensor,
+    args: argparse.Namespace,
+) -> torch.Tensor:
+    """Penalize an excessive early CNOP response while retaining differentiability."""
+
+    lead_count = min(max(int(getattr(args, "delay_early_leads", 3)), 1), int(nino_anom.numel()))
+    threshold = max(float(getattr(args, "delay_early_threshold", 0.2)), 1.0e-6)
+    early_delta = nino_anom[:lead_count] - baseline_nino[:lead_count]
+    excess = torch.relu(torch.abs(early_delta) - threshold)
+    return excess.square().mean()
+
+
 def cnop_objective(nino_anom: torch.Tensor, baseline_nino: torch.Tensor, args: argparse.Namespace) -> torch.Tensor:
     """Return the selected CNOP objective."""
     if args.objective_mode == "lead_delta":
         lead_idx = min(max(int(args.objective_lead), 1), int(args.horizon)) - 1
         return nino_anom[lead_idx] - baseline_nino[lead_idx]
+
+    if args.objective_mode == "delayed_lead_delta":
+        lead_idx = min(max(int(args.objective_lead), 1), int(args.horizon)) - 1
+        lead_gain = nino_anom[lead_idx] - baseline_nino[lead_idx]
+        penalty = delayed_early_penalty(nino_anom, baseline_nino, args)
+        return lead_gain - float(getattr(args, "delay_penalty_weight", 2.0)) * penalty
 
     if args.objective_mode == "late_3m_delta":
         if nino_anom.numel() < 3:
@@ -557,11 +580,13 @@ def evaluate_delta(
     )
     rolling = three_month_mean(nino)
     objective = cnop_objective(nino, baseline_nino, args)
+    early_penalty = delayed_early_penalty(nino, baseline_nino, args)
     lead_idx = min(max(int(args.objective_lead), 1), int(args.horizon)) - 1
     return {
         "nino": nino,
         "three_month": rolling,
         "objective": objective,
+        "early_penalty": early_penalty,
         "lead_nino": nino[lead_idx],
         "lead_delta": nino[lead_idx] - baseline_nino[lead_idx],
         "max_3m": rolling.max(),
@@ -647,6 +672,7 @@ def optimize_single_start(
                 {
                     "step": float(step),
                     "objective": float(metrics["objective"].detach().cpu().item()),
+                    "early_penalty": float(metrics["early_penalty"].detach().cpu().item()),
                     "lead_delta": float(metrics["lead_delta"].detach().cpu().item()),
                     "max_3m": float(metrics["max_3m"].detach().cpu().item()),
                     "mean_3m": float(metrics["mean_3m"].detach().cpu().item()),
@@ -691,6 +717,7 @@ def optimize_single_start(
         "final_nino": final_metrics["nino"].detach().cpu().numpy(),
         "final_3m": final_metrics["three_month"].detach().cpu().numpy(),
         "objective": float(final_metrics["objective"].detach().cpu().item()),
+        "early_penalty": float(final_metrics["early_penalty"].detach().cpu().item()),
         "lead_nino": float(final_metrics["lead_nino"].detach().cpu().item()),
         "lead_delta": float(final_metrics["lead_delta"].detach().cpu().item()),
         "cnop_max_3m": float(final_metrics["max_3m"].detach().cpu().item()),
@@ -1161,6 +1188,7 @@ def write_case_npz(output_dir: Path, result: dict[str, Any], dataset: WalkerData
         top_cnop_nino=np.stack([item["final_nino"] for item in top_candidates], axis=0) if top_candidates else np.empty((0,)),
         top_cnop_3m=np.stack([item["final_3m"] for item in top_candidates], axis=0) if top_candidates else np.empty((0,)),
         top_objective=np.asarray([item["objective"] for item in top_candidates], dtype=np.float32),
+        top_early_penalty=np.asarray([item["early_penalty"] for item in top_candidates], dtype=np.float32),
         top_lead_nino=np.asarray([item["lead_nino"] for item in top_candidates], dtype=np.float32),
         top_lead_delta=np.asarray([item["lead_delta"] for item in top_candidates], dtype=np.float32),
         top_cnop_max_3m=np.asarray([item["cnop_max_3m"] for item in top_candidates], dtype=np.float32),
@@ -1187,6 +1215,7 @@ def serializable_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
         "start_idx": candidate["start_idx"],
         "seed": candidate["seed"],
         "objective": candidate["objective"],
+        "early_penalty": candidate["early_penalty"],
         "lead_nino": candidate["lead_nino"],
         "lead_delta": candidate["lead_delta"],
         "cnop_max_3m": candidate["cnop_max_3m"],
@@ -1217,6 +1246,7 @@ def write_summary_csv(output_dir: Path, results: list[dict[str, Any]]) -> Path:
                 "gain_max_3m",
                 "best_start_idx",
                 "best_objective",
+                "best_early_penalty",
                 "constraint_norm",
                 "constraint_radius",
                 "constraint_ratio",
@@ -1239,6 +1269,7 @@ def write_summary_csv(output_dir: Path, results: list[dict[str, Any]]) -> Path:
                     result["gain_max_3m"],
                     result["best_start_idx"],
                     result["best_objective"],
+                    result["top_candidates"][0]["early_penalty"],
                     result["top_candidates"][0]["constraint_norm"],
                     result["top_candidates"][0]["constraint_radius"],
                     result["top_candidates"][0]["constraint_ratio"],
@@ -1260,6 +1291,7 @@ def write_candidate_summary_csv(output_dir: Path, results: list[dict[str, Any]])
                 "start_idx",
                 "seed",
                 "objective",
+                "early_penalty",
                 "baseline_lead_nino",
                 "cnop_lead_nino",
                 "lead_delta",
@@ -1283,6 +1315,7 @@ def write_candidate_summary_csv(output_dir: Path, results: list[dict[str, Any]])
                         candidate["start_idx"],
                         candidate["seed"],
                         candidate["objective"],
+                        candidate["early_penalty"],
                         result["baseline_lead_nino"],
                         candidate["lead_nino"],
                         candidate["lead_delta"],
@@ -1401,7 +1434,10 @@ def write_method_json(output_dir: Path, args: argparse.Namespace, checkpoint: di
         "smoothness_weight": args.smoothness_weight,
         "objective_mode": args.objective_mode,
         "objective_lead": args.objective_lead,
-        "objective": "lead_delta maximizes perturbed-minus-baseline Nino3.4 at objective_lead; softmax_3m maximizes target-year 3-month mean Nino3.4 anomaly",
+        "delay_early_leads": getattr(args, "delay_early_leads", 3),
+        "delay_early_threshold": getattr(args, "delay_early_threshold", 0.2),
+        "delay_penalty_weight": getattr(args, "delay_penalty_weight", 2.0),
+        "objective": "delayed_lead_delta maximizes perturbed-minus-baseline Nino3.4 at objective_lead while penalizing squared early excess above delay_early_threshold; lead_delta is the unpenalized counterpart",
         "basin_mask_definition": {
             "pacific": "valid ocean, 120E-290E, within basin_lat_bounds",
             "indian": "valid ocean, 20E-120E, within basin_lat_bounds",

@@ -68,6 +68,22 @@ def test_late_three_month_objective_uses_leads_10_to_12() -> None:
     assert torch.isclose(cnop_objective(forecast, baseline, args), torch.tensor(11.0))
 
 
+def test_delayed_lead_objective_penalizes_excess_early_response() -> None:
+    forecast = torch.tensor([0.5, 0.6, 0.9, 1.2])
+    baseline = torch.zeros(4)
+    args = Namespace(
+        objective_mode="delayed_lead_delta",
+        objective_lead=4,
+        horizon=4,
+        delay_early_leads=2,
+        delay_early_threshold=0.2,
+        delay_penalty_weight=2.0,
+    )
+
+    # lead-4 gain = 1.2; early excesses are 0.3 and 0.4, so penalty = 0.25.
+    assert torch.isclose(cnop_objective(forecast, baseline, args), torch.tensor(0.95))
+
+
 def test_candidate_selection_removes_nearly_identical_fields() -> None:
     candidates = [
         {"delta_norm": np.asarray([1.0, 0.0]), "objective": 3.0},
