@@ -35,6 +35,7 @@ These are display-only settings. They do not alter CNOP optimization, saved
 perturbations, or evaluation metrics. The obsolete remote renderer with a
 full-height left panel and automatic per-case scales is archival only.
 
-The Pacific delayed candidate generator still has a legacy percentile-floor
-path for its existing figures; it is tracked separately and must be replaced
-by the fixed convention before strict cross-basin visual comparison.
+The Pacific delayed candidate generator now defaults to the fixed convention
+and accepts `--tos-vmax 0.8 --zos-vmax 0.03`. Passing `0` to either option
+explicitly restores the legacy percentile-floor behavior for provenance
+reproduction.

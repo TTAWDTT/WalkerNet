@@ -174,6 +174,8 @@ def main() -> None:
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--tos-vmax", type=float, default=0.8, help="Fixed TOS display range; 0 restores the legacy percentile range.")
+    parser.add_argument("--zos-vmax", type=float, default=0.03, help="Fixed ZOS display range; 0 restores the legacy percentile range.")
     args = parser.parse_args()
     device = torch.device(args.device if args.device == "cpu" or torch.cuda.is_available() else "cpu")
     config = load_config(args.config)
@@ -202,10 +204,12 @@ def main() -> None:
             artifact_path = args.root / branch / key / f"case_{key}.npz"
             branch_data[branch] = load_case_response(model, dataset, case, artifact_path, device, std, trained_steps)
         all_response = np.concatenate([branch_data["normal"][0], branch_data["delayed"][0]], axis=0)
-        tos_vmax = max(0.8, float(np.nanpercentile(np.abs(all_response[:, :, 0]), 99.5)))
-        zos_vmax = max(0.03, float(np.nanpercentile(np.abs(all_response[:, :, 1]), 99.5)))
-        tos_vmax = min(tos_vmax, 1.2)
-        zos_vmax = min(zos_vmax, 0.10)
+        tos_vmax = float(args.tos_vmax)
+        zos_vmax = float(args.zos_vmax)
+        if tos_vmax <= 0:
+            tos_vmax = min(max(0.8, float(np.nanpercentile(np.abs(all_response[:, :, 0]), 99.5))), 1.2)
+        if zos_vmax <= 0:
+            zos_vmax = min(max(0.03, float(np.nanpercentile(np.abs(all_response[:, :, 1]), 99.5))), 0.10)
         # Re-render every retained candidate with the established paper-style
         # response-evolution layer (wide TOS panel + six TOS/ZOS lead pairs).
         legacy_dir = args.output_dir / "legacy_response_evolution"
