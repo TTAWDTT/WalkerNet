@@ -28,3 +28,10 @@ The saved 12×12 start/end-month matrices are also plotted as a two-panel contou
 - [walkernet_start_end_month_acc_model_persistence.pdf](walkernet_start_end_month_acc_model_persistence.pdf)
 
 The left panel is WalkerNet and the right panel is persistence. Both use the same ACC color scale (`-0.5` to `1.0`) and the same cubic contour-display interpolation.
+
+For direct comparison without any smoothing, the raw-cell version is:
+
+- [walkernet_start_end_month_acc_model_persistence_grid.png](walkernet_start_end_month_acc_model_persistence_grid.png)
+- [walkernet_start_end_month_acc_model_persistence_grid.pdf](walkernet_start_end_month_acc_model_persistence_grid.pdf)
+
+This version renders each saved 12×12 cell directly with `pcolormesh`; no interpolation is applied.

@@ -16,5 +16,10 @@
   "outputs": [
     "walkernet_start_end_month_acc_model_persistence.png",
     "walkernet_start_end_month_acc_model_persistence.pdf"
-  ]
+  ],
+  "direct_grid_outputs": [
+    "walkernet_start_end_month_acc_model_persistence_grid.png",
+    "walkernet_start_end_month_acc_model_persistence_grid.pdf"
+  ],
+  "direct_grid": "saved 12x12 cells rendered with pcolormesh; no smoothing or interpolation"
 }

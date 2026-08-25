@@ -48,6 +48,24 @@ def _smooth_contour(ax, values: np.ndarray, norm: Normalize):
     return ax.contourf(X, Y, smooth, levels=levels, cmap="YlOrBr", norm=norm, extend="neither")
 
 
+def _direct_grid(ax, values: np.ndarray, norm: Normalize):
+    """Render the saved 12x12 cells directly, without smoothing/interpolation."""
+    edges = np.arange(0.5, 13.5, 1.0)
+    return ax.pcolormesh(edges, edges, values, cmap="YlOrBr", norm=norm, shading="flat")
+
+
+def _format_axis(ax) -> None:
+    ax.set_xlabel("End month")
+    ax.set_xticks(range(1, 13))
+    ax.set_xticklabels([str(i) for i in range(1, 13)])
+    ax.set_yticks(range(1, 13))
+    ax.set_yticklabels(MONTH_NAMES)
+    ax.set_xlim(0.5, 12.5)
+    ax.set_ylim(0.5, 12.5)
+    ax.set_ylabel("Start month")
+    ax.grid(False)
+
+
 def main() -> None:
     data_dir = OUT / "matrix_data"
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -73,15 +91,7 @@ def main() -> None:
         for ax, values, title in zip(axes, (model, persistence), ("WalkerNet", "Persistence")):
             contour = _smooth_contour(ax, values, norm)
             ax.set_title(title, pad=8)
-            ax.set_xlabel("End month")
-            ax.set_xticks(range(1, 13))
-            ax.set_xticklabels([str(i) for i in range(1, 13)])
-            ax.set_yticks(range(1, 13))
-            ax.set_yticklabels(MONTH_NAMES)
-            ax.set_xlim(1, 12)
-            ax.set_ylim(1, 12)
-            ax.set_ylabel("Start month")
-            ax.grid(False)
+            _format_axis(ax)
         fig.suptitle("Nino3.4 ACC by forecast start and end month", fontsize=15, y=0.98)
         cbar = fig.colorbar(contour, ax=axes, pad=0.025, fraction=0.035)
         cbar.set_label("ACC")
@@ -89,6 +99,21 @@ def main() -> None:
         fig.subplots_adjust(left=0.075, right=0.84, bottom=0.12, top=0.87, wspace=0.08)
         for fmt in ("png", "pdf"):
             fig.savefig(OUT / f"walkernet_start_end_month_acc_model_persistence.{fmt}", dpi=600 if fmt == "png" else None)
+        plt.close(fig)
+
+        # A second, unsmoothed direct-grid rendering for visual comparison.
+        fig, axes = plt.subplots(1, 2, figsize=(10.2, 5.0), sharex=True, sharey=True)
+        for ax, values, title in zip(axes, (model, persistence), ("WalkerNet", "Persistence")):
+            grid = _direct_grid(ax, values, norm)
+            ax.set_title(title, pad=8)
+            _format_axis(ax)
+        fig.suptitle("Nino3.4 ACC by forecast start and end month (direct grid)", fontsize=15, y=0.98)
+        cbar = fig.colorbar(grid, ax=axes, pad=0.025, fraction=0.035)
+        cbar.set_label("ACC")
+        cbar.set_ticks([-0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0])
+        fig.subplots_adjust(left=0.075, right=0.84, bottom=0.12, top=0.87, wspace=0.08)
+        for fmt in ("png", "pdf"):
+            fig.savefig(OUT / f"walkernet_start_end_month_acc_model_persistence_grid.{fmt}", dpi=600 if fmt == "png" else None)
         plt.close(fig)
 
     provenance = {
@@ -100,6 +125,8 @@ def main() -> None:
         "definition": "first 12 forecast leads; end_month = start_month + lead - 1 modulo 12",
         "transformations": ["direct saved 12x12 matrices", "cubic RectBivariateSpline interpolation for contour display only", "shared color normalization vmin=-0.5, vmax=1.0"],
         "outputs": ["walkernet_start_end_month_acc_model_persistence.png", "walkernet_start_end_month_acc_model_persistence.pdf"],
+        "direct_grid_outputs": ["walkernet_start_end_month_acc_model_persistence_grid.png", "walkernet_start_end_month_acc_model_persistence_grid.pdf"],
+        "direct_grid": "saved 12x12 cells rendered with pcolormesh; no smoothing or interpolation",
     }
     (OUT / "walkernet_start_end_month_acc_model_persistence.provenance.json").write_text(
         json.dumps(provenance, indent=2, ensure_ascii=False), encoding="utf-8"
