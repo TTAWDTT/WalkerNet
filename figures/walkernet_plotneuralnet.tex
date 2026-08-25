@@ -4,7 +4,7 @@
 \subimport{plotneuralnet_layers/}{init}
 \usetikzlibrary{positioning}
 \usetikzlibrary{3d} %for including external image 
-
+\usetikzlibrary{calc}
 \def\ConvColor{rgb:yellow,5;red,2.5;white,5}
 \def\ConvReluColor{rgb:yellow,5;red,5;white,5}
 \def\PoolColor{rgb:red,1;black,0.3}
@@ -83,7 +83,7 @@
     };
 
 \draw [connection]  (fusion-east)    -- node {\midarrow} (spatial1-west);
-\draw [connection] (spatial1-east) -- node[pos=0.28] {\midarrow} node[pos=0.50,sloped=false,font=\Large\bfseries,text=black!65] {$\cdots$} node[pos=0.72] {\midarrow} (spatial6-west);
+\coordinate (spatial-gap-l) at ($(spatial1-east)!0.44!(spatial6-west)$);\coordinate (spatial-gap-r) at ($(spatial1-east)!0.56!(spatial6-west)$);\draw [connection] (spatial1-east) -- node[pos=0.78] {\midarrow} (spatial-gap-l);\draw [connection] (spatial-gap-r) -- node[pos=0.22] {\midarrow} (spatial6-west);\node[font=\Large\bfseries,text=black!65] at (spatial-gap-l -| spatial-gap-r) {$\cdots$};
 \pic[shift={(1.7,-0.9,0)}] at (spatial6-east) 
     {Box={
         name=gate,

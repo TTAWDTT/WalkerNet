@@ -41,6 +41,7 @@ def main() -> None:
         # The vendored styles live directly in ``plotneuralnet_layers`` here,
         # so the generated header is normalized immediately after emission.
         to_head(str(LAYER_ROOT).replace("\\", "/").rstrip("/") + "/../"),
+        r"\usetikzlibrary{calc}",
         to_cor(),
         to_begin(),
         # Input: 12 historical months × 4 coupled fields.
@@ -70,7 +71,14 @@ def main() -> None:
             width=1.0, height=8.5, depth=8.5, caption="S6",
         ),
         to_connection("fusion", "spatial1"),
-        r"\draw [connection] (spatial1-east) -- node[pos=0.28] {\midarrow} node[pos=0.50,sloped=false,font=\Large\bfseries,text=black!65] {$\cdots$} node[pos=0.72] {\midarrow} (spatial6-west);",
+        # Break the spatial-stack connection into two physical line segments.
+        # The gap behind the ellipsis is deliberately empty: no green line is
+        # drawn beneath the omitted S2--S5 blocks.
+        r"\coordinate (spatial-gap-l) at ($(spatial1-east)!0.44!(spatial6-west)$);",
+        r"\coordinate (spatial-gap-r) at ($(spatial1-east)!0.56!(spatial6-west)$);",
+        r"\draw [connection] (spatial1-east) -- node[pos=0.78] {\midarrow} (spatial-gap-l);",
+        r"\draw [connection] (spatial-gap-r) -- node[pos=0.22] {\midarrow} (spatial6-west);",
+        r"\node[font=\Large\bfseries,text=black!65] at (spatial-gap-l -| spatial-gap-r) {$\cdots$};",
         # Month gate and top-2 routing.
         to_SoftMax("gate", s_filer="month", offset="(1.7,-0.9,0)", to="(spatial6-east)", width=1.5, height=3.0, depth=7.0, caption="Gate"),
         to_connection("spatial6", "gate"),
