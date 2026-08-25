@@ -66,12 +66,11 @@ def main() -> None:
             width=1.0, height=8.5, depth=8.5, caption="S1",
         ),
         to_Conv(
-            "spatial6", s_filer="4050", n_filer="256", offset="(1.15,0,0)", to="(spatial1-east)",
+            "spatial6", s_filer="4050", n_filer="256", offset="(1.45,0,0)", to="(spatial1-east)",
             width=1.0, height=8.5, depth=8.5, caption="S6",
         ),
         to_connection("fusion", "spatial1"),
-        to_connection("spatial1", "spatial6"),
-        r"\node[font=\Large,text=black!60,above=0.25cm of spatial1-east] {$\cdots$};",
+        r"\draw [connection] (spatial1-east) -- node[midway,sloped=false,font=\Large\bfseries,text=black!75,fill=white,inner sep=1pt] {$\cdots$} node[pos=0.78] {\midarrow} (spatial6-west);",
         # Month gate and top-2 routing.
         to_SoftMax("gate", s_filer="month", offset="(1.7,-0.9,0)", to="(spatial6-east)", width=1.5, height=3.0, depth=7.0, caption="Gate"),
         to_connection("spatial6", "gate"),
