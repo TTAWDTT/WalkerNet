@@ -87,8 +87,10 @@ def make_panel(tos: np.ndarray, zos: np.ndarray, lon: np.ndarray, lat: np.ndarra
     fig = plt.figure(figsize=((X1 - X0) / 100.0, MAP_HEIGHT / 100.0), dpi=100, facecolor="white")
     ax = fig.add_axes((0, 0, 1, 1))
     ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.axis("off")
-    top = ((0.08, 0.515), (0.96, 0.515), (0.18, 0.82), (0.88, 0.82))
-    bottom = ((0.08, 0.20), (0.96, 0.20), (0.18, 0.49), (0.88, 0.49))
+    # Use most of the cell height for the two surfaces; the compact overview
+    # must not inherit the generous whitespace of the standalone mean figure.
+    top = ((0.06, 0.53), (0.98, 0.53), (0.15, 0.93), (0.90, 0.93))
+    bottom = ((0.06, 0.07), (0.98, 0.07), (0.15, 0.47), (0.90, 0.47))
 
     def map_xy(lo, la, corners):
         u = (lo - LON_MIN) / (LON_MAX - LON_MIN)
@@ -113,9 +115,9 @@ def make_panel(tos: np.ndarray, zos: np.ndarray, lon: np.ndarray, lat: np.ndarra
         outline = np.array([corners[0], corners[1], corners[3], corners[2], corners[0]])
         ax.plot(outline[:, 0], outline[:, 1], color="#343A40", lw=0.45, zorder=4)
         if label == "TOS":
-            ax.text(corners[3][0] - 0.01, corners[3][1] + 0.012, "mean TOS perturbation (°C)", ha="right", va="bottom", fontsize=8.5, fontweight="bold", color="#222222", zorder=5)
+            ax.text(corners[3][0] - 0.012, corners[3][1] - 0.018, "TOS", ha="right", va="top", fontsize=10.5, fontweight="bold", color="#222222", zorder=5)
         else:
-            ax.text(0.50, 0.503, "mean ZOS perturbation", ha="center", va="center", fontsize=8.5, fontweight="bold", color="#222222", zorder=5)
+            ax.text(0.50, 0.505, "ZOS", ha="center", va="center", fontsize=10.5, fontweight="bold", color="#222222", zorder=5)
     fig.canvas.draw()
     rgba = np.asarray(fig.canvas.buffer_rgba()).copy()
     plt.close(fig)
@@ -145,11 +147,11 @@ def main() -> None:
         out[top - 3 : top + MAP_HEIGHT + 3, 450 : X1 + 5] = 255
         out[top : top + MAP_HEIGHT, X0:X1] = panel
 
-    # Correct the first-column title to reflect the two perturbation fields.
+    # Remove the old first-column title; the compact TOS/ZOS labels identify
+    # the two surfaces without introducing another long string.
     image = Image.fromarray(out, mode="RGBA")
     draw = ImageDraw.Draw(image)
-    draw.rectangle((X0, 190, X1, 228), fill="white")
-    draw.text(((X0 + X1) // 2, 192), "Initial delta TOS + ZOS", fill="#222222", font=font, anchor="ma")
+    draw.rectangle((X0, 185, X1, 228), fill="white")
     image.save(OUT, dpi=(320, 320))
     if DESKTOP_OUT.parent.exists():
         image.save(DESKTOP_OUT, dpi=(320, 320))
