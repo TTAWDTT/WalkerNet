@@ -21,8 +21,8 @@ from scipy.ndimage import gaussian_filter, zoom
 ROOT = Path(__file__).resolve().parents[2]
 DESKTOP_SOURCE = Path(r"C:\Users\zhen.luo\Desktop\article\overview.png")
 SOURCE = DESKTOP_SOURCE if DESKTOP_SOURCE.exists() else ROOT / "docs" / "assets" / "article" / "pacific_delay_overview.png"
-OUTPUT = ROOT / "docs" / "assets" / "article" / "pacific_delay_overview_tos_recolored_smooth_v20.png"
-DESKTOP_OUTPUT = Path(r"C:\Users\zhen.luo\Desktop\article\overview_tos_recolored_smooth_v20.png")
+OUTPUT = ROOT / "docs" / "assets" / "article" / "pacific_delay_overview_tos_recolored_smooth_v21.png"
+DESKTOP_OUTPUT = Path(r"C:\Users\zhen.luo\Desktop\article\overview_tos_recolored_smooth_v21.png")
 
 X0, X1 = 635, 1431
 ROW_TOPS = [230 + 486 * i for i in range(10)]
@@ -36,12 +36,16 @@ def refine(panel: np.ndarray) -> np.ndarray:
     # Recover a signed display-only scalar from the existing red/blue raster,
     # then smooth and remap it. No model or CNOP values are recomputed.
     scalar = (rgb[..., 0] - rgb[..., 2]) * valid
-    scalar_hi = zoom(scalar, (4, 4), order=3, mode="nearest", prefilter=True)
-    valid_hi = zoom(valid.astype(float), (4, 4), order=1, mode="nearest") > 0.40
-    numerator = gaussian_filter(np.where(valid_hi, scalar_hi, 0.0), sigma=3.2, mode="nearest")
-    denominator = gaussian_filter(valid_hi.astype(float), sigma=3.2, mode="nearest")
+    factor = 8
+    scalar_hi = zoom(scalar, (factor, factor), order=3, mode="nearest", prefilter=True)
+    valid_hi = zoom(valid.astype(float), (factor, factor), order=1, mode="nearest") > 0.35
+    # Smooth only at the dense display resolution.  This keeps the contour
+    # transitions continuous without erasing the large-scale perturbation
+    # structures.
+    numerator = gaussian_filter(np.where(valid_hi, scalar_hi, 0.0), sigma=1.8, mode="nearest")
+    denominator = gaussian_filter(valid_hi.astype(float), sigma=1.8, mode="nearest")
     smooth = np.divide(numerator, denominator, out=np.zeros_like(numerator), where=denominator > 1e-5)
-    smooth = zoom(smooth, (1 / 4, 1 / 4), order=3, mode="nearest", prefilter=True)
+    smooth = zoom(smooth, (1 / factor, 1 / factor), order=3, mode="nearest", prefilter=True)
     smooth = np.clip(smooth, -0.95, 0.95)
 
     # Exact soft TOS palette used by the supplied reference figure's upper
