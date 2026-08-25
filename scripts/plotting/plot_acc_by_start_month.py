@@ -75,7 +75,8 @@ def main() -> None:
         "grid.alpha": 0.26,
         "savefig.facecolor": "white",
     }):
-        fig, ax = plt.subplots(figsize=(10.5, 4.8), layout="constrained")
+        fig, ax = plt.subplots(figsize=(10.5, 5.45))
+        fig.subplots_adjust(left=0.075, right=0.90, bottom=0.19, top=0.88)
         values = ACC_BY_START_MONTH
         image = ax.imshow(
             values,
@@ -85,7 +86,7 @@ def main() -> None:
             cmap="YlOrBr",
             vmin=float(np.nanmin(values)),
             vmax=1.0,
-            interpolation="nearest",
+            interpolation="bicubic",
         )
         # For each start month, hatch the four one-step intervals with the
         # largest ACC drop. The hatch is placed on the endpoint lead cell.
@@ -115,10 +116,11 @@ def main() -> None:
         cb = fig.colorbar(image, ax=ax, pad=0.015)
         cb.set_label("ACC")
         from matplotlib.patches import Patch
-        ax.legend(
+        fig.legend(
             handles=[Patch(facecolor="white", edgecolor="#555555", hatch="///",
                            label="four fastest one-step ACC declines per start month")],
-            loc="lower left", framealpha=0.92, fontsize=8,
+            loc="lower center", bbox_to_anchor=(0.5, 0.005),
+            framealpha=0.92, fontsize=8.5,
         )
         for fmt in ("png", "pdf"):
             fig.savefig(OUT / f"walkernet_acc_by_start_month_lead1_36.{fmt}", dpi=600 if fmt == "png" else None)
@@ -133,6 +135,7 @@ def main() -> None:
         "series": "WalkerNet monthly Niño3.4 anomaly ACC only",
         "leads_plotted": "1-36",
         "hatching": "For each start month, the four largest positive one-step drops ACC[lead]-ACC[lead+1]; hatch is drawn on the endpoint lead cell.",
+        "display_interpolation": "bicubic interpolation for color field display only; raw 12x36 cells and hatch locations are preserved",
         "transformations": [
             "direct saved start-month grouped ACC values rounded to <=6 decimals",
             "shape-preserving PCHIP interpolation for display only",

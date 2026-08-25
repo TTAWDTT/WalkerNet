@@ -7,6 +7,7 @@
   "series": "WalkerNet monthly Niño3.4 anomaly ACC only",
   "leads_plotted": "1-36",
   "hatching": "For each start month, the four largest positive one-step drops ACC[lead]-ACC[lead+1]; hatch is drawn on the endpoint lead cell.",
+  "display_interpolation": "bicubic interpolation for color field display only; raw 12x36 cells and hatch locations are preserved",
   "transformations": [
     "direct saved start-month grouped ACC values rounded to <=6 decimals",
     "shape-preserving PCHIP interpolation for display only",
