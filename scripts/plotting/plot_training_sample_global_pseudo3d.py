@@ -42,7 +42,7 @@ def map_xy(lon: np.ndarray, lat: np.ndarray, corners: tuple[tuple[float, float],
 
 def plot_surface(
     ax, lon: np.ndarray, lat: np.ndarray, field: np.ndarray, corners, cmap, norm,
-    title: str, title_fontsize: float = 12,
+    title: str, title_fontsize: float = 12, title_position: str = "top",
 ):
     ax.add_patch(Polygon([corners[2], corners[0], corners[1], corners[3]], closed=True,
                          facecolor="#A7A7A7", edgecolor="#656565", lw=0.45, alpha=0.16, zorder=0))
@@ -59,7 +59,10 @@ def plot_surface(
     for la in (-60, -30, 0, 30, 60):
         x, y = map_xy(np.array([0, 360]), np.array([la, la]), corners)
         ax.plot(x, y, color="#4F5962", lw=0.32 if la == 0 else 0.22, alpha=0.35, zorder=3)
-    ax.text(0.5, 0.95, title, ha="center", va="top", fontsize=title_fontsize, fontweight="bold")
+    if title_position == "left":
+        ax.text(0.025, 0.50, title, ha="right", va="center", fontsize=title_fontsize, fontweight="bold")
+    else:
+        ax.text(0.5, 0.95, title, ha="center", va="top", fontsize=title_fontsize, fontweight="bold")
     ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.axis("off")
     return mesh
 
