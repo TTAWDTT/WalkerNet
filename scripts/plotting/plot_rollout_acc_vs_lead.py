@@ -66,7 +66,8 @@ THREE_MONTH_PERSISTENCE = np.array([
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     with mpl.rc_context({
-        "font.family": "DejaVu Sans",
+        "font.family": "Times New Roman",
+        "font.serif": ["Times New Roman"],
         "font.size": 9.5,
         "axes.titlesize": 13,
         "axes.labelsize": 10,
@@ -80,37 +81,24 @@ def main() -> None:
     }):
         fig, ax = plt.subplots(figsize=(7.2, 4.45), layout="constrained")
         model_color = "#C44E52"       # warm red, matching the reference style
-        persistence_color = "#202020"  # dark neutral baseline
-
         ax.plot(
             LEADS, MONTHLY_MODEL, color=model_color, linewidth=2.25,
             marker="o", markersize=3.2, markevery=2,
             label="WalkerNet monthly ACC", zorder=3,
         )
         ax.plot(
-            LEADS, MONTHLY_PERSISTENCE, color=persistence_color, linewidth=1.85,
-            linestyle="-", marker="s", markersize=2.8, markevery=2,
-            label="Persistence monthly ACC", zorder=2,
-        )
-        ax.plot(
             THREE_MONTH_LEADS, THREE_MONTH_MODEL, color=model_color, linewidth=1.65,
             linestyle="--", marker="o", markersize=2.4, markevery=3,
             alpha=0.85, label="WalkerNet 3-month ACC", zorder=3,
         )
-        ax.plot(
-            THREE_MONTH_LEADS, THREE_MONTH_PERSISTENCE, color=persistence_color, linewidth=1.45,
-            linestyle="--", marker="s", markersize=2.2, markevery=3,
-            alpha=0.78, label="Persistence 3-month ACC", zorder=2,
-        )
-
         ax.axhline(0.5, color="#666666", linestyle=(0, (4, 3)), linewidth=1.0, zorder=1)
         ax.text(35.7, 0.515, "ACC = 0.5", color="#555555", ha="right", va="bottom", fontsize=8)
         ax.set(
-            title="WalkerNet Niño3.4 forecast skill",
+            title="Nino3.4 ACC",
             xlabel="Lead month",
             ylabel="ACC",
             xlim=(1, 36),
-            ylim=(-0.5, 1.02),
+            ylim=(0.0, 1.0),
             xticks=[1, 6, 12, 18, 24, 30, 36],
         )
         ax.grid(True, axis="both")
@@ -129,7 +117,7 @@ def main() -> None:
         "split": "test",
         "complete_lead36_samples": 245,
         "transformations": ["direct saved ACC values rounded to <=6 decimals", "no smoothing", "no interpolation"],
-        "series": ["monthly anomaly ACC", "three-month mean anomaly ACC", "persistence counterparts"],
+        "series": ["WalkerNet monthly anomaly ACC", "WalkerNet three-month mean anomaly ACC"],
         "threshold": "ACC=0.5 reference line only; no values clipped",
         "outputs": ["walkernet_acc_vs_lead.png", "walkernet_acc_vs_lead.pdf"],
     }
@@ -137,9 +125,9 @@ def main() -> None:
         json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
     )
     (OUT / "walkernet_acc_vs_lead.alt.txt").write_text(
-        "Line chart of WalkerNet Niño3.4 anomaly ACC from lead 1 to 36. "
-        "Solid lines show monthly ACC and dashed lines show three-month mean ACC; "
-        "red is WalkerNet and black is persistence. A horizontal dashed line marks ACC=0.5. "
+        "Line chart of WalkerNet Nino3.4 anomaly ACC from lead 1 to 36. "
+        "The solid red line shows monthly ACC and the dashed red line shows three-month mean ACC. "
+        "A horizontal dashed line marks ACC=0.5. "
         "No smoothing or interpolation is applied.",
         encoding="utf-8",
     )

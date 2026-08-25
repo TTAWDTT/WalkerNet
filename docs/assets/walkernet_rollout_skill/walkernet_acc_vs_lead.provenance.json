@@ -10,9 +10,8 @@
     "no interpolation"
   ],
   "series": [
-    "monthly anomaly ACC",
-    "three-month mean anomaly ACC",
-    "persistence counterparts"
+    "WalkerNet monthly anomaly ACC",
+    "WalkerNet three-month mean anomaly ACC"
   ],
   "threshold": "ACC=0.5 reference line only; no values clipped",
   "outputs": [
