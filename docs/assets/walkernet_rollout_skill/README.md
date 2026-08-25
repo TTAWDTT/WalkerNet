@@ -14,4 +14,10 @@ The plot uses the saved WalkerNet monthly and three-month-mean ACC values for `h
 - [walkernet_acc_vs_lead.provenance.json](walkernet_acc_vs_lead.provenance.json)
 - [walkernet_acc_vs_lead.alt.txt](walkernet_acc_vs_lead.alt.txt)
 
-The second start-month × target-month figure is intentionally not generated yet; its hatching rule needs to be fixed before plotting.
+
+The corrected second figure is:
+
+- [walkernet_acc_by_start_month_lead1_36.png](walkernet_acc_by_start_month_lead1_36.png)
+- [walkernet_acc_by_start_month_lead1_36.pdf](walkernet_acc_by_start_month_lead1_36.pdf)
+
+It uses start month on the y-axis, lead month 1--36 on the x-axis, and ACC as the color field. For each start-month row, hatching marks the four endpoint lead cells following the largest one-step ACC drops `ACC(lead) - ACC(lead+1)`. The previous 12-small-multiple orientation is retained only under `archive_wrong_orientation/` for traceability.

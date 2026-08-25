@@ -1,0 +1,291 @@
+{
+  "figure": "walkernet_acc_by_start_month_lead1_36",
+  "source_remote_dir": "/data/WalkerNet/outputs/eval_rollout_best_skill_test_lead1_36_20260825/",
+  "source_file": "eval_rollout_best_skill_lead1_36_by_start_month.csv",
+  "checkpoint": "historical_mixed5_best_skill.pt",
+  "split": "test",
+  "series": "WalkerNet monthly Niño3.4 anomaly ACC only",
+  "leads_plotted": "1-36",
+  "hatching": "For each start month, the four largest positive one-step drops ACC[lead]-ACC[lead+1]; hatch is drawn on the endpoint lead cell.",
+  "transformations": [
+    "direct saved start-month grouped ACC values rounded to <=6 decimals",
+    "shape-preserving PCHIP interpolation for display only",
+    "markers retain the saved lead values; no value filtering"
+  ],
+  "axes": {
+    "x": "lead month",
+    "y": "start month",
+    "color": "ACC",
+    "limits": "x=[1,36], y=start month 1..12"
+  },
+  "fastest_declines": {
+    "1": [
+      {
+        "from_lead": 16,
+        "to_lead": 17,
+        "drop": 0.271212
+      },
+      {
+        "from_lead": 17,
+        "to_lead": 18,
+        "drop": 0.149997
+      },
+      {
+        "from_lead": 28,
+        "to_lead": 29,
+        "drop": 0.09961699999999998
+      },
+      {
+        "from_lead": 29,
+        "to_lead": 30,
+        "drop": 0.15590400000000001
+      }
+    ],
+    "2": [
+      {
+        "from_lead": 15,
+        "to_lead": 16,
+        "drop": 0.22761000000000003
+      },
+      {
+        "from_lead": 25,
+        "to_lead": 26,
+        "drop": 0.10419199999999998
+      },
+      {
+        "from_lead": 27,
+        "to_lead": 28,
+        "drop": 0.195299
+      },
+      {
+        "from_lead": 28,
+        "to_lead": 29,
+        "drop": 0.153076
+      }
+    ],
+    "3": [
+      {
+        "from_lead": 14,
+        "to_lead": 15,
+        "drop": 0.23001699999999997
+      },
+      {
+        "from_lead": 15,
+        "to_lead": 16,
+        "drop": 0.11929200000000001
+      },
+      {
+        "from_lead": 26,
+        "to_lead": 27,
+        "drop": 0.19277
+      },
+      {
+        "from_lead": 27,
+        "to_lead": 28,
+        "drop": 0.10960700000000001
+      }
+    ],
+    "4": [
+      {
+        "from_lead": 4,
+        "to_lead": 5,
+        "drop": 0.12909800000000005
+      },
+      {
+        "from_lead": 13,
+        "to_lead": 14,
+        "drop": 0.27008699999999997
+      },
+      {
+        "from_lead": 25,
+        "to_lead": 26,
+        "drop": 0.187085
+      },
+      {
+        "from_lead": 26,
+        "to_lead": 27,
+        "drop": 0.14236
+      }
+    ],
+    "5": [
+      {
+        "from_lead": 12,
+        "to_lead": 13,
+        "drop": 0.269417
+      },
+      {
+        "from_lead": 13,
+        "to_lead": 14,
+        "drop": 0.10985499999999998
+      },
+      {
+        "from_lead": 24,
+        "to_lead": 25,
+        "drop": 0.182317
+      },
+      {
+        "from_lead": 25,
+        "to_lead": 26,
+        "drop": 0.10340099999999999
+      }
+    ],
+    "6": [
+      {
+        "from_lead": 2,
+        "to_lead": 3,
+        "drop": 0.12339
+      },
+      {
+        "from_lead": 11,
+        "to_lead": 12,
+        "drop": 0.16944899999999996
+      },
+      {
+        "from_lead": 22,
+        "to_lead": 23,
+        "drop": 0.11819000000000002
+      },
+      {
+        "from_lead": 23,
+        "to_lead": 24,
+        "drop": 0.13273199999999996
+      }
+    ],
+    "7": [
+      {
+        "from_lead": 10,
+        "to_lead": 11,
+        "drop": 0.17154000000000003
+      },
+      {
+        "from_lead": 22,
+        "to_lead": 23,
+        "drop": 0.09238000000000002
+      },
+      {
+        "from_lead": 23,
+        "to_lead": 24,
+        "drop": 0.08539999999999998
+      },
+      {
+        "from_lead": 27,
+        "to_lead": 28,
+        "drop": 0.08551599999999998
+      }
+    ],
+    "8": [
+      {
+        "from_lead": 21,
+        "to_lead": 22,
+        "drop": 0.15965199999999996
+      },
+      {
+        "from_lead": 22,
+        "to_lead": 23,
+        "drop": 0.129075
+      },
+      {
+        "from_lead": 33,
+        "to_lead": 34,
+        "drop": 0.117369
+      },
+      {
+        "from_lead": 34,
+        "to_lead": 35,
+        "drop": 0.147862
+      }
+    ],
+    "9": [
+      {
+        "from_lead": 20,
+        "to_lead": 21,
+        "drop": 0.20304299999999997
+      },
+      {
+        "from_lead": 21,
+        "to_lead": 22,
+        "drop": 0.17913800000000002
+      },
+      {
+        "from_lead": 32,
+        "to_lead": 33,
+        "drop": 0.10683999999999999
+      },
+      {
+        "from_lead": 33,
+        "to_lead": 34,
+        "drop": 0.194
+      }
+    ],
+    "10": [
+      {
+        "from_lead": 7,
+        "to_lead": 8,
+        "drop": 0.08878800000000009
+      },
+      {
+        "from_lead": 20,
+        "to_lead": 21,
+        "drop": 0.101968
+      },
+      {
+        "from_lead": 32,
+        "to_lead": 33,
+        "drop": 0.16780899999999999
+      },
+      {
+        "from_lead": 34,
+        "to_lead": 35,
+        "drop": 0.113023
+      }
+    ],
+    "11": [
+      {
+        "from_lead": 18,
+        "to_lead": 19,
+        "drop": 0.1354559999999999
+      },
+      {
+        "from_lead": 19,
+        "to_lead": 20,
+        "drop": 0.15452900000000003
+      },
+      {
+        "from_lead": 30,
+        "to_lead": 31,
+        "drop": 0.08518700000000001
+      },
+      {
+        "from_lead": 31,
+        "to_lead": 32,
+        "drop": 0.17813500000000002
+      }
+    ],
+    "12": [
+      {
+        "from_lead": 17,
+        "to_lead": 18,
+        "drop": 0.183701
+      },
+      {
+        "from_lead": 18,
+        "to_lead": 19,
+        "drop": 0.17726799999999998
+      },
+      {
+        "from_lead": 29,
+        "to_lead": 30,
+        "drop": 0.09473399999999998
+      },
+      {
+        "from_lead": 30,
+        "to_lead": 31,
+        "drop": 0.163958
+      }
+    ]
+  },
+  "outputs": [
+    "walkernet_acc_by_start_month_lead1_36.png",
+    "walkernet_acc_by_start_month_lead1_36.pdf"
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "figure": "walkernet_acc_by_start_month_lead1_18",
+  "source_remote_dir": "/data/WalkerNet/outputs/eval_rollout_best_skill_test_lead1_36_20260825/",
+  "source_file": "eval_rollout_best_skill_lead1_36_by_start_month.csv",
+  "checkpoint": "historical_mixed5_best_skill.pt",
+  "split": "test",
+  "series": "WalkerNet monthly Niño3.4 anomaly ACC only",
+  "leads_plotted": "1-18",
+  "transformations": [
+    "direct saved start-month grouped ACC values rounded to <=6 decimals",
+    "shape-preserving PCHIP interpolation for display only",
+    "markers retain the saved lead values; no value filtering"
+  ],
+  "axes": {
+    "x": "lead month",
+    "y": "ACC",
+    "limits": "x=[1,18], y=[0,1]"
+  },
+  "outputs": [
+    "walkernet_acc_by_start_month_lead1_18.png",
+    "walkernet_acc_by_start_month_lead1_18.pdf"
+  ]
+}
