@@ -1,0 +1,212 @@
+
+\documentclass[border=8pt, multi, tikz]{standalone} 
+\usepackage{import}
+\subimport{plotneuralnet_layers/}{init}
+\usetikzlibrary{positioning}
+\usetikzlibrary{3d} %for including external image 
+
+\def\ConvColor{rgb:yellow,5;red,2.5;white,5}
+\def\ConvReluColor{rgb:yellow,5;red,5;white,5}
+\def\PoolColor{rgb:red,1;black,0.3}
+\def\UnpoolColor{rgb:blue,2;green,1;black,0.3}
+\def\FcColor{rgb:blue,5;red,2.5;white,5}
+\def\FcReluColor{rgb:blue,5;red,5;white,4}
+\def\SoftmaxColor{rgb:magenta,5;black,7}   
+\def\SumColor{rgb:blue,5;green,15}
+
+\newcommand{\copymidarrow}{\tikz \draw[-Stealth,line width=0.8mm,draw={rgb:blue,4;red,1;green,1;black,3}] (-0.3,0) -- ++(0.3,0);}
+
+\begin{document}
+\begin{tikzpicture}
+\tikzstyle{connection}=[ultra thick,every node/.style={sloped,allow upside down},draw=\edgecolor,opacity=0.7]
+\tikzstyle{copyconnection}=[ultra thick,every node/.style={sloped,allow upside down},draw={rgb:blue,4;red,1;green,1;black,3},opacity=0.7]
+
+\pic[shift={(0,0,0)}] at (0,0,0) 
+    {Box={
+        name=input,
+        caption=Input,
+        fill=\ConvColor,
+        height=15,
+        width=2.2,
+        depth=15
+        }
+    };
+
+\pic[shift={ (1.6,0,0) }] at (input-east) 
+    {RightBandedBox={
+        name=patch,
+        caption=Patch,
+        fill=\ConvColor,
+        bandfill=\ConvReluColor,
+        height=12,
+        width={ 1.4 , 1.0 },
+        depth=12
+        }
+    };
+
+\draw [connection]  (input-east)    -- node {\midarrow} (patch-west);
+
+\pic[shift={ (1.6,0,0) }] at (patch-east) 
+    {RightBandedBox={
+        name=fusion,
+        caption=Fusion,
+        fill=\ConvColor,
+        bandfill=\ConvReluColor,
+        height=10,
+        width={ 1.5 , 1.1 },
+        depth=10
+        }
+    };
+
+\draw [connection]  (patch-east)    -- node {\midarrow} (fusion-west);
+
+\pic[shift={(1.7,0.8,0)}] at (fusion-east) 
+    {Box={
+        name=spatial1,
+        caption=S1,
+        fill=\ConvColor,
+        height=8.5,
+        width=1.0,
+        depth=8.5
+        }
+    };
+
+\pic[shift={(1.15,0,0)}] at (spatial1-east) 
+    {Box={
+        name=spatial6,
+        caption=S6,
+        fill=\ConvColor,
+        height=8.5,
+        width=1.0,
+        depth=8.5
+        }
+    };
+
+\draw [connection]  (fusion-east)    -- node {\midarrow} (spatial1-west);
+
+\draw [connection]  (spatial1-east)    -- node {\midarrow} (spatial6-west);
+
+\pic[shift={(1.7,-0.9,0)}] at (spatial6-east) 
+    {Box={
+        name=gate,
+        caption=Gate,
+        fill=\SoftmaxColor,
+        opacity=0.8,
+        height=3.0,
+        width=1.5,
+        depth=7.0
+        }
+    };
+
+\draw [connection]  (spatial6-east)    -- node {\midarrow} (gate-west);
+
+\pic[shift={(1.3,1.6,0)}] at (gate-east) 
+    {Box={
+        name=expert_a,
+        caption=E1,
+        fill=\ConvColor,
+        height=4.5,
+        width=0.8,
+        depth=4.5
+        }
+    };
+
+\pic[shift={(1.3,-2.3,0)}] at (gate-east) 
+    {Box={
+        name=expert_b,
+        caption=E2,
+        fill=\ConvColor,
+        height=4.5,
+        width=0.8,
+        depth=4.5
+        }
+    };
+
+\draw [connection]  (gate-east)    -- node {\midarrow} (expert_a-west);
+
+\draw [connection]  (gate-east)    -- node {\midarrow} (expert_b-west);
+
+\pic[shift={ (1.4,1.6,0) }] at (expert_b-east) 
+    {Box={
+        name=lowres,
+        caption=Map,
+        fill=\PoolColor,
+        opacity=0.5,
+        height=7.5,
+        width=1.0,
+        depth=7.5
+        }
+    };
+
+\draw [connection]  (expert_a-east)    -- node {\midarrow} (lowres-west);
+
+\draw [connection]  (expert_b-east)    -- node {\midarrow} (lowres-west);
+
+\pic[shift={ (1.2,0,0) }] at (lowres-east) 
+    {Box={
+        name=up2,
+        caption=Up2,
+        fill=\PoolColor,
+        opacity=0.5,
+        height=10.0,
+        width=1.0,
+        depth=10.0
+        }
+    };
+
+\draw [connection]  (lowres-east)    -- node {\midarrow} (up2-west);
+
+\pic[shift={ (1.2,0,0) }] at (up2-east) 
+    {Box={
+        name=up4,
+        caption=Up2,
+        fill=\PoolColor,
+        opacity=0.5,
+        height=13.0,
+        width=1.0,
+        depth=13.0
+        }
+    };
+
+\draw [connection]  (up2-east)    -- node {\midarrow} (up4-west);
+
+\pic[shift={(1.4,0,0)}] at (up4-east) 
+    {Box={
+        name=delta,
+        caption=Head,
+        fill=\ConvColor,
+        height=14.0,
+        width=1.2,
+        depth=14.0
+        }
+    };
+
+\draw [connection]  (up4-east)    -- node {\midarrow} (delta-west);
+
+\pic[shift={(1.2,-1.0,0)}] at (delta-east) 
+    {Ball={
+        name=add,
+        fill=\SumColor,
+        opacity=0.85,
+        radius=2.1,
+        logo=$+$
+        }
+    };
+
+\draw [connection]  (delta-east)    -- node {\midarrow} (add-west);
+
+\pic[shift={(1.1,0,0)}] at (add-east) 
+    {Box={
+        name=output,
+        caption=Output,
+        fill=\ConvColor,
+        height=14.0,
+        width=1.5,
+        depth=14.0
+        }
+    };
+
+\draw [connection]  (add-east)    -- node {\midarrow} (output-west);
+\tikzset{stageNote/.style={font=\scriptsize,align=center,text width=3.0cm,minimum height=0.85cm,rounded corners=2pt,draw=black!25,fill=black!3,inner sep=3pt}}\node[font=\scriptsize\bfseries,text=black!55] at (11,-4.05) {Implementation details};\node[stageNote] at (1.25,-5.0) {\textbf{Input}\\12-month state; TOS / ZOS / TAUU / TAUV};\node[stageNote] at (4.9,-5.0) {\textbf{Patch embedding}\\4x4 Conv2d to 45x90 tokens};\node[stageNote] at (8.55,-5.0) {\textbf{Local fusion}\\48 field-time tokens\\+ fusion token};\node[stageNote] at (12.2,-5.0) {\textbf{Global space}\\6 pre-norm SABs; 8 heads};\node[stageNote] at (15.85,-5.0) {\textbf{Month-gated TMoE}\\12 experts; top-k=2};\node[stageNote] at (19.5,-5.0) {\textbf{Decoder / rollout}\\PixelShuffle x2 x2; 1x1 head; residual};\node[font=\Large\bfseries] at (11,3.8) {WalkerNet};\node[font=\large] at (11,3.1) {local fusion $\rightarrow$ global space $\rightarrow$ month-gated TMoE $\rightarrow$ residual rollout};\node[font=\small] at (11,2.45) {B x 12 x 4 x 180 x 360  |  4050 spatial tokens  |  12 experts, top-k=2  |  residual output};
+\end{tikzpicture}
+\end{document}
