@@ -19,6 +19,7 @@ import matplotlib as mpl
 mpl.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.interpolate import PchipInterpolator
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -81,15 +82,25 @@ def main() -> None:
     }):
         fig, ax = plt.subplots(figsize=(7.2, 4.45), layout="constrained")
         model_color = "#C44E52"       # warm red, matching the reference style
+        dense_leads = np.linspace(1, 36, 721)
+        dense_three_month_leads = np.linspace(3, 36, 661)
+        monthly_curve = PchipInterpolator(LEADS, MONTHLY_MODEL)(dense_leads)
+        three_month_curve = PchipInterpolator(THREE_MONTH_LEADS, THREE_MONTH_MODEL)(dense_three_month_leads)
         ax.plot(
-            LEADS, MONTHLY_MODEL, color=model_color, linewidth=2.25,
-            marker="o", markersize=3.2, markevery=2,
+            dense_leads, monthly_curve, color=model_color, linewidth=2.25,
             label="WalkerNet monthly ACC", zorder=3,
         )
         ax.plot(
-            THREE_MONTH_LEADS, THREE_MONTH_MODEL, color=model_color, linewidth=1.65,
-            linestyle="--", marker="o", markersize=2.4, markevery=3,
-            alpha=0.85, label="WalkerNet 3-month ACC", zorder=3,
+            LEADS, MONTHLY_MODEL, color=model_color, linestyle="None",
+            marker="o", markersize=3.2, markevery=2, zorder=4,
+        )
+        ax.plot(
+            dense_three_month_leads, three_month_curve, color=model_color, linewidth=1.65,
+            linestyle="--", alpha=0.85, label="WalkerNet 3-month ACC", zorder=3,
+        )
+        ax.plot(
+            THREE_MONTH_LEADS, THREE_MONTH_MODEL, color=model_color, linestyle="None",
+            marker="o", markersize=2.4, markevery=3, alpha=0.85, zorder=4,
         )
         ax.axhline(0.5, color="#666666", linestyle=(0, (4, 3)), linewidth=1.0, zorder=1)
         ax.text(35.7, 0.515, "ACC = 0.5", color="#555555", ha="right", va="bottom", fontsize=8)
@@ -116,7 +127,11 @@ def main() -> None:
         "checkpoint": "historical_mixed5_best_skill.pt",
         "split": "test",
         "complete_lead36_samples": 245,
-        "transformations": ["direct saved ACC values rounded to <=6 decimals", "no smoothing", "no interpolation"],
+        "transformations": [
+            "direct saved ACC values rounded to <=6 decimals",
+            "shape-preserving PCHIP interpolation for display only",
+            "markers retain the saved lead values; no value smoothing or filtering",
+        ],
         "series": ["WalkerNet monthly anomaly ACC", "WalkerNet three-month mean anomaly ACC"],
         "threshold": "ACC=0.5 reference line only; no values clipped",
         "outputs": ["walkernet_acc_vs_lead.png", "walkernet_acc_vs_lead.pdf"],
@@ -126,9 +141,10 @@ def main() -> None:
     )
     (OUT / "walkernet_acc_vs_lead.alt.txt").write_text(
         "Line chart of WalkerNet Nino3.4 anomaly ACC from lead 1 to 36. "
-        "The solid red line shows monthly ACC and the dashed red line shows three-month mean ACC. "
+        "The solid red line shows a shape-preserving PCHIP display curve through the saved monthly ACC points, "
+        "and the dashed red line does the same for three-month mean ACC; markers show the saved lead values. "
         "A horizontal dashed line marks ACC=0.5. "
-        "No smoothing or interpolation is applied.",
+        "The interpolation is display-only and does not replace the saved lead values.",
         encoding="utf-8",
     )
 

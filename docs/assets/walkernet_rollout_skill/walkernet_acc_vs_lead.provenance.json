@@ -6,8 +6,8 @@
   "complete_lead36_samples": 245,
   "transformations": [
     "direct saved ACC values rounded to <=6 decimals",
-    "no smoothing",
-    "no interpolation"
+    "shape-preserving PCHIP interpolation for display only",
+    "markers retain the saved lead values; no value smoothing or filtering"
   ],
   "series": [
     "WalkerNet monthly anomaly ACC",
