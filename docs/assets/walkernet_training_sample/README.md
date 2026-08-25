@@ -14,3 +14,8 @@ Files:
 - `walker_net_training_sample_global_pseudo3d.png`
 - `walker_net_training_sample_global_pseudo3d.pdf`
 - `walker_net_training_sample_global_pseudo3d.provenance.json`
+
+The vertically stacked version is:
+
+- `walker_net_training_sample_global_pseudo3d_stack.png`
+- `walker_net_training_sample_global_pseudo3d_stack.pdf`
