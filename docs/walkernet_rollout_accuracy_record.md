@@ -150,3 +150,29 @@ eval_rollout_best_skill_lead12_by_start_month.json
 ## Resource note
 
 正式评测使用的是 GPU007 的 GPU0；启动时 GPU0--7 均为真正空闲状态（显存约 0--4 MiB / 143771 MiB）。评测完成后已释放 GPU0，其他卡未被占用。
+
+## Extended evaluation: lead-19--36 and 12×12 start/end-month matrices
+
+日期：2026-08-25。由于原正式 run 只到 lead-18，本次在同一 checkpoint、同一 test split 和同一 anomaly/climatology 口径下补跑 `max_lead=36`。完整 rollout 的有效样本为 **245**。
+
+扩展结果目录：
+
+```text
+/data/WalkerNet/outputs/eval_rollout_best_skill_test_lead1_36_20260825/
+```
+
+新增文件：
+
+```text
+eval_rollout_best_skill_monthly_lead1_36.csv
+eval_rollout_best_skill_monthly_lead1_36.json
+eval_rollout_best_skill_lead1_36_by_start_month.csv
+eval_rollout_best_skill_lead1_36_by_start_month.json
+eval_rollout_best_skill_start_end_month_acc_12x12_model.csv
+eval_rollout_best_skill_start_end_month_acc_12x12_persistence.csv
+eval_rollout_best_skill_start_end_month_acc_12x12.json
+```
+
+`lead1_36_by_start_month` 是完整的起始月份 × lead 分组结果（12×36×model/persistence）。12×12 矩阵使用前 12 个 lead，将 `end_month = start_month + lead - 1 (mod 12)` 映射到列；JSON 同时保存每个格子的 lead 和样本数。
+
+lead-19--36 的 monthly model ACC 从 **0.555**（lead-19）下降到 **0.078**（lead-36）。model 的 monthly ACC 仍不低于 0.5 的最后一个 lead 是 **20**；3-month mean ACC 仍不低于 0.5 的最后一个 lead 是 **21**。在 lead-31 之后 persistence 开始超过 model，说明 lead-19--36 属于长时距外推区，不能简单宣称模型在整个 36 个月范围内都优于 persistence。
