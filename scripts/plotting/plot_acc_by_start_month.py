@@ -76,7 +76,7 @@ def main() -> None:
         "savefig.facecolor": "white",
     }):
         fig, ax = plt.subplots(figsize=(10.5, 5.45))
-        fig.subplots_adjust(left=0.075, right=0.90, bottom=0.19, top=0.88)
+        fig.subplots_adjust(left=0.075, right=0.90, bottom=0.18, top=0.92)
         values = ACC_BY_START_MONTH
         x_raw = np.arange(1, 37, dtype=float)
         y_raw = np.arange(1, 13, dtype=float)
@@ -118,10 +118,10 @@ def main() -> None:
         cb.set_label("ACC")
         cb.set_ticks([-0.2, 0.0, 0.2, 0.4, 0.6, 0.8, 1.0])
         from matplotlib.patches import Patch
-        ax.legend(
+        fig.legend(
             handles=[Patch(facecolor="white", edgecolor="#555555", hatch="///",
                            label="four fastest one-step ACC declines per start month")],
-            loc="lower left",
+            loc="lower left", bbox_to_anchor=(0.075, 0.015),
             framealpha=0.92, fontsize=8.5,
         )
         for fmt in ("png", "pdf"):
