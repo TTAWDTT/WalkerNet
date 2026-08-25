@@ -1,0 +1,30 @@
+{
+  "input": "D:\\Github\\WalkerNet\\tmp\\walkernet_training_sample_cesm2_t0.npz",
+  "source": "CESM2",
+  "time_index": 0,
+  "variables": [
+    "TOS",
+    "ZOS",
+    "TAUX",
+    "TAUY"
+  ],
+  "native_grid": [
+    180,
+    360
+  ],
+  "display_grid": [
+    720,
+    1440
+  ],
+  "transformations": [
+    "rectangular lat-lon fields",
+    "NaN-aware Gaussian smoothing sigma=1.4",
+    "4x cubic interpolation",
+    "pseudo-3D bilinear trapezoid mapping",
+    "35 contour levels per variable"
+  ],
+  "outputs": [
+    "walker_net_training_sample_global_pseudo3d.png",
+    "walker_net_training_sample_global_pseudo3d.pdf"
+  ]
+}

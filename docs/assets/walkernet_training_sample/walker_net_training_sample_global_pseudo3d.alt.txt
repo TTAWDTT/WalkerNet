@@ -1,0 +1,1 @@
+Four global pseudo-3D surfaces from one CESM2 WalkerNet training sample: TOS, ZOS, TAUX, and TAUY. Each field was first represented on a rectangular latitude-longitude grid, then smoothed, densely interpolated, and mapped to a skewed pseudo-3D surface.
