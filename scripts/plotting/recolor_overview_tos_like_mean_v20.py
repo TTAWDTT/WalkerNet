@@ -44,9 +44,14 @@ def refine(panel: np.ndarray) -> np.ndarray:
     smooth = zoom(smooth, (1 / 4, 1 / 4), order=3, mode="nearest", prefilter=True)
     smooth = np.clip(smooth, -0.95, 0.95)
 
-    # Same visual family as the upper TOS panel in the supplied reference:
-    # blue negative anomalies, pale near-zero values, red positive anomalies.
-    cmap = mpl.colormaps["RdYlBu_r"]
+    # Exact soft TOS palette used by the supplied reference figure's upper
+    # panel: muted blue negative anomalies, gray-white near zero, and brick-red
+    # positive anomalies.
+    cmap = mpl.colors.LinearSegmentedColormap.from_list(
+        "reference_soft_red_blue",
+        ["#2F6DA3", "#86B9D8", "#D9D8D5", "#E89A86", "#B63E3E"],
+        N=256,
+    )
     mapped = cmap((smooth + 0.95) / 1.90)[..., :3]
     out = np.rint(mapped * 255.0).astype(np.uint8)
     out[~valid] = 255
