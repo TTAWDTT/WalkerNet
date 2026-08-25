@@ -111,6 +111,17 @@
     };
 
 \draw [connection]  (add-east)    -- node {\midarrow} (output-west);
-\tikzset{basebox/.style={draw=black!45,fill=yellow!15,rounded corners=2pt,align=center,font=\scriptsize,minimum width=2.2cm,minimum height=0.65cm,inner sep=3pt}}\node[basebox] (xlast) at ($(add-south)+(-0.4,-1.50)$) {$x_{last}$\\last state};\draw [copyconnection,-Stealth] (xlast.east) .. controls +(1.0,0) and +(-0.4,-1.0) .. (add-south);\node[font=\Large\bfseries] at (8.0,6.7) {Decoder and Residual Autoregressive Rollout};\node[font=\large] at (8.0,6.0) {Decode $\Delta y$ at full resolution, then feed the new state back into the input window};\node[font=\small] at (8.0,5.35) {$\hat{x}_{t+1}=x_{last}+\Delta y_{t+1}$};\tikzset{rollbox/.style={draw=black!45,fill=blue!5,rounded corners=2pt,align=center,font=\scriptsize,minimum width=2.35cm,minimum height=0.85cm,inner sep=3pt}}\node[font=\small\bfseries,text=black!60] at (8.0,-3.55) {Autoregressive rollout};\node[rollbox] (w0) at (1.5,-4.65) {History window\\$x_{t-11:t}$};\node[rollbox] (m1) at (4.3,-4.65) {WalkerNet\\step 1};\node[rollbox] (p1) at (7.1,-4.65) {Prediction\\$\hat{x}_{t+1}$};\node[rollbox] (w1) at (9.9,-4.65) {Shift window\\append / drop};\node[rollbox] (m2) at (12.7,-4.65) {WalkerNet\\step 2};\node[rollbox] (p2) at (15.5,-4.65) {Prediction\\$\hat{x}_{t+2}$};\node[font=\Large\bfseries] (more) at (18.0,-4.65) {$\cdots$};\draw[-Stealth,thick,draw=black!60] (w0.east) -- (m1.west);\draw[-Stealth,thick,draw=black!60] (m1.east) -- (p1.west);\draw[-Stealth,thick,draw=black!60] (p1.east) -- node[above,font=\scriptsize] {update} (w1.west);\draw[-Stealth,thick,draw=black!60] (w1.east) -- (m2.west);\draw[-Stealth,thick,draw=black!60] (m2.east) -- (p2.west);\draw[-Stealth,thick,draw=black!60] (p2.east) -- (more.west);
+
+\pic[shift={(0,-1.8,0)}] at (tokens-west) 
+    {Box={
+        name=xlast,
+        caption= ,
+        fill=\ConvColor,
+        height=3.0,
+        width=0.8,
+        depth=3.0
+        }
+    };
+\draw [copyconnection,-Stealth] (xlast-east) .. controls +(3.0,-2.0) and +(-1.0,-2.0) .. (add-south);\node[font=\Large\bfseries] at (8.0,6.7) {Decoder and Residual Autoregressive Rollout};\node[font=\large] at (8.0,6.0) {Decode $\Delta y$ at full resolution, then feed the new state back into the input window};\node[font=\small] at (8.0,5.35) {$\hat{x}_{t+1}=x_{last}+\Delta y_{t+1}$};\tikzset{rollbox/.style={draw=black!35,fill=blue!4,rounded corners=2pt,align=center,font=\scriptsize,minimum width=2.05cm,minimum height=0.65cm,inner sep=3pt}}\node[font=\small\bfseries,text=black!60] at (8.0,-4.10) {Autoregressive rollout};\node[rollbox] (w0) at (1.5,-5.20) {$x_{t-11:t}$};\node[rollbox] (m1) at (4.3,-5.20) {$f_\theta$};\node[rollbox] (p1) at (7.1,-5.20) {$\hat{x}_{t+1}$};\node[rollbox] (w1) at (9.9,-5.20) {shift};\node[rollbox] (m2) at (12.7,-5.20) {$f_\theta$};\node[rollbox] (p2) at (15.5,-5.20) {$\hat{x}_{t+2}$};\node[font=\Large\bfseries] (more) at (18.0,-5.20) {$\cdots$};\draw[-Stealth,thick,draw=black!60] (w0.east) -- (m1.west);\draw[-Stealth,thick,draw=black!60] (m1.east) -- (p1.west);\draw[-Stealth,thick,draw=black!60] (p1.east) -- node[above,font=\scriptsize] {update} (w1.west);\draw[-Stealth,thick,draw=black!60] (w1.east) -- (m2.west);\draw[-Stealth,thick,draw=black!60] (m2.east) -- (p2.west);\draw[-Stealth,thick,draw=black!60] (p2.east) -- (more.west);
 \end{tikzpicture}
 \end{document}
