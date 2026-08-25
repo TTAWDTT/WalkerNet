@@ -273,6 +273,62 @@ def _start_month_nino12_metrics(
     return result
 
 
+def _start_month_lead_metrics(
+    start_month: torch.Tensor,
+    model_nino: dict[int, torch.Tensor],
+    persistence_nino: dict[int, torch.Tensor],
+    target_nino: dict[int, torch.Tensor],
+    max_lead: int,
+) -> dict[str, dict[str, dict[str, dict[str, float]]]]:
+    """按起始月份和 lead 汇总全部 Niño3.4 anomaly skill。"""
+    result: dict[str, dict[str, dict[str, dict[str, float]]]] = {}
+    for month in range(1, 13):
+        mask = start_month == month
+        result[str(month)] = {}
+        for lead in range(1, max_lead + 1):
+            result[str(month)][str(lead)] = {
+                "model": _nino_summary(model_nino[lead][mask], target_nino[lead][mask]),
+                "persistence": _nino_summary(persistence_nino[lead][mask], target_nino[lead][mask]),
+            }
+    return result
+
+
+def _start_end_month_acc_12x12(
+    start_month_lead_metrics: dict[str, dict[str, dict[str, dict[str, float]]]],
+) -> dict[str, Any]:
+    """将前 12 个 lead 映射为起始月份×终止月份的 12×12 ACC 矩阵。"""
+    systems = ("model", "persistence")
+    matrices: dict[str, list[list[float]]] = {system: [] for system in systems}
+    counts: list[list[int]] = []
+    lead_map: list[list[int]] = []
+    for start in range(1, 13):
+        row_counts: list[int] = []
+        row_leads: list[int] = []
+        for end in range(1, 13):
+            lead = (end - start) % 12 + 1
+            row_leads.append(lead)
+            row_counts.append(start_month_lead_metrics[str(start)][str(lead)]["model"]["num_samples"])
+        lead_map.append(row_leads)
+        counts.append(row_counts)
+    for system in systems:
+        for start in range(1, 13):
+            row: list[float] = []
+            for end in range(1, 13):
+                lead = (end - start) % 12 + 1
+                row.append(start_month_lead_metrics[str(start)][str(lead)][system]["corr"])
+            matrices[system].append(row)
+    return {"model": matrices["model"], "persistence": matrices["persistence"], "num_samples": counts, "lead": lead_map}
+
+
+def _write_start_end_matrix_csv(path: Path, matrix: list[list[float]]) -> None:
+    """写出一个 12×12 start-month/end-month ACC 矩阵。"""
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["start_month"] + [f"end_month_{month}" for month in range(1, 13)])
+        for start, row in enumerate(matrix, start=1):
+            writer.writerow([start, *row])
+
+
 def _write_month_grouped_csv(path: Path, metrics: dict[str, dict[str, dict[str, float]]]) -> None:
     """写出按起始月份分组的 lead-12 anomaly skill。"""
     with path.open("w", newline="", encoding="utf-8") as f:
@@ -285,9 +341,22 @@ def _write_month_grouped_csv(path: Path, metrics: dict[str, dict[str, dict[str, 
                 writer.writerow([month, 12, system, row["rmse"], row["mae"], row["corr"], row["num_samples"]])
 
 
+def _write_start_month_lead_csv(path: Path, metrics: dict[str, dict[str, dict[str, dict[str, float]]]], max_lead: int) -> None:
+    """写出起始月份×lead 的完整分组指标。"""
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["start_month", "lead", "system", "rmse", "mae", "acc", "num_samples"])
+        for month in range(1, 13):
+            for lead in range(1, max_lead + 1):
+                for system in ("model", "persistence"):
+                    row = metrics[str(month)][str(lead)][system]
+                    writer.writerow([month, lead, system, row["rmse"], row["mae"], row["corr"], row["num_samples"]])
+
+
 def _write_canonical_lead_files(output_dir: Path, nino_metrics: dict[str, Any], leads: list[int]) -> None:
     """写出论文后处理使用的完整 lead-1--18 monthly/3-month 表。"""
-    csv_path = output_dir / "eval_rollout_best_skill_monthly_lead1_18.csv"
+    suffix = max(leads)
+    csv_path = output_dir / f"eval_rollout_best_skill_monthly_lead1_{suffix}.csv"
     _write_nino_lead_csv(csv_path, nino_metrics, leads)
     payload = {
         "leads": leads,
@@ -296,7 +365,7 @@ def _write_canonical_lead_files(output_dir: Path, nino_metrics: dict[str, Any], 
         "effective_lead": nino_metrics["effective_lead"],
         "metric": "Niño3.4 anomaly ACC (corr), RMSE and MAE",
     }
-    (output_dir / "eval_rollout_best_skill_monthly_lead1_18.json").write_text(
+    (output_dir / f"eval_rollout_best_skill_monthly_lead1_{suffix}.json").write_text(
         json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
     )
 
@@ -443,16 +512,19 @@ def evaluate_rollout(
         }
 
     nino_metrics = _series_summary(nino_model, nino_persistence, nino_target, leads)
+    start_month_lead_metrics = _start_month_lead_metrics(
+        start_month, nino_model, nino_persistence, nino_target, max_lead
+    )
     start_month_metrics = _start_month_nino12_metrics(
-        start_month,
-        nino_model[12],
-        nino_persistence[12],
-        nino_target[12],
+        start_month, nino_model[12], nino_persistence[12], nino_target[12]
     ) if max_lead >= 12 else {}
+    start_end_month_metrics = _start_end_month_acc_12x12(start_month_lead_metrics) if max_lead >= 12 else {}
     return {
         "field": field_metrics,
         "nino34_anomaly": nino_metrics,
         "lead12_by_start_month": start_month_metrics,
+        "lead_by_start_month": start_month_lead_metrics,
+        "start_end_month_acc_12x12": start_end_month_metrics,
     }
 
 
@@ -518,19 +590,41 @@ def main() -> None:
             "effective_lead": result["nino34_anomaly"]["effective_lead"],
         },
         "lead12_by_start_month": result["lead12_by_start_month"],
+        "lead_by_start_month": result["lead_by_start_month"],
+        "start_end_month_acc_12x12": result["start_end_month_acc_12x12"],
     }
 
     metrics_json = output_dir / f"{args.split}_rollout_metrics.json"
     field_csv = output_dir / f"{args.split}_rollout_field_metrics.csv"
     nino_csv = output_dir / f"{args.split}_rollout_nino34_lead_metrics.csv"
     lead_png = output_dir / f"{args.split}_rollout_nino34_lead_acc.png"
+    suffix = args.max_lead
     start_month_csv = output_dir / "eval_rollout_best_skill_lead12_by_start_month.csv"
     start_month_json = output_dir / "eval_rollout_best_skill_lead12_by_start_month.json"
+    start_month_lead_csv = output_dir / f"eval_rollout_best_skill_lead1_{suffix}_by_start_month.csv"
+    start_month_lead_json = output_dir / f"eval_rollout_best_skill_lead1_{suffix}_by_start_month.json"
+    start_end_model_csv = output_dir / "eval_rollout_best_skill_start_end_month_acc_12x12_model.csv"
+    start_end_persistence_csv = output_dir / "eval_rollout_best_skill_start_end_month_acc_12x12_persistence.csv"
+    start_end_json = output_dir / "eval_rollout_best_skill_start_end_month_acc_12x12.json"
 
     metrics_json.write_text(json.dumps(json_payload, indent=2, ensure_ascii=False), encoding="utf-8")
     _write_field_csv(field_csv, result["field"], leads)
     _write_nino_lead_csv(nino_csv, result["nino34_anomaly"], leads)
     _write_canonical_lead_files(output_dir, result["nino34_anomaly"], leads)
+    _write_start_month_lead_csv(start_month_lead_csv, result["lead_by_start_month"], args.max_lead)
+    start_month_lead_json.write_text(
+        json.dumps(
+            {
+                "leads": list(range(1, args.max_lead + 1)),
+                "grouping": "input-window end / first forecast target month",
+                "metric": "Niño3.4 anomaly ACC (corr), RMSE and MAE",
+                "by_start_month": result["lead_by_start_month"],
+            },
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
     if result["lead12_by_start_month"]:
         _write_month_grouped_csv(start_month_csv, result["lead12_by_start_month"])
         start_month_json.write_text(
@@ -546,17 +640,38 @@ def main() -> None:
             ),
             encoding="utf-8",
         )
+        _write_start_end_matrix_csv(start_end_model_csv, result["start_end_month_acc_12x12"]["model"])
+        _write_start_end_matrix_csv(start_end_persistence_csv, result["start_end_month_acc_12x12"]["persistence"])
+        start_end_json.write_text(
+            json.dumps(
+                {
+                    "definition": "first 12 forecast leads; end_month = start_month + lead - 1 modulo 12",
+                    "model_acc": result["start_end_month_acc_12x12"]["model"],
+                    "persistence_acc": result["start_end_month_acc_12x12"]["persistence"],
+                    "num_samples": result["start_end_month_acc_12x12"]["num_samples"],
+                    "lead": result["start_end_month_acc_12x12"]["lead"],
+                },
+                indent=2,
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
     plotted = _maybe_plot_lead_skill(lead_png, result["nino34_anomaly"])
 
     print(json.dumps(json_payload["nino34_anomaly"], indent=2, ensure_ascii=False))
     print(f"wrote {metrics_json}")
     print(f"wrote {field_csv}")
     print(f"wrote {nino_csv}")
-    print(f"wrote {output_dir / 'eval_rollout_best_skill_monthly_lead1_18.csv'}")
-    print(f"wrote {output_dir / 'eval_rollout_best_skill_monthly_lead1_18.json'}")
+    print(f"wrote {output_dir / f'eval_rollout_best_skill_monthly_lead1_{suffix}.csv'}")
+    print(f"wrote {output_dir / f'eval_rollout_best_skill_monthly_lead1_{suffix}.json'}")
+    print(f"wrote {start_month_lead_csv}")
+    print(f"wrote {start_month_lead_json}")
     if result["lead12_by_start_month"]:
         print(f"wrote {start_month_csv}")
         print(f"wrote {start_month_json}")
+        print(f"wrote {start_end_model_csv}")
+        print(f"wrote {start_end_persistence_csv}")
+        print(f"wrote {start_end_json}")
     if plotted:
         print(f"wrote {lead_png}")
     else:
