@@ -121,7 +121,7 @@ def main() -> None:
         fig.legend(
             handles=[Patch(facecolor="white", edgecolor="#555555", hatch="///",
                            label="four fastest one-step ACC declines per start month")],
-            loc="lower left", bbox_to_anchor=(0.075, 0.015),
+            loc="lower right", bbox_to_anchor=(0.47, 0.015),
             framealpha=0.92, fontsize=8.5,
         )
         for fmt in ("png", "pdf"):
