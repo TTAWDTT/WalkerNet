@@ -1,0 +1,18 @@
+{
+  "input": "D:\\Github\\WalkerNet\\tmp\\walkernet_training_sample_cesm2_t0.npz",
+  "source": "CESM2",
+  "time_index": 0,
+  "variable": "TOS",
+  "projection": "Robinson-style tabulated projection with curved side boundaries",
+  "patch_grid": "45x90 geographic cells, each 4x4 degrees",
+  "transformations": [
+    "reorder longitude to -180..180",
+    "Robinson projection",
+    "no field interpolation",
+    "exact projected 4-degree grid overlay"
+  ],
+  "outputs": [
+    "walker_net_training_sample_tos_patch_grid_robinson.png",
+    "walker_net_training_sample_tos_patch_grid_robinson.pdf"
+  ]
+}

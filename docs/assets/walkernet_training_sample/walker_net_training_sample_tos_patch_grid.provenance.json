@@ -1,0 +1,17 @@
+{
+  "input": "D:\\Github\\WalkerNet\\tmp\\walkernet_training_sample_cesm2_t0.npz",
+  "source": "CESM2",
+  "time_index": 0,
+  "variable": "TOS",
+  "native_grid": "180x360 at 1-degree cells",
+  "patch_grid": "45x90 cells, each 4x4 degrees",
+  "transformations": [
+    "rectangular equirectangular display",
+    "no interpolation",
+    "exact 4-degree patch boundary overlay"
+  ],
+  "outputs": [
+    "walker_net_training_sample_tos_patch_grid.png",
+    "walker_net_training_sample_tos_patch_grid.pdf"
+  ]
+}

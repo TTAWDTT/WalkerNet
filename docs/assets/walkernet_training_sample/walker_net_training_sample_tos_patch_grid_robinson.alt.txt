@@ -1,0 +1,1 @@
+Global Robinson-style TOS map with curved side boundaries and a projected geographic grid of 45 by 90 cells, each four degrees by four degrees.

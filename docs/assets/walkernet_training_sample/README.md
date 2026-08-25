@@ -19,3 +19,9 @@ The vertically stacked version is:
 
 - `walker_net_training_sample_global_pseudo3d_stack.png`
 - `walker_net_training_sample_global_pseudo3d_stack.pdf`
+
+The conventional curved-boundary global projection with the exact projected
+4°×4° patch grid is:
+
+- `walker_net_training_sample_tos_patch_grid_robinson.png`
+- `walker_net_training_sample_tos_patch_grid_robinson.pdf`
