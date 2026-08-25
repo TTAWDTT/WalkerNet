@@ -15,7 +15,7 @@ import matplotlib as mpl
 mpl.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.interpolate import PchipInterpolator
+from scipy.interpolate import PchipInterpolator, RectBivariateSpline
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -78,15 +78,16 @@ def main() -> None:
         fig, ax = plt.subplots(figsize=(10.5, 5.45))
         fig.subplots_adjust(left=0.075, right=0.90, bottom=0.19, top=0.88)
         values = ACC_BY_START_MONTH
-        image = ax.imshow(
-            values,
-            origin="lower",
-            aspect="auto",
-            extent=(0.5, 36.5, 0.5, 12.5),
-            cmap="YlOrBr",
-            vmin=float(np.nanmin(values)),
-            vmax=1.0,
-            interpolation="bicubic",
+        x_raw = np.arange(1, 37, dtype=float)
+        y_raw = np.arange(1, 13, dtype=float)
+        x_dense = np.linspace(1, 36, 720)
+        y_dense = np.linspace(1, 12, 240)
+        spline = RectBivariateSpline(y_raw, x_raw, values, kx=3, ky=3, s=0)
+        smooth_values = np.clip(spline(y_dense, x_dense), np.nanmin(values), 1.0)
+        X, Y = np.meshgrid(x_dense, y_dense)
+        levels = np.linspace(float(np.nanmin(values)), 1.0, 17)
+        image = ax.contourf(
+            X, Y, smooth_values, levels=levels, cmap="YlOrBr", extend="neither",
         )
         # For each start month, hatch the four one-step intervals with the
         # largest ACC drop. The hatch is placed on the endpoint lead cell.
@@ -115,6 +116,7 @@ def main() -> None:
         ax.grid(False)
         cb = fig.colorbar(image, ax=ax, pad=0.015)
         cb.set_label("ACC")
+        cb.set_ticks([-0.2, 0.0, 0.2, 0.4, 0.6, 0.8, 1.0])
         from matplotlib.patches import Patch
         fig.legend(
             handles=[Patch(facecolor="white", edgecolor="#555555", hatch="///",
@@ -135,7 +137,7 @@ def main() -> None:
         "series": "WalkerNet monthly Niño3.4 anomaly ACC only",
         "leads_plotted": "1-36",
         "hatching": "For each start month, the four largest positive one-step drops ACC[lead]-ACC[lead+1]; hatch is drawn on the endpoint lead cell.",
-        "display_interpolation": "bicubic interpolation for color field display only; raw 12x36 cells and hatch locations are preserved",
+        "display_interpolation": "RectBivariateSpline cubic interpolation plus contourf for color-field display only; raw 12x36 cells and hatch locations are preserved",
         "transformations": [
             "direct saved start-month grouped ACC values rounded to <=6 decimals",
             "shape-preserving PCHIP interpolation for display only",
