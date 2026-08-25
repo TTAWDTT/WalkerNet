@@ -55,13 +55,13 @@ def main() -> None:
         corners = ((0.08, 0.17), (0.94, 0.17), (0.19, 0.82), (0.86, 0.82))
         for y, name, field, norm in zip(y_positions, VARIABLES, fields_hi, norms):
             ax = fig.add_axes((0.045, y, 0.82, 0.20))
-            mesh = plot_surface(ax, lon_hi, lat_hi, field, corners, cmap, norm, name)
+            mesh = plot_surface(ax, lon_hi, lat_hi, field, corners, cmap, norm, name, title_fontsize=17)
             axes.append(ax); meshes.append(mesh)
         fig.suptitle(f"WalkerNet training sample: global {source}, time index {time_index}", fontsize=17, fontweight="bold", y=0.975)
         for y, mesh, name in zip(y_positions, meshes, VARIABLES):
             cax = fig.add_axes((0.885, y + 0.025, 0.016, 0.15))
             cb = fig.colorbar(mesh, cax=cax)
-            cb.set_label(name, fontsize=8, labelpad=6)
+            cb.set_label(name, fontsize=10, fontweight="bold", labelpad=7)
             cb.ax.tick_params(labelsize=7)
         png = out_dir / "walker_net_training_sample_global_pseudo3d_stack.png"
         pdf = out_dir / "walker_net_training_sample_global_pseudo3d_stack.pdf"
