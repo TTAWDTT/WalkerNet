@@ -1,0 +1,20 @@
+{
+  "raw_input": "docs\\assets\\cnop_pacific_delayed_onset_24starts_steps100_v2_top3\\figures\\pacific_delayed_mean_perturbation_rank1_mean.npz",
+  "case_count": 10,
+  "aggregation": "arithmetic mean of rank-1 delta_phys across the ten delayed Pacific cases",
+  "region": [
+    120.0,
+    280.0,
+    -20.0,
+    20.0
+  ],
+  "smoothing": "one NaN-aware pass of the 3x3 [1,2,1;2,4,2;1,2,1]/16 kernel",
+  "interpolation": "12x bicubic display interpolation after land-masked smoothing",
+  "palette": "soft",
+  "color_norm": "separate zero-centred TwoSlopeNorm per variable, 98th percentile absolute limit",
+  "outputs": [
+    "pacific_delayed_mean_perturbation_pseudo3d_v17_soft_dense.png",
+    "pacific_delayed_mean_perturbation_pseudo3d_v17_soft_dense.pdf",
+    "pacific_delayed_mean_perturbation_rank1_mean.npz"
+  ]
+}
