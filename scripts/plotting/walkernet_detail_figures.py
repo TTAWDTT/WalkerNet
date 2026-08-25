@@ -125,9 +125,12 @@ def decoder_rollout() -> Path:
         to_connection("up1", "up2"),
         to_Conv("head", s_filer="180 x 360", n_filer=4, offset="(1.35,0,0)", to="(up2-east)", width=1.2, height=12, depth=12, caption="Head"),
         to_connection("up2", "head"),
+        # The residual baseline is the last observed high-resolution state,
+        # not the low-resolution token tensor.
+        to_Conv("xlast", s_filer="180 x 360", n_filer=4, offset="(0,-2.0,0)", to="(tokens-west)", width=0.9, height=3.5, depth=3.5, caption=" "),
         to_Sum("add", offset="(1.3,-1.2,0)", to="(head-east)", radius=1.5, opacity=0.85),
         to_connection("head", "add"),
-        r"\draw [copyconnection,-Stealth] (tokens-south) .. controls +(0,-2.0) and +(0,-2.0) .. (add-south);",
+        r"\draw [copyconnection,-Stealth] (xlast-east) .. controls +(1.8,0) and +(0,-2.0) .. (add-south);",
         to_Conv("output", s_filer="180 x 360", n_filer=4, offset="(1.35,0,0)", to="(add-east)", width=1.7, height=12, depth=12, caption=" "),
         to_connection("add", "output"),
         r"\node[font=\Large\bfseries] at (8.0,4.2) {Decoder and Residual Autoregressive Rollout};",

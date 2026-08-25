@@ -87,6 +87,17 @@
 
 \draw [connection]  (up2-east)    -- node {\midarrow} (head-west);
 
+\pic[shift={(0,-2.0,0)}] at (tokens-west) 
+    {Box={
+        name=xlast,
+        caption= ,
+        fill=\ConvColor,
+        height=3.5,
+        width=0.9,
+        depth=3.5
+        }
+    };
+
 \pic[shift={(1.3,-1.2,0)}] at (head-east) 
     {Ball={
         name=add,
@@ -98,7 +109,7 @@
     };
 
 \draw [connection]  (head-east)    -- node {\midarrow} (add-west);
-\draw [copyconnection,-Stealth] (tokens-south) .. controls +(0,-2.0) and +(0,-2.0) .. (add-south);
+\draw [copyconnection,-Stealth] (xlast-east) .. controls +(1.8,0) and +(0,-2.0) .. (add-south);
 \pic[shift={(1.35,0,0)}] at (add-east) 
     {Box={
         name=output,
