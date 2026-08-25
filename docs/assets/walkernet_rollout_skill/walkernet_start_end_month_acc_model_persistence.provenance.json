@@ -1,0 +1,20 @@
+{
+  "figure": "walkernet_start_end_month_acc_model_persistence",
+  "source_remote_dir": "/data/WalkerNet/outputs/eval_rollout_best_skill_test_lead1_36_20260825/",
+  "source_files": [
+    "eval_rollout_best_skill_start_end_month_acc_12x12_model.csv",
+    "eval_rollout_best_skill_start_end_month_acc_12x12_persistence.csv"
+  ],
+  "checkpoint": "historical_mixed5_best_skill.pt",
+  "split": "test",
+  "definition": "first 12 forecast leads; end_month = start_month + lead - 1 modulo 12",
+  "transformations": [
+    "direct saved 12x12 matrices",
+    "cubic RectBivariateSpline interpolation for contour display only",
+    "shared color normalization vmin=-0.5, vmax=1.0"
+  ],
+  "outputs": [
+    "walkernet_start_end_month_acc_model_persistence.png",
+    "walkernet_start_end_month_acc_model_persistence.pdf"
+  ]
+}

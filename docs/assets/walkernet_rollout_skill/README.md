@@ -21,3 +21,10 @@ The corrected second figure is:
 - [walkernet_acc_by_start_month_lead1_36.pdf](walkernet_acc_by_start_month_lead1_36.pdf)
 
 It uses start month on the y-axis, lead month 1--36 on the x-axis, and ACC as the color field. For each start-month row, hatching marks the four endpoint lead cells following the largest one-step ACC drops `ACC(lead) - ACC(lead+1)`. The previous 12-small-multiple orientation is retained only under `archive_wrong_orientation/` for traceability.
+
+The saved 12×12 start/end-month matrices are also plotted as a two-panel contour comparison:
+
+- [walkernet_start_end_month_acc_model_persistence.png](walkernet_start_end_month_acc_model_persistence.png)
+- [walkernet_start_end_month_acc_model_persistence.pdf](walkernet_start_end_month_acc_model_persistence.pdf)
+
+The left panel is WalkerNet and the right panel is persistence. Both use the same ACC color scale (`-0.5` to `1.0`) and the same cubic contour-display interpolation.
