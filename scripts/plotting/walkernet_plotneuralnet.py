@@ -67,15 +67,15 @@ def main() -> None:
             width=1.0, height=8.5, depth=8.5, caption="S1",
         ),
         to_Conv(
-            "spatial6", s_filer="4050", n_filer="256", offset="(3.15,0,0)", to="(spatial1-east)",
+            "spatial6", s_filer="4050", n_filer="256", offset="(3.55,0,0)", to="(spatial1-east)",
             width=1.0, height=8.5, depth=8.5, caption="S6",
         ),
         to_connection("fusion", "spatial1"),
         # Break the spatial-stack connection into two physical line segments.
         # The gap behind the ellipsis is deliberately empty: no green line is
         # drawn beneath the omitted S2--S5 blocks.
-        r"\coordinate (spatial-gap-l) at ($(spatial1-east)!0.44!(spatial6-west)$);",
-        r"\coordinate (spatial-gap-r) at ($(spatial1-east)!0.56!(spatial6-west)$);",
+        r"\coordinate (spatial-gap-l) at ($(spatial1-east)!0.34!(spatial6-west)$);",
+        r"\coordinate (spatial-gap-r) at ($(spatial1-east)!0.66!(spatial6-west)$);",
         r"\draw [connection] (spatial1-east) -- node[pos=0.78] {\midarrow} (spatial-gap-l);",
         r"\draw [connection] (spatial-gap-r) -- node[pos=0.22] {\midarrow} (spatial6-west);",
         r"\node[font=\Large\bfseries,text=black!65] at (spatial-gap-l -| spatial-gap-r) {$\cdots$};",
