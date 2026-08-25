@@ -1,0 +1,16 @@
+{
+  "source": "docs/assets/article/pacific_delay_overview.png",
+  "output": "docs/assets/article/pacific_delay_overview_smoothed.png",
+  "scope": "leftmost initial-delta-TOS map interiors only",
+  "panel_geometry_px": {
+    "x0": 635,
+    "x1": 1431,
+    "row_pitch": 486,
+    "map_height": 434,
+    "rows": 10
+  },
+  "transform": "2x cubic upsample, masked Gaussian smoothing sigma=2.2 at original-pixel scale, cubic downsample",
+  "mask_policy": "preserve original white land/invalid pixels",
+  "other_columns": "unchanged",
+  "scientific_values": "no CNOP or response values recomputed or altered"
+}
