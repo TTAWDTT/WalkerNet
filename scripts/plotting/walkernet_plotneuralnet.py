@@ -76,9 +76,10 @@ def main() -> None:
         # drawn beneath the omitted S2--S5 blocks.
         r"\coordinate (spatial-gap-l) at ($(spatial1-east)!0.25!(spatial6-west)$);",
         r"\coordinate (spatial-gap-r) at ($(spatial1-east)!0.75!(spatial6-west)$);",
+        r"\coordinate (spatial-gap) at ($(spatial1-east)!0.50!(spatial6-west)$);",
         r"\draw [connection] (spatial1-east) -- node[pos=0.78] {\midarrow} (spatial-gap-l);",
         r"\draw [connection] (spatial-gap-r) -- node[pos=0.22] {\midarrow} (spatial6-west);",
-        r"\node[font=\Large\bfseries,text=black!65] at (spatial-gap-l -| spatial-gap-r) {$\cdots$};",
+        r"\node[font=\Large\bfseries,text=black!65] at (spatial-gap) {$\cdots$};",
         # Month gate and top-2 routing.
         to_SoftMax("gate", s_filer="month", offset="(1.7,-0.9,0)", to="(spatial6-east)", width=1.5, height=3.0, depth=7.0, caption="Gate"),
         to_connection("spatial6", "gate"),
