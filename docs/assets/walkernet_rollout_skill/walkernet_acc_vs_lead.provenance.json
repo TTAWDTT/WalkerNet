@@ -1,0 +1,22 @@
+{
+  "figure": "walkernet_acc_vs_lead",
+  "source_remote_dir": "/data/WalkerNet/outputs/eval_rollout_best_skill_test_lead1_36_20260825/",
+  "checkpoint": "historical_mixed5_best_skill.pt",
+  "split": "test",
+  "complete_lead36_samples": 245,
+  "transformations": [
+    "direct saved ACC values rounded to <=6 decimals",
+    "no smoothing",
+    "no interpolation"
+  ],
+  "series": [
+    "monthly anomaly ACC",
+    "three-month mean anomaly ACC",
+    "persistence counterparts"
+  ],
+  "threshold": "ACC=0.5 reference line only; no values clipped",
+  "outputs": [
+    "walkernet_acc_vs_lead.png",
+    "walkernet_acc_vs_lead.pdf"
+  ]
+}

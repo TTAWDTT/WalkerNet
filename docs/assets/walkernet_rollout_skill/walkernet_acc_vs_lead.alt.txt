@@ -1,0 +1,1 @@
+Line chart of WalkerNet Niño3.4 anomaly ACC from lead 1 to 36. Solid lines show monthly ACC and dashed lines show three-month mean ACC; red is WalkerNet and black is persistence. A horizontal dashed line marks ACC=0.5. No smoothing or interpolation is applied.
