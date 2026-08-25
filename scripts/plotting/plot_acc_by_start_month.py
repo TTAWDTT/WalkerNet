@@ -118,10 +118,10 @@ def main() -> None:
         cb.set_label("ACC")
         cb.set_ticks([-0.2, 0.0, 0.2, 0.4, 0.6, 0.8, 1.0])
         from matplotlib.patches import Patch
-        fig.legend(
+        ax.legend(
             handles=[Patch(facecolor="white", edgecolor="#555555", hatch="///",
                            label="four fastest one-step ACC declines per start month")],
-            loc="lower center", bbox_to_anchor=(0.5, 0.005),
+            loc="lower left",
             framealpha=0.92, fontsize=8.5,
         )
         for fmt in ("png", "pdf"):
