@@ -8,7 +8,7 @@ from pathlib import Path
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.colors import BoundaryNorm, ListedColormap
+from matplotlib.colors import ListedColormap, TwoSlopeNorm
 from matplotlib.patches import PathPatch, Polygon
 from matplotlib.path import Path as MplPath
 from scipy.ndimage import gaussian_filter, zoom
@@ -132,7 +132,11 @@ def draw_layer(ax, lon, lat, field, corners, norm, cmap, levels, label, show_y, 
     # initial perturbation is exactly zero outside its source basin).  Without
     # this guard, tiny interpolation round-off creates dense spurious stripes.
     contour_field = np.where(np.abs(field) > 1e-5, field, np.nan)
-    ax.contour(xc, yc, contour_field, levels=[0.0], colors="#293241", linewidths=0.28, alpha=0.55, zorder=6)
+    # A continuous color field plus many quiet contour lines gives the smooth,
+    # planar appearance of the reference figure without discrete color jumps.
+    contour_levels = levels[np.abs(levels) > 1e-12]
+    ax.contour(xc, yc, contour_field, levels=contour_levels, colors="#6B7280", linewidths=0.16, alpha=0.24, zorder=5)
+    ax.contour(xc, yc, contour_field, levels=[0.0], colors="#293241", linewidths=0.30, alpha=0.58, zorder=6)
     draw_land(ax, corners)
     if wind_u is not None and wind_v is not None:
         # Sparse quiver overlay for the two wind-stress response components.
@@ -147,7 +151,7 @@ def draw_layer(ax, lon, lat, field, corners, norm, cmap, levels, label, show_y, 
             quiver_handle = ax.quiver(qx[valid_q], qy[valid_q], qu[valid_q], qv[valid_q],
                                       color="#34495e", alpha=0.72, width=0.0018,
                                       headwidth=3.2, headlength=4.2, headaxislength=3.5,
-                                      angles="xy", scale_units="xy", scale=35.0,
+                                      angles="xy", scale_units="xy", scale=58.0,
                                       pivot="mid", zorder=7, rasterized=True)
     outline = np.array([corners[0], corners[1], corners[3], corners[2], corners[0]])
     ax.plot(outline[:, 0], outline[:, 1], color="black", lw=0.8, zorder=6)
@@ -216,12 +220,12 @@ def main():
     # faint edge ringing without introducing artificial white holes.
     init_tos[np.abs(init_tos) < 1e-4] = 0.0; init_zos[np.abs(init_zos) < 1e-5] = 0.0
     lon_hi=np.linspace(lon[0],lon[-1],init_tos.shape[1]); lat_hi=np.linspace(lat[0],lat[-1],init_tos.shape[0]); land_hi=zoom(mask.astype(float),(4,4),order=1,mode="nearest")>=0.5; init_tos[land_hi]=np.nan; init_zos[land_hi]=np.nan
-    tos_levels=np.linspace(-TOS_VMAX,TOS_VMAX,23); zos_levels=np.linspace(-ZOS_VMAX,ZOS_VMAX,23)
+    tos_levels=np.linspace(-TOS_VMAX,TOS_VMAX,49); zos_levels=np.linspace(-ZOS_VMAX,ZOS_VMAX,41)
     # Exact palettes from the legacy renderer: do not substitute custom
     # approximations when comparing this 3D version with figure4.png.
     tos_cmap=soften_cmap("RdYlBu_r",0.14).with_extremes(bad="#F4F1E8")
     zos_cmap=soften_cmap("BrBG",0.10).with_extremes(bad="#F4F1E8")
-    tos_norm=BoundaryNorm(tos_levels,tos_cmap.N,extend="both"); zos_norm=BoundaryNorm(zos_levels,zos_cmap.N,extend="both")
+    tos_norm=TwoSlopeNorm(vmin=-TOS_VMAX,vcenter=0.0,vmax=TOS_VMAX); zos_norm=TwoSlopeNorm(vmin=-ZOS_VMAX,vcenter=0.0,vmax=ZOS_VMAX)
     fig=plt.figure(figsize=(16.5,9.2)); ax=fig.add_axes((0.015,0.17,0.32,0.75)); draw_pseudo_panel(ax,lon_hi,lat_hi,init_tos,init_zos,"(a) Initial CNOP perturbation (rank 1)",tos_norm,zos_norm,tos_cmap,zos_cmap,tos_levels,zos_levels,main=True,show_y=True)
     leads=(2,4,6,8,10,12); positions=[(0.36+0.205*(i%3),0.51-0.38*(i//3)) for i in range(6)]
     quiver_ref=None; quiver_ax=None
