@@ -8,7 +8,7 @@ from pathlib import Path
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.colors import BoundaryNorm, ListedColormap
+from matplotlib.colors import ListedColormap, TwoSlopeNorm
 from matplotlib.patches import PathPatch, Polygon
 from matplotlib.path import Path as MplPath
 from scipy.ndimage import gaussian_filter, zoom
@@ -31,7 +31,7 @@ def soften_cmap(name: str, amount: float = 0.16) -> ListedColormap:
     return ListedColormap(base, name=f"{name}_soft")
 
 
-def smooth_grid(grid: np.ndarray, sigma: float = 3.0) -> np.ndarray:
+def smooth_grid(grid: np.ndarray, sigma: float = 4.0) -> np.ndarray:
     """NaN-aware Gaussian smoothing for display-only response fields."""
     values = np.asarray(grid, dtype=float)
     valid = np.isfinite(values)
@@ -211,12 +211,15 @@ def main():
     # faint edge ringing without introducing artificial white holes.
     init_tos[np.abs(init_tos) < 1e-4] = 0.0; init_zos[np.abs(init_zos) < 1e-5] = 0.0
     lon_hi=np.linspace(lon[0],lon[-1],init_tos.shape[1]); lat_hi=np.linspace(lat[0],lat[-1],init_tos.shape[0]); land_hi=zoom(mask.astype(float),(4,4),order=1,mode="nearest")>=0.5; init_tos[land_hi]=np.nan; init_zos[land_hi]=np.nan
-    tos_levels=np.linspace(-TOS_VMAX,TOS_VMAX,25); zos_levels=np.linspace(-ZOS_VMAX,ZOS_VMAX,25)
+    # Dense levels are retained only for colorbar ticks; the plotted field uses
+    # a continuous TwoSlopeNorm so adjacent cells blend rather than forming
+    # discrete contour-like bands.
+    tos_levels=np.linspace(-TOS_VMAX,TOS_VMAX,81); zos_levels=np.linspace(-ZOS_VMAX,ZOS_VMAX,61)
     # Exact palettes from the legacy renderer: do not substitute custom
     # approximations when comparing this 3D version with figure4.png.
     tos_cmap=soften_cmap("RdYlBu_r",0.03).with_extremes(bad="#F4F1E8")
     zos_cmap=soften_cmap("BrBG",0.02).with_extremes(bad="#F4F1E8")
-    tos_norm=BoundaryNorm(tos_levels,tos_cmap.N,extend="both"); zos_norm=BoundaryNorm(zos_levels,zos_cmap.N,extend="both")
+    tos_norm=TwoSlopeNorm(vmin=-TOS_VMAX,vcenter=0.0,vmax=TOS_VMAX); zos_norm=TwoSlopeNorm(vmin=-ZOS_VMAX,vcenter=0.0,vmax=ZOS_VMAX)
     fig=plt.figure(figsize=(16.5,9.2)); ax=fig.add_axes((0.015,0.17,0.32,0.75)); draw_pseudo_panel(ax,lon_hi,lat_hi,init_tos,init_zos,"(a) Initial CNOP perturbation (rank 1)",tos_norm,zos_norm,tos_cmap,zos_cmap,tos_levels,zos_levels,main=True,show_y=True)
     leads=(2,4,6,8,10,12); positions=[(0.36+0.205*(i%3),0.51-0.38*(i//3)) for i in range(6)]
     quiver_ref=None; quiver_ax=None
@@ -226,7 +229,7 @@ def main():
             quiver_ref=q; quiver_ax=a
     if quiver_ref is not None and quiver_ax is not None:
         quiver_ax.quiverkey(quiver_ref, X=0.64, Y=1.18, U=3.0, label="3 m s$^{-1}$", labelpos="E", coordinates="axes", fontproperties={"size": 7})
-    cax1=fig.add_axes((0.10,0.07,0.28,0.018)); cax2=fig.add_axes((0.55,0.07,0.28,0.018)); cb1=fig.colorbar(mpl.cm.ScalarMappable(norm=tos_norm,cmap=tos_cmap),cax=cax1,orientation="horizontal"); cb2=fig.colorbar(mpl.cm.ScalarMappable(norm=zos_norm,cmap=zos_cmap),cax=cax2,orientation="horizontal"); cb1.set_label("TOS response (°C)"); cb2.set_label("ZOS response"); cb1.set_ticks(np.linspace(-TOS_VMAX,TOS_VMAX,7)); cb2.set_ticks(np.linspace(-ZOS_VMAX,ZOS_VMAX,7))
+    cax1=fig.add_axes((0.10,0.07,0.28,0.018)); cax2=fig.add_axes((0.55,0.07,0.28,0.018)); cb1=fig.colorbar(mpl.cm.ScalarMappable(norm=tos_norm,cmap=tos_cmap),cax=cax1,orientation="horizontal",extend="both"); cb2=fig.colorbar(mpl.cm.ScalarMappable(norm=zos_norm,cmap=zos_cmap),cax=cax2,orientation="horizontal",extend="both"); cb1.set_label("TOS response (°C)"); cb2.set_label("ZOS response"); cb1.set_ticks(np.linspace(-TOS_VMAX,TOS_VMAX,7)); cb2.set_ticks(np.linspace(-ZOS_VMAX,ZOS_VMAX,7))
     source, year = args.case.rsplit("_", 1)
     fig.suptitle(f"CNOP response evolution: {source} {year}, delayed candidate rank 1 (lead12 ΔNiño={args.lead_delta})",fontsize=16,fontweight="bold",y=0.985)
     args.output.parent.mkdir(parents=True,exist_ok=True); fig.savefig(args.output,dpi=300,facecolor="white"); fig.savefig(args.output.with_suffix(".pdf"),facecolor="white"); plt.close(fig); print(args.output)
