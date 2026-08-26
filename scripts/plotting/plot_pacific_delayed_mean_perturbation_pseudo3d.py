@@ -218,13 +218,14 @@ def plot(input_npz: Path, output: Path, palette_name: str = "soft", draw_contour
         raise ValueError("tos_vmax and zos_vmax must be positive")
     tos_norm = TwoSlopeNorm(vmin=-tos_vmax, vcenter=0.0, vmax=tos_vmax)
     zos_norm = TwoSlopeNorm(vmin=-zos_vmax, vcenter=0.0, vmax=zos_vmax)
-    if palette_name == "original_light":
-        def lighten(base):
+    if palette_name in ("original_light", "original_lighter"):
+        def lighten(base, amount):
             colors = base(np.linspace(0.0, 1.0, 256))
-            colors[:, :3] = 0.85 * colors[:, :3] + 0.15
+            colors[:, :3] = (1.0 - amount) * colors[:, :3] + amount
             return mpl.colors.ListedColormap(colors)
-        tos_cmap = lighten(mpl.colormaps["RdYlBu_r"])
-        zos_cmap = lighten(mpl.colormaps["BrBG"])
+        lighten_amount = 0.15 if palette_name == "original_light" else 0.27
+        tos_cmap = lighten(mpl.colormaps["RdYlBu_r"], lighten_amount)
+        zos_cmap = lighten(mpl.colormaps["BrBG"], lighten_amount)
     elif palette_name == "original":
         tos_cmap = mpl.colormaps["RdYlBu_r"]
         zos_cmap = mpl.colormaps["BrBG"]
@@ -301,7 +302,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--palette", choices=("soft", "contrast", "original", "original_light"), default="soft")
+    parser.add_argument("--palette", choices=("soft", "contrast", "original", "original_light", "original_lighter"), default="soft")
     parser.add_argument("--no-contours", action="store_true", help="omit contour-line overlays and use dense smooth fill levels")
     parser.add_argument("--tos-vmax", type=float, default=0.8)
     parser.add_argument("--zos-vmax", type=float, default=0.03)
