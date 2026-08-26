@@ -42,11 +42,11 @@ from src.dataset import WalkerDataset  # noqa: E402
 from src.utils import load_config  # noqa: E402
 
 
-TOS_CMAP = LinearSegmentedColormap.from_list(
-    "overview_tos",
-    ["#4B56A6", "#8FC7D9", "#F7F3D0", "#F0A35A", "#B61732"],
-    N=256,
-)
+# Use the same blue--pale-yellow--orange/red diverging palette as the supplied
+# reference figure for *all* four overview columns, including initial delta.
+# Keeping one global cmap prevents the perturbation panel from looking like a
+# different variable solely because it was plotted with another palette.
+TOS_CMAP = mpl.colormaps["RdYlBu_r"]
 
 
 def parse_args() -> argparse.Namespace:
