@@ -38,7 +38,7 @@
 
 | Cluster | Representative sources | What is established | Relevance to the proposed study | Main limitation |
 |---|---|---|---|---|
-| CNOP foundations and ENSO OPR | Mu et al. (2003); Duan et al. (2004); Duan et al. (2009); Mu et al. (2010) | CNOP is a constrained nonlinear optimal perturbation framework; theoretical ENSO studies report nonlinear optimal precursors distinct from linear singular vectors | Establishes the objective and the scientific OPR target | Classical studies generally use idealized or dynamical models, not learned climate emulators or learned state manifolds |
+| CNOP foundations and ENSO OPR | Mu et al. (2003); Duan et al. (2004); Duan et al. (2009); Mu et al. (2010); Zhou et al. (2025/2026) | CNOP is a constrained nonlinear optimal perturbation framework; ENSO studies report nonlinear optimal precursors distinct from linear singular vectors; recent O-CNOP work uses historical candidate samples and orthogonal perturbations in a DL ensemble | Establishes the objective, OPR target, and a strong recent baseline for learned-model CNOP | Existing O-CNOP candidate generation is historical/ensemble based rather than a differentiable learned-manifold optimization |
 | CNOP algorithms and observations | Sun et al. (2010); Mu et al. (2009); Zhou et al. (2021); Zu et al. (2025) | Optimization algorithms, targeted-observation applications, ensemble perturbations, and time-dimension extensions are active CNOP topics | Provides baselines, algorithmic concerns, and evaluation ideas | Does not impose a learned probabilistic state support during CNOP optimization |
 | Score/diffusion geometry | Song et al. (2021); Pidstrigach (2022); Huang et al. (2022); Jo & Hwang (2023); Fishman et al. (2023) | Score fields can support generation near low-dimensional data structure; diffusion can be generalized to Riemannian manifolds and constrained domains | Supplies the mathematical language for score/tangent/latent CNOP variants | General theory and benchmarks are not Earth-system-specific; “data manifold” still depends on data and score accuracy |
 | Diffusion guidance and inverse problems | Graikos et al. (2022); Chung et al. (2022); Bansal et al. (2023) | A differentiable auxiliary objective can guide a fixed diffusion prior; diffusion posterior sampling blends denoising with a manifold-constrained gradient | Directly addresses the user’s concern about objective guidance through denoising | These methods are approximate sampling/inference procedures, not monotone maximization of a CNOP forecast objective |
@@ -95,6 +95,13 @@
 
 - Relevance: Recent extension of CNOP beyond a purely initial-state formulation.
 - Contribution: Important adjacent work for deciding whether the naturalness constraint should be imposed on one frame or on a temporal window/trajectory.
+
+**Zhou, L., Zhang, R.-H., & Tao, L. (2025; published in volume 9, 2026). AI-enabled conditional nonlinear optimal perturbation enhances ensemble prediction of extreme El Niño events. *npj Climate and Atmospheric Science*.** [DOI](https://doi.org/10.1038/s41612-025-01303-6)
+
+- Relevance: Closest recent DL/CNOP precedent identified in the overlap search.
+- Full-text/official-page finding: The study uses O-CNOP perturbations for a DL ENSO ensemble, generates candidate samples from historical simulations of 23 CMIP6 models plus SODA reanalysis under energy constraints, selects/optimizes perturbations iteratively, and uses an independent 2015/16 El Niño validation after constructing perturbations from other events.
+- Contribution: Demonstrates that a learned-model CNOP workflow can benefit from historical candidate support and orthogonal ensemble perturbations without claiming a diffusion manifold.
+- Limitation: Candidate generation is sample/ensemble based rather than a differentiable generator parameterization; the reported evaluation is for four extreme El Niño events and a DL ensemble, not a general natural-state manifold.
 
 ### B. Score models and manifold geometry
 
@@ -173,7 +180,7 @@
 - Abstract-level finding: The model evaluates probability densities, cross-variable correlations, time of emergence, and tail behavior across multiple ESMs and regimes; it reports failure cases under strong seasonal regime shifts.
 - Contribution: Strong template for the proposed naturalness audit and a warning against using one scalar score.
 
-**Brenowitz, N. D., et al. (2025). Climate in a Bottle** and **Price, I., et al. (2024). Probabilistic weather forecasting with machine learning. *Nature*.** [GenCast DOI](https://doi.org/10.1038/s41586-024-08252-9)
+**Brenowitz, N. D., et al. (2025). Climate in a bottle: Towards a generative foundation model for the kilometer-scale global atmosphere.** [arXiv](https://arxiv.org/abs/2505.06474) **and Price, I., et al. (2024). Probabilistic weather forecasting with machine learning. *Nature*.** [GenCast DOI](https://doi.org/10.1038/s41586-024-08252-9)
 
 - Relevance: Demonstrates the maturity of probabilistic diffusion weather forecasting and ensemble state generation.
 - Contribution: Motivates using generative models to represent a distribution of plausible futures, while also emphasizing calibration and ensemble reliability rather than one “canonical” state.
@@ -239,4 +246,3 @@ The key claim should initially be **optimization on a data-supported climate-sta
 - Several sources were verified only from abstracts or official metadata; full-text methods and supplementary details remain to be screened.
 - Search coverage is strong for the six planned clusters but not yet exhaustive across all climate ML venues, Chinese literature, and unpublished CNOP implementations.
 - The next required step is source-by-source full-text verification and a contradiction/feasibility matrix, followed by Phase 3 synthesis and a devil’s-advocate checkpoint.
-
