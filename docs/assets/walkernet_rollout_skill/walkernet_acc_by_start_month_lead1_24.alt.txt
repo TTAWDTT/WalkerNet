@@ -1,0 +1,1 @@
+Heatmap of WalkerNet monthly Nino3.4 anomaly ACC with lead month on the x-axis and forecast start month on the y-axis. ACC values below 0.5 are rendered white. Hatched cells mark, separately for each start month, the six endpoint lead cells following the largest one-step ACC declines within leads 1-24. Color encodes ACC.

@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "docs" / "assets" / "walkernet_rollout_skill"
 LEADS = np.arange(1, 19)
 N_FASTEST = 6
+MAX_LEAD = 24
 MONTH_NAMES = ["January", "February", "March", "April", "May", "June",
                "July", "August", "September", "October", "November", "December"]
 
@@ -78,10 +79,13 @@ def main() -> None:
     }):
         fig, ax = plt.subplots(figsize=(10.5, 5.45))
         fig.subplots_adjust(left=0.075, right=0.90, bottom=0.18, top=0.92)
-        values = ACC_BY_START_MONTH
-        x_raw = np.arange(1, 37, dtype=float)
+        # Keep the complete 36-lead snapshot above for provenance, but this
+        # presentation intentionally stops at lead 24.  Hatch ranking is
+        # recomputed on exactly the displayed lead range.
+        values = ACC_BY_START_MONTH[:, :MAX_LEAD]
+        x_raw = np.arange(1, MAX_LEAD + 1, dtype=float)
         y_raw = np.arange(1, 13, dtype=float)
-        x_dense = np.linspace(1, 36, 720)
+        x_dense = np.linspace(1, MAX_LEAD, 480)
         y_dense = np.linspace(1, 12, 240)
         spline = RectBivariateSpline(y_raw, x_raw, values, kx=3, ky=3, s=0)
         smooth_values = np.clip(spline(y_dense, x_dense), np.nanmin(values), 1.0)
@@ -113,10 +117,10 @@ def main() -> None:
         ax.set_title("Nino3.4 ACC by forecast start month", fontsize=15, pad=10)
         ax.set_xlabel("Lead month")
         ax.set_ylabel("Start month")
-        ax.set_xticks([1, 6, 12, 18, 24, 30, 36])
+        ax.set_xticks([1, 6, 12, 18, 24])
         ax.set_yticks(range(1, 13))
         ax.set_yticklabels(MONTH_NAMES)
-        ax.set_xlim(0.5, 36.5)
+        ax.set_xlim(0.5, MAX_LEAD + 0.5)
         ax.set_ylim(0.5, 12.5)
         ax.grid(False)
         cb = fig.colorbar(image, ax=ax, pad=0.015)
@@ -130,36 +134,36 @@ def main() -> None:
             framealpha=0.92, fontsize=8.5,
         )
         for fmt in ("png", "pdf"):
-            fig.savefig(OUT / f"walkernet_acc_by_start_month_lead1_36.{fmt}", dpi=600 if fmt == "png" else None)
+            fig.savefig(OUT / f"walkernet_acc_by_start_month_lead1_{MAX_LEAD}.{fmt}", dpi=600 if fmt == "png" else None)
         plt.close(fig)
 
     manifest = {
-        "figure": "walkernet_acc_by_start_month_lead1_36",
+        "figure": "walkernet_acc_by_start_month_lead1_24",
         "source_remote_dir": "/data/WalkerNet/outputs/eval_rollout_best_skill_test_lead1_36_20260825/",
         "source_file": "eval_rollout_best_skill_lead1_36_by_start_month.csv",
         "checkpoint": "historical_mixed5_best_skill.pt",
         "split": "test",
         "series": "WalkerNet monthly Niño3.4 anomaly ACC only",
-        "leads_plotted": "1-36",
+        "leads_plotted": "1-24",
         "hatching": "For each start month, the six largest one-step drops ACC[lead]-ACC[lead+1]; hatch is drawn on the endpoint lead cell.",
         "display_threshold": "ACC values below 0.5 are masked/rendered white for display only; raw values and hatch ranking are unchanged",
-        "display_interpolation": "RectBivariateSpline cubic interpolation plus contourf for color-field display only; raw 12x36 cells and hatch locations are preserved",
+        "display_interpolation": "RectBivariateSpline cubic interpolation plus contourf for color-field display only; raw 12x24 displayed cells and hatch locations are preserved",
         "transformations": [
             "direct saved start-month grouped ACC values rounded to <=6 decimals",
             "ACC<0.5 masked to white for display only",
             "no value filtering for the saved data or hatch ranking",
         ],
-        "axes": {"x": "lead month", "y": "start month", "color": "ACC", "limits": "x=[1,36], y=start month 1..12"},
+        "axes": {"x": "lead month", "y": "start month", "color": "ACC", "limits": "x=[1,24], y=start month 1..12"},
         "fastest_declines": fastest,
-        "outputs": ["walkernet_acc_by_start_month_lead1_36.png", "walkernet_acc_by_start_month_lead1_36.pdf"],
+        "outputs": ["walkernet_acc_by_start_month_lead1_24.png", "walkernet_acc_by_start_month_lead1_24.pdf"],
     }
-    (OUT / "walkernet_acc_by_start_month_lead1_36.provenance.json").write_text(
+    (OUT / "walkernet_acc_by_start_month_lead1_24.provenance.json").write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
     )
-    (OUT / "walkernet_acc_by_start_month_lead1_36.alt.txt").write_text(
+    (OUT / "walkernet_acc_by_start_month_lead1_24.alt.txt").write_text(
         "Heatmap of WalkerNet monthly Nino3.4 anomaly ACC with lead month on the x-axis and "
         "forecast start month on the y-axis. ACC values below 0.5 are rendered white. Hatched cells mark, separately for each start month, "
-        "the six endpoint lead cells following the largest one-step ACC declines. Color encodes ACC.",
+        "the six endpoint lead cells following the largest one-step ACC declines within leads 1-24. Color encodes ACC.",
         encoding="utf-8",
     )
 

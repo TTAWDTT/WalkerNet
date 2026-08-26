@@ -15,7 +15,14 @@ The plot uses the saved WalkerNet monthly and three-month-mean ACC values for `h
 - [walkernet_acc_vs_lead.alt.txt](walkernet_acc_vs_lead.alt.txt)
 
 
-The corrected second figure is:
+The corrected 24-lead presentation is:
+
+- [walkernet_acc_by_start_month_lead1_24.png](walkernet_acc_by_start_month_lead1_24.png)
+- [walkernet_acc_by_start_month_lead1_24.pdf](walkernet_acc_by_start_month_lead1_24.pdf)
+
+It uses start month on the y-axis, lead month 1--24 on the x-axis, and ACC as the color field. Values below ACC=0.5 are rendered white for display only. For each start-month row, hatching marks the six endpoint lead cells following the largest one-step ACC drops within leads 1--24. The previous 1--36 presentation is retained as `walkernet_acc_by_start_month_lead1_36.*` for traceability.
+
+The earlier 36-lead figure is:
 
 - [walkernet_acc_by_start_month_lead1_36.png](walkernet_acc_by_start_month_lead1_36.png)
 - [walkernet_acc_by_start_month_lead1_36.pdf](walkernet_acc_by_start_month_lead1_36.pdf)
