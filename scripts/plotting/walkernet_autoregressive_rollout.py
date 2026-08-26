@@ -17,9 +17,6 @@ sys.path.insert(0, str(PLOT_NEURAL_NET))
 from pycore.tikzeng import (  # type: ignore  # noqa: E402
     to_Conv,
     to_ConvConvRelu,
-    to_Pool,
-    to_SoftMax,
-    to_Sum,
     to_connection,
     to_cor,
     to_end,
@@ -40,66 +37,25 @@ def main() -> None:
         to_head(str(LAYER_ROOT).replace("\\", "/").rstrip("/") + "/../"),
         to_cor(),
         to_begin(),
-        # One-step WalkerNet call: the model predicts a residual increment.
-        to_Conv(
-            "history0", s_filer="12 x 4 x 180 x 360", n_filer=1,
-            width=1.6, height=10, depth=10, caption="History k",
-        ),
-        to_ConvConvRelu(
-            "model", s_filer="4050 x 256", n_filer=(256, 256),
-            offset="(1.5,0,0)", to="(history0-east)",
-            width=(1.7, 1.1), height=11, depth=11, caption="WalkerNet",
-        ),
+        # One-step transition: X_k -> f_theta -> xhat_(k+1) -> window update.
+        to_Conv("history0", s_filer="12 x 4 x 180 x 360", n_filer=1,
+                to="(0,0,0)", width=1.45, height=8.0, depth=8.0, caption=r"$X_k$"),
+        to_ConvConvRelu("model", s_filer="4050 x 256", n_filer=(256, 256),
+                        offset="(3.4,0,0)", to="(0,0,0)", width=(1.8, 1.1),
+                        height=8.5, depth=8.5, caption="WalkerNet"),
         to_connection("history0", "model"),
-        to_SoftMax(
-            "condition", s_filer="month + step", offset="(0,2.25,0)",
-            to="(model-north)", width=1.35, height=2.6, depth=4.5, caption="Condition",
-        ),
-        r"\draw [connection] (condition-south) -- (model-north);",
-        to_Conv(
-            "delta", s_filer="180 x 360", n_filer=4,
-            offset="(1.6,0,0)", to="(model-east)",
-            width=1.15, height=9, depth=9, caption="Delta y",
-        ),
-        to_connection("model", "delta"),
-        # The last observed high-resolution state is the residual baseline.
-        to_Conv(
-            "xlast", s_filer="180 x 360", n_filer=4,
-            offset="(0,-2.55,0)", to="(delta-east)",
-            width=0.95, height=4.5, depth=4.5, caption="x-last",
-        ),
-        to_Sum("add", offset="(1.45,0,0)", to="(delta-east)", radius=1.5, opacity=0.85),
-        to_connection("delta", "add"),
-        r"\draw [copyconnection,-Stealth] (xlast-east) .. controls +(0.9,0) and +(-0.5,-1.0) .. (add-south);",
-        to_Conv(
-            "pred", s_filer="180 x 360", n_filer=4,
-            offset="(1.35,0,0)", to="(add-east)",
-            width=1.65, height=11, depth=11, caption="x-hat k+1",
-        ),
-        to_connection("add", "pred"),
-        # Window update is shown below the one-step path to make the loop
-        # explicit instead of implying that the network is unrolled inside fθ.
-        to_Pool(
-            "shift", offset="(0,-3.0,0)", to="(pred-south)",
-            width=1.25, height=3.6, depth=5.4, caption="Shift",
-        ),
-        r"\draw [connection] (pred-south) -- (shift-north);",
-        to_Conv(
-            "history1", s_filer="12 x 4 x 180 x 360", n_filer=1,
-            offset="(-7.0,0,0)", to="(shift-west)",
-            width=1.6, height=8.5, depth=8.5, caption="History k+1",
-        ),
-        r"\draw [connection] (shift-west) -- node[above,font=\scriptsize] {append / drop} (history1-east);",
-        # Re-enter the same model with the shifted window; this is the rollout
-        # loop.  The curved path stays below the main blocks and labels the step.
-        r"\draw [copyconnection,-Stealth] (history1-north) .. controls +(0,2.0) and +(-1.5,-2.0) .. (model-south);",
-        r"\node[font=\scriptsize,text=black!60] at (4.1,-2.2) {repeat for k+2, k+3, ...};",
-        r"\node[font=\Large\bfseries] at (8.0,5.0) {Autoregressive Rollout};",
-        r"\node[font=\large] at (8.0,4.35) {one-step residual prediction followed by a deterministic 12-month window shift};",
-        r"\node[font=\small] at (8.0,3.72) {$\hat{x}_{k+1}=x_{last}+\Delta y_{k+1}$};",
-        r"\tikzset{note/.style={font=\scriptsize,align=center,text width=3.0cm,minimum height=0.75cm,rounded corners=2pt,draw=black!25,fill=black!3,inner sep=3pt}}",
-        r"\node[note] at (7.1,-4.65) {\textbf{Window update}\\append $\hat{x}_{k+1}$ and drop the oldest month};",
-        r"\node[note] at (12.0,-4.65) {\textbf{Next call}\\same $f_\theta$, updated month and rollout step};",
+        to_Conv("pred", s_filer="180 x 360", n_filer=4,
+                offset="(7.2,0,0)", to="(0,0,0)", width=1.45, height=8.0,
+                depth=8.0, caption=r"$\hat{x}_{k+1}$"),
+        to_connection("model", "pred"),
+        r"\tikzset{updatebox/.style={draw=black!45,fill=blue!4,rounded corners=3pt,align=center,font=\small,text width=5.3cm,minimum height=2.7cm,inner sep=6pt}}",
+        r"\node[updatebox] (update) at (12.2,0) {\textbf{Update the 12-month window}\\[-1pt] $X_k=[x_{k-11},\ldots,x_k]$\\[-1pt] $\downarrow\;$ drop $x_{k-11}$; append $\hat{x}_{k+1}$\\[-1pt] $X_{k+1}=[x_{k-10},\ldots,x_k,\hat{x}_{k+1}]$\\[-1pt] {\scriptsize advance target month and rollout step}};",
+        r"\draw [connection] (pred-east) -- node {\midarrow} (update.west);",
+        # The same f_theta is called again with the updated window.
+        r"\draw [copyconnection,-Stealth] (update.south) .. controls +(0,-2.0) and +(2.0,-2.0) .. (model-south);",
+        r"\node[font=\Large\bfseries] at (7.5,5.25) {Autoregressive Rollout};",
+        r"\node[font=\large] at (7.5,4.65) {predict one month, update the window, and call the same model again};",
+        r"\node[font=\small] at (7.5,4.05) {$\hat{x}_{k+1}=f_\theta(X_k),\qquad X_{k+1}=\mathrm{shift}(X_k,\hat{x}_{k+1})$};",
         to_end(),
     ]
 

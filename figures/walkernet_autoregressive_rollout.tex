@@ -24,111 +24,40 @@
 \pic[shift={(0,0,0)}] at (0,0,0) 
     {Box={
         name=history0,
-        caption=History k,
+        caption=$X_k$,
         fill=\ConvColor,
-        height=10,
-        width=1.6,
-        depth=10
+        height=8.0,
+        width=1.45,
+        depth=8.0
         }
     };
 
-\pic[shift={ (1.5,0,0) }] at (history0-east) 
+\pic[shift={ (3.4,0,0) }] at (0,0,0) 
     {RightBandedBox={
         name=model,
         caption=WalkerNet,
         fill=\ConvColor,
         bandfill=\ConvReluColor,
-        height=11,
-        width={ 1.7 , 1.1 },
-        depth=11
+        height=8.5,
+        width={ 1.8 , 1.1 },
+        depth=8.5
         }
     };
 
 \draw [connection]  (history0-east)    -- node {\midarrow} (model-west);
 
-\pic[shift={(0,2.25,0)}] at (model-north) 
-    {Box={
-        name=condition,
-        caption=Condition,
-        fill=\SoftmaxColor,
-        opacity=0.8,
-        height=2.6,
-        width=1.35,
-        depth=4.5
-        }
-    };
-\draw [connection] (condition-south) -- (model-north);
-\pic[shift={(1.6,0,0)}] at (model-east) 
-    {Box={
-        name=delta,
-        caption=Delta y,
-        fill=\ConvColor,
-        height=9,
-        width=1.15,
-        depth=9
-        }
-    };
-
-\draw [connection]  (model-east)    -- node {\midarrow} (delta-west);
-
-\pic[shift={(0,-2.55,0)}] at (delta-east) 
-    {Box={
-        name=xlast,
-        caption=x-last,
-        fill=\ConvColor,
-        height=4.5,
-        width=0.95,
-        depth=4.5
-        }
-    };
-
-\pic[shift={(1.45,0,0)}] at (delta-east) 
-    {Ball={
-        name=add,
-        fill=\SumColor,
-        opacity=0.85,
-        radius=1.5,
-        logo=$+$
-        }
-    };
-
-\draw [connection]  (delta-east)    -- node {\midarrow} (add-west);
-\draw [copyconnection,-Stealth] (xlast-east) .. controls +(0.9,0) and +(-0.5,-1.0) .. (add-south);
-\pic[shift={(1.35,0,0)}] at (add-east) 
+\pic[shift={(7.2,0,0)}] at (0,0,0) 
     {Box={
         name=pred,
-        caption=x-hat k+1,
+        caption=$\hat{x}_{k+1}$,
         fill=\ConvColor,
-        height=11,
-        width=1.65,
-        depth=11
+        height=8.0,
+        width=1.45,
+        depth=8.0
         }
     };
 
-\draw [connection]  (add-east)    -- node {\midarrow} (pred-west);
-
-\pic[shift={ (0,-3.0,0) }] at (pred-south) 
-    {Box={
-        name=shift,
-        caption=Shift,
-        fill=\PoolColor,
-        opacity=0.5,
-        height=3.6,
-        width=1.25,
-        depth=5.4
-        }
-    };
-\draw [connection] (pred-south) -- (shift-north);
-\pic[shift={(-7.0,0,0)}] at (shift-west) 
-    {Box={
-        name=history1,
-        caption=History k+1,
-        fill=\ConvColor,
-        height=8.5,
-        width=1.6,
-        depth=8.5
-        }
-    };
-\draw [connection] (shift-west) -- node[above,font=\scriptsize] {append / drop} (history1-east);\draw [copyconnection,-Stealth] (history1-north) .. controls +(0,2.0) and +(-1.5,-2.0) .. (model-south);\node[font=\scriptsize,text=black!60] at (4.1,-2.2) {repeat for k+2, k+3, ...};\node[font=\Large\bfseries] at (8.0,5.0) {Autoregressive Rollout};\node[font=\large] at (8.0,4.35) {one-step residual prediction followed by a deterministic 12-month window shift};\node[font=\small] at (8.0,3.72) {$\hat{x}_{k+1}=x_{last}+\Delta y_{k+1}$};\tikzset{note/.style={font=\scriptsize,align=center,text width=3.0cm,minimum height=0.75cm,rounded corners=2pt,draw=black!25,fill=black!3,inner sep=3pt}}\node[note] at (7.1,-4.65) {\textbf{Window update}\\append $\hat{x}_{k+1}$ and drop the oldest month};\node[note] at (12.0,-4.65) {\textbf{Next call}\\same $f_\theta$, updated month and rollout step};
+\draw [connection]  (model-east)    -- node {\midarrow} (pred-west);
+\tikzset{updatebox/.style={draw=black!45,fill=blue!4,rounded corners=3pt,align=center,font=\small,text width=5.3cm,minimum height=2.7cm,inner sep=6pt}}\node[updatebox] (update) at (12.2,0) {\textbf{Update the 12-month window}\\[-1pt] $X_k=[x_{k-11},\ldots,x_k]$\\[-1pt] $\downarrow\;$ drop $x_{k-11}$; append $\hat{x}_{k+1}$\\[-1pt] $X_{k+1}=[x_{k-10},\ldots,x_k,\hat{x}_{k+1}]$\\[-1pt] {\scriptsize advance target month and rollout step}};\draw [connection] (pred-east) -- node {\midarrow} (update.west);\draw [copyconnection,-Stealth] (update.south) .. controls +(0,-2.0) and +(2.0,-2.0) .. (model-south);\node[font=\Large\bfseries] at (7.5,5.25) {Autoregressive Rollout};\node[font=\large] at (7.5,4.65) {predict one month, update the window, and call the same model again};\node[font=\small] at (7.5,4.05) {$\hat{x}_{k+1}=f_\theta(X_k),\qquad X_{k+1}=\mathrm{shift}(X_k,\hat{x}_{k+1})$};
 \end{tikzpicture}
 \end{document}
