@@ -188,31 +188,31 @@ Method 只分成两部分：
 
 **输入与输出：**
 
-\[
+$$
 \mathbf{x}_{t-11:t}
 \in
 \mathbb{R}^{12\times4\times180\times360},
-\]
+$$
 
 其中四个变量为 TOS、ZOS、TAUU 和 TAUV。模型单步输出为：
 
-\[
+$$
 \widehat{\mathbf{x}}_{t+1}
 =
 F_\theta(\mathbf{x}_{t-11:t},m_{t+1},s).
-\]
+$$
 
 正文依次概括：变量感知的 4×4 patch embedding、每个 patch 内的时间–变量 local fusion、45×90 patch grid 展平为 4050 个 spatial tokens、6 个 Spatial Attention Blocks、target-month gated TMoE、两级 PixelShuffle×2 decoder，以及 1×1 Conv 输出四变量场。模型采用残差形式：
 
-\[
+$$
 \widehat{\mathbf{x}}_{t+1}
 =
 \mathbf{x}_{t}+\Delta\mathbf{y}_{t+1}.
-\]
+$$
 
 多步 rollout 使用滑动窗口：
 
-\[
+$$
 \mathbf{W}_{\ell+1}
 =
 \operatorname{append}
@@ -220,7 +220,7 @@ F_\theta(\mathbf{x}_{t-11:t},m_{t+1},s).
 \operatorname{drop\ oldest}(\mathbf{W}_{\ell}),
 \widehat{\mathbf{x}}_{t+\ell}
 \right),
-\]
+$$
 
 因此 CNOP 优化的是完整的多月非线性轨迹，而不是单步静态输出。
 
@@ -230,9 +230,9 @@ F_\theta(\mathbf{x}_{t-11:t},m_{t+1},s).
 
 **目的：** 统一说明如何从 WalkerNet 的 TOS 场得到评测指标，避免 truth 与 baseline 使用不同口径。
 
-定义 lead-\(\ell\) 的 Niño3.4 指数：
+定义 lead-$\ell$ 的 Niño3.4 指数：
 
-\[
+$$
 N_{\ell}
 =
 \operatorname{AreaMean}_{R_{\mathrm{Nino3.4}}}
@@ -241,7 +241,7 @@ N_{\ell}
 -
 \mathrm{climatology}_{t+\ell}
 \right).
-\]
+$$
 
 需要说明：
 
@@ -259,19 +259,19 @@ N_{\ell}
 
 扰动后的输入为：
 
-\[
+$$
 \mathbf{x}^{\delta}
 =
 \mathbf{x}
 +
 \mathbf{M}_{D}\odot\boldsymbol{\delta},
-\]
+$$
 
 其中扰动只作用于最后一个输入月的 TOS 和 ZOS，TAUU 和 TAUV 不直接扰动，$D$ 表示允许扰动的区域。
 
 relative initial $L_2$ 约束为：
 
-\[
+$$
 \mathcal{C}_{D}(r_D)
 =
 \left\{
@@ -281,57 +281,57 @@ relative initial $L_2$ 约束为：
 \le r_D
 \right\},
 \qquad r_D=0.03
-\]
+$$
 
 正文说明 normalization、TOS/ZOS balancing、projected Adam 和 `constraint_ratio`，但不再单独拆标题。
 
 令：
 
-\[
+$$
 N_{\ell}^{\mathrm{base}}=N_{\ell}(\mathbf{0}),
 \qquad
 N_{\ell}^{\mathrm{pert}}=N_{\ell}(\boldsymbol{\delta}),
-\]
+$$
 
-\[
+$$
 \Delta N_{\ell}
 =
 N_{\ell}^{\mathrm{pert}}
 -
 N_{\ell}^{\mathrm{base}}.
-\]
+$$
 
 normal objective 根据正式实验协议选择其一：
 
-\[
+$$
 J_{\mathrm{normal}}=\Delta N_{12},
-\]
+$$
 
 或：
 
-\[
+$$
 J_{\mathrm{normal}}
 =
 \frac{1}{3}\sum_{\ell=10}^{12}\Delta N_{\ell}.
-\]
+$$
 
 delayed-onset objective 可以写成：
 
-\[
+$$
 J_{\mathrm{delay}}
 =
 \Delta N_{12}
 -
 \lambda_{\mathrm{early}}
 E_{\mathrm{early}},
-\]
+$$
 
-\[
+$$
 E_{\mathrm{early}}
 =
 \sum_{\ell=1}^{\ell_e}
 w_{\ell}|\Delta N_{\ell}|.
-\]
+$$
 
 必须明确 delayed term 是优化阶段的目标项，而不是优化完成后的 post-hoc 筛选。
 
@@ -341,25 +341,25 @@ w_{\ell}|\Delta N_{\ell}|.
 
 设置 $K$ 个初始扰动：
 
-\[
+$$
 \left\{
 \boldsymbol{\delta}^{(0)}_1,\ldots,
 \boldsymbol{\delta}^{(0)}_K
 \right\}.
-\]
+$$
 
 每个起点独立优化：
 
-\[
+$$
 \boldsymbol{\delta}^{*}_k
 =
 \arg\max_{\boldsymbol{\delta}\in\mathcal{C}_{D}}
 J(\boldsymbol{\delta};\boldsymbol{\delta}^{(0)}_k).
-\]
+$$
 
 最终 rank-1 为：
 
-\[
+$$
 k^*
 =
 \arg\max_kJ(\boldsymbol{\delta}^{*}_k),
@@ -367,18 +367,18 @@ k^*
 \boldsymbol{\delta}_{\mathrm{CNOP}}^*
 =
 \boldsymbol{\delta}_{k^*}^*.
-\]
+$$
 
 如果保留 top-3：
 
-\[
+$$
 \mathcal{T}_3
 =
 \operatorname{Top3}
 \left\{
 J(\boldsymbol{\delta}^{*}_k)
 \right\}_{k=1}^{K}.
-\]
+$$
 
 本节末尾用一段文字定义三条评测轨迹：truth 是观测目标演进，baseline 是未加 CNOP 的 WalkerNet rollout，perturbed 是加入优化扰动后的 rollout。三者的 anomaly、climatology 和 lead 口径沿用 3.1.2。
 
@@ -415,9 +415,9 @@ Results 严格分成两部分，不再拆成多个并列大章节。
 
 报告不同起始月份下的 lead-1 至 lead-18 或 lead-36 ACC：
 
-\[
+$$
 \mathrm{ACC}(m_{start},\ell).
-\]
+$$
 
 建议图：
 
