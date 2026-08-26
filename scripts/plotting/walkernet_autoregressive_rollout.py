@@ -48,12 +48,28 @@ def main() -> None:
                 offset="(7.2,0,0)", to="(0,0,0)", width=1.45, height=8.0,
                 depth=8.0, caption=r"$\hat{x}_{k+1}$"),
         to_connection("model", "pred"),
-        # Leave the update module itself blank for manual annotation.  The two
-        # arrows are intentionally retained: forecast -> update region, then
-        # the updated window loops back into the same WalkerNet block.
-        r"\coordinate (update-anchor) at (12.2,0);",
-        r"\draw [connection] (pred-east) -- node {\midarrow} (update-anchor);",
-        r"\draw [copyconnection,-Stealth] (update-anchor) .. controls +(0,-2.5) and +(2.0,-2.5) .. (model-south);",
+        # Graphical, square-slot window update.  Only compact symbols are put
+        # inside slots so no label can overflow a square; long variable names
+        # remain outside the cells as row/operation annotations.
+        r"\tikzset{windowpanel/.style={draw=black!45,fill=blue!3,rounded corners=3pt,minimum width=8.1cm,minimum height=4.35cm,inner sep=5pt},windowcell/.style={draw=black!35,fill=white,minimum size=0.48cm,inner sep=0pt}}",
+        r"\node[windowpanel] (update) at (13.4,0) {};",
+        r"\node[font=\small\bfseries] at ([yshift=1.58cm]update.center) {Window shift};",
+        r"\node[font=\scriptsize\bfseries,text=black!65] at ([xshift=-3.45cm,yshift=0.72cm]update.center) {$X_k$};",
+        r"\node[font=\scriptsize\bfseries,text=black!65] at ([xshift=-3.45cm,yshift=-0.82cm]update.center) {$X_{k+1}$};",
+        r"\foreach \i in {0,...,11}{\pgfmathsetmacro{\dx}{-2.78 + 0.50*\i}\node[windowcell] at ([xshift=\dx cm,yshift=0.72cm]update.center) {};}",
+        r"\foreach \i in {0,...,11}{\pgfmathsetmacro{\dx}{-2.78 + 0.50*\i}\node[windowcell] at ([xshift=\dx cm,yshift=-0.82cm]update.center) {};}",
+        r"\node[windowcell,fill=red!18,draw=red!65] (dropcell) at ([xshift=-2.78cm,yshift=0.72cm]update.center) {};",
+        r"\node[font=\Large\bfseries,text=red!70!black] at (dropcell.center) {$\times$};",
+        r"\node[font=\scriptsize,text=red!70!black] at ([xshift=-2.78cm,yshift=1.15cm]update.center) {drop};",
+        r"\node[windowcell,fill=green!18,draw=green!55!black] (newcell) at ([xshift=2.72cm,yshift=-0.82cm]update.center) {};",
+        r"\node[font=\Large\bfseries,text=green!35!black] at (newcell.center) {$+$};",
+        r"\node[font=\scriptsize,text=green!35!black] at ([xshift=2.72cm,yshift=-1.25cm]update.center) {append};",
+        r"\draw[-Stealth,very thick,draw=black!60] ([xshift=-3.25cm,yshift=0.35cm]update.center) -- ([xshift=-3.25cm,yshift=-0.45cm]update.center);",
+        r"\node[font=\scriptsize,text=black!65,rotate=90] at ([xshift=-3.55cm,yshift=-0.05cm]update.center) {shift};",
+        r"\node[font=\scriptsize,text=black!65] at ([yshift=-1.67cm]update.center) {left-shift the 12-month window};",
+        r"\draw [connection] (pred-east) -- node {\midarrow} (update.west);",
+        # Updated window loops back into the same WalkerNet block.
+        r"\draw [copyconnection,-Stealth] (update.south) .. controls +(0,-2.5) and +(2.0,-2.5) .. (model-south);",
         r"\node[font=\Large\bfseries] at (7.5,5.25) {Autoregressive Rollout};",
         r"\node[font=\large] at (7.5,4.65) {predict one month, update the window, and call the same model again};",
         r"\node[font=\small] at (7.5,4.05) {$\hat{x}_{k+1}=f_\theta(X_k),\qquad X_{k+1}=\mathrm{shift}(X_k,\hat{x}_{k+1})$};",
