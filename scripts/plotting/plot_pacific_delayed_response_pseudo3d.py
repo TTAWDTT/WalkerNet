@@ -8,7 +8,7 @@ from pathlib import Path
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.colors import BoundaryNorm
+from matplotlib.colors import BoundaryNorm, ListedColormap
 from matplotlib.patches import PathPatch, Polygon
 from matplotlib.path import Path as MplPath
 from scipy.ndimage import gaussian_filter, zoom
@@ -22,6 +22,13 @@ TOS_VMAX, ZOS_VMAX = 0.8, 0.03
 # is documented and applied consistently to every response panel.
 AIR_DENSITY = 1.225  # kg m-3
 DRAG_COEFF = 1.3e-3
+
+
+def soften_cmap(name: str, amount: float = 0.16) -> ListedColormap:
+    """Blend a reference colormap toward white for the paper-style palette."""
+    base = mpl.colormaps[name](np.linspace(0.0, 1.0, 256))
+    base[:, :3] = base[:, :3] * (1.0 - amount) + amount
+    return ListedColormap(base, name=f"{name}_soft")
 
 
 def smooth_grid(grid: np.ndarray, sigma: float = 3.0) -> np.ndarray:
@@ -140,7 +147,7 @@ def draw_layer(ax, lon, lat, field, corners, norm, cmap, levels, label, show_y, 
             quiver_handle = ax.quiver(qx[valid_q], qy[valid_q], qu[valid_q], qv[valid_q],
                                       color="#34495e", alpha=0.72, width=0.0018,
                                       headwidth=3.2, headlength=4.2, headaxislength=3.5,
-                                      angles="xy", scale_units="xy", scale=23.0,
+                                      angles="xy", scale_units="xy", scale=35.0,
                                       pivot="mid", zorder=7, rasterized=True)
     outline = np.array([corners[0], corners[1], corners[3], corners[2], corners[0]])
     ax.plot(outline[:, 0], outline[:, 1], color="black", lw=0.8, zorder=6)
@@ -164,9 +171,9 @@ def draw_layer(ax, lon, lat, field, corners, norm, cmap, levels, label, show_y, 
 def draw_pseudo_panel(ax, lon, lat, tos, zos, title, tos_norm, zos_norm, tos_cmap, zos_cmap, tos_levels, zos_levels, main=False, show_y=False, wind_u=None, wind_v=None):
     ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.axis("off")
     if main:
-        top = ((0.08,0.55),(0.96,0.55),(0.18,0.84),(0.88,0.84)); bottom=((0.08,0.19),(0.96,0.19),(0.18,0.48),(0.88,0.48))
+        top = ((0.08,0.55),(0.96,0.55),(0.14,0.80),(0.90,0.80)); bottom=((0.08,0.19),(0.96,0.19),(0.14,0.44),(0.90,0.44))
     else:
-        top = ((0.10,0.55),(0.94,0.55),(0.22,0.83),(0.84,0.83)); bottom=((0.10,0.18),(0.94,0.18),(0.22,0.45),(0.84,0.45))
+        top = ((0.10,0.55),(0.94,0.55),(0.16,0.79),(0.88,0.79)); bottom=((0.10,0.18),(0.94,0.18),(0.16,0.43),(0.88,0.43))
     # shallow side walls bind the two layers
     ax.add_patch(Polygon(np.array([bottom[2],top[2],top[0],bottom[0]]), closed=True, facecolor="#B8B8B8", edgecolor="#777777", lw=0.3, alpha=0.16, zorder=0))
     ax.add_patch(Polygon(np.array([top[1],top[3],bottom[3],bottom[1]]), closed=True, facecolor="#B8B8B8", edgecolor="#777777", lw=0.3, alpha=0.16, zorder=0))
@@ -212,8 +219,8 @@ def main():
     tos_levels=np.linspace(-TOS_VMAX,TOS_VMAX,23); zos_levels=np.linspace(-ZOS_VMAX,ZOS_VMAX,23)
     # Exact palettes from the legacy renderer: do not substitute custom
     # approximations when comparing this 3D version with figure4.png.
-    tos_cmap=mpl.colormaps["RdYlBu_r"].with_extremes(bad="#F4F1E8")
-    zos_cmap=mpl.colormaps["BrBG"].with_extremes(bad="#F4F1E8")
+    tos_cmap=soften_cmap("RdYlBu_r",0.14).with_extremes(bad="#F4F1E8")
+    zos_cmap=soften_cmap("BrBG",0.10).with_extremes(bad="#F4F1E8")
     tos_norm=BoundaryNorm(tos_levels,tos_cmap.N,extend="both"); zos_norm=BoundaryNorm(zos_levels,zos_cmap.N,extend="both")
     fig=plt.figure(figsize=(16.5,9.2)); ax=fig.add_axes((0.015,0.17,0.32,0.75)); draw_pseudo_panel(ax,lon_hi,lat_hi,init_tos,init_zos,"(a) Initial CNOP perturbation (rank 1)",tos_norm,zos_norm,tos_cmap,zos_cmap,tos_levels,zos_levels,main=True,show_y=True)
     leads=(2,4,6,8,10,12); positions=[(0.36+0.205*(i%3),0.51-0.38*(i//3)) for i in range(6)]
