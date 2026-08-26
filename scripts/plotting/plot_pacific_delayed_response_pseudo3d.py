@@ -26,7 +26,7 @@ DRAG_COEFF = 1.3e-3
 
 def soften_cmap(name: str, amount: float = 0.16) -> ListedColormap:
     """Blend a reference colormap toward white for the paper-style palette."""
-    base = mpl.colormaps[name](np.linspace(0.0, 1.0, 256))
+    base = mpl.colormaps[name](np.linspace(0.0, 1.0, 512))
     base[:, :3] = base[:, :3] * (1.0 - amount) + amount
     return ListedColormap(base, name=f"{name}_soft")
 
@@ -217,8 +217,8 @@ def main():
     tos_levels=np.linspace(-TOS_VMAX,TOS_VMAX,81); zos_levels=np.linspace(-ZOS_VMAX,ZOS_VMAX,61)
     # Exact palettes from the legacy renderer: do not substitute custom
     # approximations when comparing this 3D version with figure4.png.
-    tos_cmap=soften_cmap("RdYlBu_r",0.03).with_extremes(bad="#F4F1E8")
-    zos_cmap=soften_cmap("BrBG",0.02).with_extremes(bad="#F4F1E8")
+    tos_cmap=soften_cmap("RdYlBu_r",0.11).with_extremes(bad="#F4F1E8")
+    zos_cmap=soften_cmap("BrBG",0.09).with_extremes(bad="#F4F1E8")
     tos_norm=TwoSlopeNorm(vmin=-TOS_VMAX,vcenter=0.0,vmax=TOS_VMAX); zos_norm=TwoSlopeNorm(vmin=-ZOS_VMAX,vcenter=0.0,vmax=ZOS_VMAX)
     fig=plt.figure(figsize=(16.5,9.2)); ax=fig.add_axes((0.015,0.17,0.32,0.75)); draw_pseudo_panel(ax,lon_hi,lat_hi,init_tos,init_zos,"(a) Initial CNOP perturbation (rank 1)",tos_norm,zos_norm,tos_cmap,zos_cmap,tos_levels,zos_levels,main=True,show_y=True)
     leads=(2,4,6,8,10,12); positions=[(0.36+0.205*(i%3),0.51-0.38*(i//3)) for i in range(6)]
