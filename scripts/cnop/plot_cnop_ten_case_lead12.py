@@ -19,7 +19,8 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
+from scipy.ndimage import zoom
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -47,6 +48,32 @@ from src.utils import load_config  # noqa: E402
 # Keeping one global cmap prevents the perturbation panel from looking like a
 # different variable solely because it was plotted with another palette.
 TOS_CMAP = mpl.colormaps["RdYlBu_r"]
+
+
+def lighten_cmap(cmap: mpl.colors.Colormap, amount: float = 0.18) -> mpl.colors.Colormap:
+    """Blend a display colormap toward white without changing field values."""
+
+    colors = cmap(np.linspace(0.0, 1.0, 256))
+    colors[:, :3] = colors[:, :3] * (1.0 - amount) + amount
+    return mpl.colors.ListedColormap(colors, name=f"{cmap.name}_light")
+
+
+def interpolate_field(
+    lon: np.ndarray, lat: np.ndarray, field: np.ndarray, factor: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Densify a display field without changing metric computations."""
+
+    factor = max(1, int(factor))
+    if factor == 1:
+        return lon, lat, field
+    values = np.asarray(field, dtype=float)
+    valid = np.isfinite(values)
+    up_values = zoom(np.where(valid, values, 0.0), (factor, factor), order=3, mode="nearest", prefilter=True)
+    up_weights = zoom(valid.astype(float), (factor, factor), order=1, mode="nearest")
+    up_field = np.divide(up_values, up_weights, out=np.full_like(up_values, np.nan), where=up_weights > 0.35)
+    up_lon = np.linspace(float(lon[0]), float(lon[-1]), up_field.shape[1])
+    up_lat = np.linspace(float(lat[0]), float(lat[-1]), up_field.shape[0])
+    return up_lon, up_lat, up_field
 
 
 def parse_args() -> argparse.Namespace:
@@ -104,10 +131,34 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--trained-rollout-steps", type=int, default=0)
     parser.add_argument("--smooth-sigma", type=float, default=0.8)
     parser.add_argument(
+        "--initial-smooth-sigma",
+        type=float,
+        default=1.8,
+        help="Additional display-only Gaussian smoothing for the initial perturbation column.",
+    )
+    parser.add_argument(
+        "--initial-lighten",
+        type=float,
+        default=0.20,
+        help="Blend amount toward white for the initial perturbation colormap.",
+    )
+    parser.add_argument(
         "--contour-levels",
         type=int,
         default=31,
         help="Number of continuous contour intervals used for all map fields (higher values reduce color banding).",
+    )
+    parser.add_argument(
+        "--draw-contours",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Draw the zero contour over map fields (disabled by default for smooth gradient rendering).",
+    )
+    parser.add_argument(
+        "--interpolation-factor",
+        type=int,
+        default=4,
+        help="Display-only bicubic interpolation factor applied after smoothing.",
     )
     parser.add_argument("--tos-vmax", type=float, default=None, help="Fixed symmetric SSTA color limit.")
     parser.add_argument("--delta-vmax", type=float, default=None, help="Fixed symmetric initial-perturbation color limit.")
@@ -605,7 +656,7 @@ def main() -> None:
     response_levels = np.linspace(-response_vmax, response_vmax, contour_levels)
     tos_levels = np.linspace(-tos_vmax, tos_vmax, contour_levels)
     tos_label = "SSTA" if args.tos_mode == "anomaly" else "TOS"
-    initial_cmap = TOS_CMAP if args.initial_cmap == "overview_tos" else "RdBu_r"
+    initial_cmap = TOS_CMAP if args.initial_cmap == "overview_tos" else mpl.colormaps["RdBu_r"]
 
     if args.layout == "three":
         fig, axes = plt.subplots(
@@ -635,15 +686,22 @@ def main() -> None:
                     show_xticks=row_idx == nrows - 1,
                     show_yticks=col_idx == 0,
                 )
-                tos_mappable = ax.contourf(
-                    lon,
-                    lat,
-                    field,
-                    levels=tos_levels,
-                    cmap=TOS_CMAP,
-                    extend="both",
+                display_field = field
+                plot_lon, plot_lat, plot_field = interpolate_field(
+                    lon, lat, display_field, args.interpolation_factor
                 )
-                ax.contour(lon, lat, field, levels=[0.0], colors="#263238", linewidths=0.22, alpha=0.5)
+                tos_mappable = ax.imshow(
+                    np.ma.masked_invalid(plot_field),
+                    origin="lower",
+                    extent=(float(plot_lon[0]), float(plot_lon[-1]), float(plot_lat[0]), float(plot_lat[-1])),
+                    cmap=TOS_CMAP,
+                    norm=TwoSlopeNorm(vmin=float(tos_levels[0]), vcenter=0.0, vmax=float(tos_levels[-1])),
+                    interpolation="bicubic",
+                    aspect="auto",
+                    zorder=0,
+                )
+                if args.draw_contours:
+                    ax.contour(lon, lat, field, levels=[0.0], colors="#263238", linewidths=0.22, alpha=0.5)
                 add_nino34_box(ax)
                 if row_idx == 0:
                     ax.set_title(col_titles[col_idx], pad=3)
@@ -697,8 +755,29 @@ def main() -> None:
                 )
             else:
                 setup_axis(ax, show_xticks=row_idx == nrows - 1, show_yticks=False)
-            mappable = ax.contourf(lon, lat, fields[col_idx], levels=levels[col_idx], cmap=cmaps[col_idx], extend="both")
-            ax.contour(lon, lat, fields[col_idx], levels=[0.0], colors="#263238", linewidths=0.22, alpha=0.5)
+            display_field = (
+                smooth_field(fields[col_idx], args.initial_smooth_sigma)
+                if col_idx == 0 else fields[col_idx]
+            )
+            plot_lon, plot_lat, plot_field = interpolate_field(
+                lon, lat, display_field, args.interpolation_factor
+            )
+            display_cmap = (
+                lighten_cmap(initial_cmap, args.initial_lighten)
+                if col_idx == 0 else cmaps[col_idx]
+            )
+            mappable = ax.imshow(
+                np.ma.masked_invalid(plot_field),
+                origin="lower",
+                extent=(float(plot_lon[0]), float(plot_lon[-1]), float(plot_lat[0]), float(plot_lat[-1])),
+                cmap=display_cmap,
+                norm=TwoSlopeNorm(vmin=float(levels[col_idx][0]), vcenter=0.0, vmax=float(levels[col_idx][-1])),
+                interpolation="bicubic",
+                aspect="auto",
+                zorder=0,
+            )
+            if args.draw_contours:
+                ax.contour(lon, lat, fields[col_idx], levels=[0.0], colors="#263238", linewidths=0.22, alpha=0.5)
             if col_idx != 0 or initial_map_extent is None:
                 add_nino34_box(ax)
             if row_idx == 0:
