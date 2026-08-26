@@ -99,6 +99,7 @@ def raster_land_mask(lon, lat):
 
 
 def draw_layer(ax, lon, lat, field, corners, norm, cmap, levels, label, show_y, wind_u=None, wind_v=None):
+    quiver_handle = None
     xx, yy = np.meshgrid(edges(lon), edges(lat))
     xg, yg = map_xy(xx, yy, corners)
     fv = np.pad(field, ((0, 1), (0, 1)), mode="edge")
@@ -114,17 +115,17 @@ def draw_layer(ax, lon, lat, field, corners, norm, cmap, levels, label, show_y, 
         # Sparse quiver overlay for the two wind-stress response components.
         # It is drawn only on the TOS layer, where vector direction remains
         # legible without obscuring the ZOS surface below.
-        stride_y = max(1, len(lat) // 9); stride_x = max(1, len(lon) // 18)
+        stride_y = max(1, len(lat) // 12); stride_x = max(1, len(lon) // 24)
         qlon, qlat = np.meshgrid(lon[::stride_x], lat[::stride_y])
         qu, qv = wind_u[::stride_y, ::stride_x], wind_v[::stride_y, ::stride_x]
         qx, qy = map_xy(qlon, qlat, corners)
         valid_q = np.isfinite(qu) & np.isfinite(qv)
         if np.any(valid_q):
-            ax.quiver(qx[valid_q], qy[valid_q], qu[valid_q], qv[valid_q],
-                      color="#34495e", alpha=0.72, width=0.0018,
-                      headwidth=3.2, headlength=4.2, headaxislength=3.5,
-                      angles="xy", scale_units="xy", scale=0.22,
-                      pivot="mid", zorder=7, rasterized=True)
+            quiver_handle = ax.quiver(qx[valid_q], qy[valid_q], qu[valid_q], qv[valid_q],
+                                      color="#34495e", alpha=0.72, width=0.0018,
+                                      headwidth=3.2, headlength=4.2, headaxislength=3.5,
+                                      angles="xy", scale_units="xy", scale=0.22,
+                                      pivot="mid", zorder=7, rasterized=True)
     outline = np.array([corners[0], corners[1], corners[3], corners[2], corners[0]])
     ax.plot(outline[:, 0], outline[:, 1], color="black", lw=0.8, zorder=6)
     for lo in (180, 210, 240, 270, 300):
@@ -141,6 +142,7 @@ def draw_layer(ax, lon, lat, field, corners, norm, cmap, levels, label, show_y, 
             x, y = map_xy(np.array([LON_MIN]), np.array([la]), corners)
             ax.text(x[0]-0.018, y[0], text, ha="right", va="center", fontsize=6.8, fontweight="bold")
     ax.text(corners[0][0]+0.015, corners[0][1]+0.012, label, fontsize=8.0, fontweight="bold", va="bottom", zorder=8)
+    return quiver_handle
 
 
 def draw_pseudo_panel(ax, lon, lat, tos, zos, title, tos_norm, zos_norm, tos_cmap, zos_cmap, tos_levels, zos_levels, main=False, show_y=False, wind_u=None, wind_v=None):
@@ -152,12 +154,13 @@ def draw_pseudo_panel(ax, lon, lat, tos, zos, title, tos_norm, zos_norm, tos_cma
     # shallow side walls bind the two layers
     ax.add_patch(Polygon(np.array([bottom[2],top[2],top[0],bottom[0]]), closed=True, facecolor="#B8B8B8", edgecolor="#777777", lw=0.3, alpha=0.16, zorder=0))
     ax.add_patch(Polygon(np.array([top[1],top[3],bottom[3],bottom[1]]), closed=True, facecolor="#B8B8B8", edgecolor="#777777", lw=0.3, alpha=0.16, zorder=0))
-    draw_layer(ax, lon, lat, tos, top, tos_norm, tos_cmap, tos_levels, "TOS", show_y, wind_u=wind_u, wind_v=wind_v)
+    quiver_handle = draw_layer(ax, lon, lat, tos, top, tos_norm, tos_cmap, tos_levels, "TOS", show_y, wind_u=wind_u, wind_v=wind_v)
     draw_layer(ax, lon, lat, zos, bottom, zos_norm, zos_cmap, zos_levels, "ZOS", show_y)
     for lo, text in ((150,"150E"),(180,"180"),(210,"150W"),(240,"120W"),(270,"90W"),(300,"60W")):
         x, y = map_xy(np.array([lo]), np.array([LAT_MIN]), bottom)
         ax.text(x[0], y[0]-0.026, text, ha="center", va="top", fontsize=6.6 if not main else 8.0, fontweight="bold")
     ax.text(0.5, 0.98, title, ha="center", va="top", fontsize=8.7 if not main else 11.0, fontweight="bold", clip_on=False)
+    return quiver_handle
 
 
 def main():
@@ -197,8 +200,13 @@ def main():
     tos_norm=BoundaryNorm(tos_levels,tos_cmap.N,extend="both"); zos_norm=BoundaryNorm(zos_levels,zos_cmap.N,extend="both")
     fig=plt.figure(figsize=(16.5,9.2)); ax=fig.add_axes((0.015,0.17,0.32,0.75)); draw_pseudo_panel(ax,lon_hi,lat_hi,init_tos,init_zos,"(a) Initial CNOP perturbation (rank 1)",tos_norm,zos_norm,tos_cmap,zos_cmap,tos_levels,zos_levels,main=True,show_y=True)
     leads=(2,4,6,8,10,12); positions=[(0.36+0.205*(i%3),0.51-0.38*(i//3)) for i in range(6)]
+    quiver_ref=None; quiver_ax=None
     for i,(lead,pos) in enumerate(zip(leads,positions)):
-        lon_i,lat_i,tos_i,zos_i,wind_u_i,wind_v_i=fields[i]; a=fig.add_axes((pos[0],pos[1],0.19,0.34)); draw_pseudo_panel(a,lon_i,lat_i,tos_i,zos_i,f"({chr(98+i)}) Lead {lead}",tos_norm,zos_norm,tos_cmap,zos_cmap,tos_levels,zos_levels,main=False,show_y=(i%3==0),wind_u=wind_u_i,wind_v=wind_v_i)
+        lon_i,lat_i,tos_i,zos_i,wind_u_i,wind_v_i=fields[i]; a=fig.add_axes((pos[0],pos[1],0.19,0.34)); q=draw_pseudo_panel(a,lon_i,lat_i,tos_i,zos_i,f"({chr(98+i)}) Lead {lead}",tos_norm,zos_norm,tos_cmap,zos_cmap,tos_levels,zos_levels,main=False,show_y=(i%3==0),wind_u=wind_u_i,wind_v=wind_v_i)
+        if quiver_ref is None and q is not None:
+            quiver_ref=q; quiver_ax=a
+    if quiver_ref is not None and quiver_ax is not None:
+        quiver_ax.quiverkey(quiver_ref, X=0.64, Y=1.18, U=0.02, label="0.02 N m$^{-2}$", labelpos="E", coordinates="axes", fontproperties={"size": 7})
     cax1=fig.add_axes((0.10,0.07,0.28,0.018)); cax2=fig.add_axes((0.55,0.07,0.28,0.018)); cb1=fig.colorbar(mpl.cm.ScalarMappable(norm=tos_norm,cmap=tos_cmap),cax=cax1,orientation="horizontal"); cb2=fig.colorbar(mpl.cm.ScalarMappable(norm=zos_norm,cmap=zos_cmap),cax=cax2,orientation="horizontal"); cb1.set_label("TOS response (°C)"); cb2.set_label("ZOS response"); cb1.set_ticks(np.linspace(-TOS_VMAX,TOS_VMAX,7)); cb2.set_ticks(np.linspace(-ZOS_VMAX,ZOS_VMAX,7))
     source, year = args.case.rsplit("_", 1)
     fig.suptitle(f"CNOP response evolution: {source} {year}, delayed candidate rank 1 (lead12 ΔNiño={args.lead_delta})",fontsize=16,fontweight="bold",y=0.985)
