@@ -17,6 +17,11 @@ LON_MIN, LON_MAX = 150.0, 300.0
 LAT_MIN, LAT_MAX = -35.0, 35.0
 NINO_BOX = (190.0, 240.0, -5.0, 5.0)
 TOS_VMAX, ZOS_VMAX = 0.8, 0.03
+# Convert wind-stress anomalies to an equivalent 10-m wind-speed vector for
+# the requested m/s legend using tau = rho_air * C_D * |U| U.  The conversion
+# is documented and applied consistently to every response panel.
+AIR_DENSITY = 1.225  # kg m-3
+DRAG_COEFF = 1.3e-3
 
 
 def smooth_grid(grid: np.ndarray, sigma: float = 3.0) -> np.ndarray:
@@ -33,6 +38,17 @@ def upsample(grid: np.ndarray, factor: int = 4) -> np.ndarray:
     values = zoom(np.where(valid, grid, 0.0), (factor, factor), order=3, mode="nearest", prefilter=True)
     weights = zoom(valid.astype(float), (factor, factor), order=3, mode="nearest", prefilter=True)
     return np.divide(values, weights, out=np.full_like(values, np.nan), where=weights > 0.35)
+
+
+def stress_to_equivalent_wind(tau_u: np.ndarray, tau_v: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Convert surface-stress components (N m-2) to equivalent wind (m s-1)."""
+    magnitude = np.hypot(tau_u, tau_v)
+    denominator = np.sqrt(AIR_DENSITY * DRAG_COEFF * magnitude)
+    u = np.divide(tau_u, denominator, out=np.zeros_like(tau_u), where=denominator > 1e-8)
+    v = np.divide(tau_v, denominator, out=np.zeros_like(tau_v), where=denominator > 1e-8)
+    invalid = ~np.isfinite(tau_u) | ~np.isfinite(tau_v)
+    u[invalid] = np.nan; v[invalid] = np.nan
+    return u, v
 
 
 def map_xy(lon: np.ndarray, lat: np.ndarray, corners):
@@ -115,7 +131,7 @@ def draw_layer(ax, lon, lat, field, corners, norm, cmap, levels, label, show_y, 
         # Sparse quiver overlay for the two wind-stress response components.
         # It is drawn only on the TOS layer, where vector direction remains
         # legible without obscuring the ZOS surface below.
-        stride_y = max(1, len(lat) // 12); stride_x = max(1, len(lon) // 24)
+        stride_y = max(1, len(lat) // 14); stride_x = max(1, len(lon) // 28)
         qlon, qlat = np.meshgrid(lon[::stride_x], lat[::stride_y])
         qu, qv = wind_u[::stride_y, ::stride_x], wind_v[::stride_y, ::stride_x]
         qx, qy = map_xy(qlon, qlat, corners)
@@ -124,7 +140,7 @@ def draw_layer(ax, lon, lat, field, corners, norm, cmap, levels, label, show_y, 
             quiver_handle = ax.quiver(qx[valid_q], qy[valid_q], qu[valid_q], qv[valid_q],
                                       color="#34495e", alpha=0.72, width=0.0018,
                                       headwidth=3.2, headlength=4.2, headaxislength=3.5,
-                                      angles="xy", scale_units="xy", scale=0.22,
+                                      angles="xy", scale_units="xy", scale=23.0,
                                       pivot="mid", zorder=7, rasterized=True)
     outline = np.array([corners[0], corners[1], corners[3], corners[2], corners[0]])
     ax.plot(outline[:, 0], outline[:, 1], color="black", lw=0.8, zorder=6)
@@ -178,7 +194,8 @@ def main():
         tos=upsample(smooth_grid(np.where(mask,np.nan,response[lead,0][np.ix_(slat,slon)])),4); zos=upsample(smooth_grid(np.where(mask,np.nan,response[lead,1][np.ix_(slat,slon)])),4)
         wind_u=wind_v=None
         if wind_response is not None:
-            wind_u=upsample(smooth_grid(np.where(mask,np.nan,wind_response[lead,2][np.ix_(slat,slon)])),4); wind_v=upsample(smooth_grid(np.where(mask,np.nan,wind_response[lead,3][np.ix_(slat,slon)])),4)
+            wind_tau_u=upsample(smooth_grid(np.where(mask,np.nan,wind_response[lead,2][np.ix_(slat,slon)])),4); wind_tau_v=upsample(smooth_grid(np.where(mask,np.nan,wind_response[lead,3][np.ix_(slat,slon)])),4)
+            wind_u, wind_v = stress_to_equivalent_wind(wind_tau_u, wind_tau_v)
         lon_hi=np.linspace(lon[0],lon[-1],tos.shape[1]); lat_hi=np.linspace(lat[0],lat[-1],tos.shape[0]); land_hi=zoom(mask.astype(float),(4,4),order=1,mode="nearest")>=0.5; tos[land_hi]=np.nan; zos[land_hi]=np.nan
         if wind_u is not None: wind_u[land_hi]=np.nan; wind_v[land_hi]=np.nan
         fields.append((lon_hi,lat_hi,tos,zos,wind_u,wind_v))
@@ -206,7 +223,7 @@ def main():
         if quiver_ref is None and q is not None:
             quiver_ref=q; quiver_ax=a
     if quiver_ref is not None and quiver_ax is not None:
-        quiver_ax.quiverkey(quiver_ref, X=0.64, Y=1.18, U=0.02, label="0.02 N m$^{-2}$", labelpos="E", coordinates="axes", fontproperties={"size": 7})
+        quiver_ax.quiverkey(quiver_ref, X=0.64, Y=1.18, U=3.0, label="3 m s$^{-1}$", labelpos="E", coordinates="axes", fontproperties={"size": 7})
     cax1=fig.add_axes((0.10,0.07,0.28,0.018)); cax2=fig.add_axes((0.55,0.07,0.28,0.018)); cb1=fig.colorbar(mpl.cm.ScalarMappable(norm=tos_norm,cmap=tos_cmap),cax=cax1,orientation="horizontal"); cb2=fig.colorbar(mpl.cm.ScalarMappable(norm=zos_norm,cmap=zos_cmap),cax=cax2,orientation="horizontal"); cb1.set_label("TOS response (°C)"); cb2.set_label("ZOS response"); cb1.set_ticks(np.linspace(-TOS_VMAX,TOS_VMAX,7)); cb2.set_ticks(np.linspace(-ZOS_VMAX,ZOS_VMAX,7))
     source, year = args.case.rsplit("_", 1)
     fig.suptitle(f"CNOP response evolution: {source} {year}, delayed candidate rank 1 (lead12 ΔNiño={args.lead_delta})",fontsize=16,fontweight="bold",y=0.985)
