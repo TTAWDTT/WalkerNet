@@ -6,12 +6,13 @@
   "split": "test",
   "series": "WalkerNet monthly Niño3.4 anomaly ACC only",
   "leads_plotted": "1-36",
-  "hatching": "For each start month, the four largest positive one-step drops ACC[lead]-ACC[lead+1]; hatch is drawn on the endpoint lead cell.",
+  "hatching": "For each start month, the six largest one-step drops ACC[lead]-ACC[lead+1]; hatch is drawn on the endpoint lead cell.",
+  "display_threshold": "ACC values below 0.5 are masked/rendered white for display only; raw values and hatch ranking are unchanged",
   "display_interpolation": "RectBivariateSpline cubic interpolation plus contourf for color-field display only; raw 12x36 cells and hatch locations are preserved",
   "transformations": [
     "direct saved start-month grouped ACC values rounded to <=6 decimals",
-    "shape-preserving PCHIP interpolation for display only",
-    "markers retain the saved lead values; no value filtering"
+    "ACC<0.5 masked to white for display only",
+    "no value filtering for the saved data or hatch ranking"
   ],
   "axes": {
     "x": "lead month",
@@ -21,6 +22,16 @@
   },
   "fastest_declines": {
     "1": [
+      {
+        "from_lead": 3,
+        "to_lead": 4,
+        "drop": 0.07493000000000005
+      },
+      {
+        "from_lead": 4,
+        "to_lead": 5,
+        "drop": 0.07275200000000004
+      },
       {
         "from_lead": 16,
         "to_lead": 17,
@@ -44,9 +55,19 @@
     ],
     "2": [
       {
+        "from_lead": 7,
+        "to_lead": 8,
+        "drop": 0.09479100000000007
+      },
+      {
         "from_lead": 15,
         "to_lead": 16,
         "drop": 0.22761000000000003
+      },
+      {
+        "from_lead": 16,
+        "to_lead": 17,
+        "drop": 0.08690199999999998
       },
       {
         "from_lead": 25,
@@ -66,6 +87,11 @@
     ],
     "3": [
       {
+        "from_lead": 5,
+        "to_lead": 6,
+        "drop": 0.101514
+      },
+      {
         "from_lead": 14,
         "to_lead": 15,
         "drop": 0.23001699999999997
@@ -74,6 +100,11 @@
         "from_lead": 15,
         "to_lead": 16,
         "drop": 0.11929200000000001
+      },
+      {
+        "from_lead": 24,
+        "to_lead": 25,
+        "drop": 0.10559399999999997
       },
       {
         "from_lead": 26,
@@ -98,6 +129,16 @@
         "drop": 0.27008699999999997
       },
       {
+        "from_lead": 14,
+        "to_lead": 15,
+        "drop": 0.10728100000000002
+      },
+      {
+        "from_lead": 24,
+        "to_lead": 25,
+        "drop": 0.100083
+      },
+      {
         "from_lead": 25,
         "to_lead": 26,
         "drop": 0.187085
@@ -118,6 +159,16 @@
         "from_lead": 13,
         "to_lead": 14,
         "drop": 0.10985499999999998
+      },
+      {
+        "from_lead": 19,
+        "to_lead": 20,
+        "drop": 0.0899049999999999
+      },
+      {
+        "from_lead": 23,
+        "to_lead": 24,
+        "drop": 0.09727599999999997
       },
       {
         "from_lead": 24,
@@ -150,13 +201,33 @@
         "from_lead": 23,
         "to_lead": 24,
         "drop": 0.13273199999999996
+      },
+      {
+        "from_lead": 24,
+        "to_lead": 25,
+        "drop": 0.09129800000000002
+      },
+      {
+        "from_lead": 35,
+        "to_lead": 36,
+        "drop": 0.09460100000000005
       }
     ],
     "7": [
       {
+        "from_lead": 1,
+        "to_lead": 2,
+        "drop": 0.07705399999999996
+      },
+      {
         "from_lead": 10,
         "to_lead": 11,
         "drop": 0.17154000000000003
+      },
+      {
+        "from_lead": 21,
+        "to_lead": 22,
+        "drop": 0.07760999999999996
       },
       {
         "from_lead": 22,
@@ -175,6 +246,16 @@
       }
     ],
     "8": [
+      {
+        "from_lead": 9,
+        "to_lead": 10,
+        "drop": 0.11138599999999999
+      },
+      {
+        "from_lead": 20,
+        "to_lead": 21,
+        "drop": 0.08074700000000001
+      },
       {
         "from_lead": 21,
         "to_lead": 22,
@@ -198,6 +279,11 @@
     ],
     "9": [
       {
+        "from_lead": 8,
+        "to_lead": 9,
+        "drop": 0.10385
+      },
+      {
         "from_lead": 20,
         "to_lead": 21,
         "drop": 0.20304299999999997
@@ -216,6 +302,11 @@
         "from_lead": 33,
         "to_lead": 34,
         "drop": 0.194
+      },
+      {
+        "from_lead": 35,
+        "to_lead": 36,
+        "drop": 0.09476599999999999
       }
     ],
     "10": [
@@ -225,9 +316,19 @@
         "drop": 0.08878800000000009
       },
       {
+        "from_lead": 10,
+        "to_lead": 11,
+        "drop": 0.08499100000000004
+      },
+      {
         "from_lead": 20,
         "to_lead": 21,
         "drop": 0.101968
+      },
+      {
+        "from_lead": 31,
+        "to_lead": 32,
+        "drop": 0.088007
       },
       {
         "from_lead": 32,
@@ -241,6 +342,16 @@
       }
     ],
     "11": [
+      {
+        "from_lead": 5,
+        "to_lead": 6,
+        "drop": 0.07803199999999999
+      },
+      {
+        "from_lead": 6,
+        "to_lead": 7,
+        "drop": 0.07843100000000003
+      },
       {
         "from_lead": 18,
         "to_lead": 19,
@@ -274,6 +385,11 @@
         "drop": 0.17726799999999998
       },
       {
+        "from_lead": 24,
+        "to_lead": 25,
+        "drop": 0.07642199999999999
+      },
+      {
         "from_lead": 29,
         "to_lead": 30,
         "drop": 0.09473399999999998
@@ -282,6 +398,11 @@
         "from_lead": 30,
         "to_lead": 31,
         "drop": 0.163958
+      },
+      {
+        "from_lead": 32,
+        "to_lead": 33,
+        "drop": 0.091618
       }
     ]
   },

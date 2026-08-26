@@ -1,8 +1,8 @@
 """Plot WalkerNet monthly Niño3.4 ACC by forecast start month.
 
-The panel values are read from the formal GPU007 start-month × lead output.
-Markers are the saved lead values; PCHIP is used only to make the connecting
-curve visually smooth and does not replace or filter any observations.
+The panel values are a preserved snapshot of the formal start-month × lead
+output.  The color field is display-only: values below ACC=0.5 are rendered
+white, while the saved values and hatch selection remain unchanged.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from scipy.interpolate import PchipInterpolator, RectBivariateSpline
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "docs" / "assets" / "walkernet_rollout_skill"
 LEADS = np.arange(1, 19)
+N_FASTEST = 6
 MONTH_NAMES = ["January", "February", "March", "April", "May", "June",
                "July", "August", "September", "October", "November", "December"]
 
@@ -84,17 +85,21 @@ def main() -> None:
         y_dense = np.linspace(1, 12, 240)
         spline = RectBivariateSpline(y_raw, x_raw, values, kx=3, ky=3, s=0)
         smooth_values = np.clip(spline(y_dense, x_dense), np.nanmin(values), 1.0)
+        # Display-only threshold: retain all raw values for the audit and
+        # hatching, but render sub-0.5 ACC as white to emphasize the useful-
+        # skill region.  Masking avoids inventing a second color scale.
+        display_values = np.ma.masked_less(smooth_values, 0.5)
         X, Y = np.meshgrid(x_dense, y_dense)
-        levels = np.linspace(float(np.nanmin(values)), 1.0, 17)
+        levels = np.linspace(0.5, 1.0, 17)
         image = ax.contourf(
-            X, Y, smooth_values, levels=levels, cmap="YlOrBr", extend="neither",
+            X, Y, display_values, levels=levels, cmap="YlOrBr", extend="neither",
         )
-        # For each start month, hatch the four one-step intervals with the
+        # For each start month, hatch the six one-step intervals with the
         # largest ACC drop. The hatch is placed on the endpoint lead cell.
         fastest = {}
         for row in range(12):
             drops = values[row, :-1] - values[row, 1:]
-            indices = np.argsort(drops)[-4:]
+            indices = np.argsort(drops)[-N_FASTEST:]
             fastest[str(row + 1)] = [
                 {"from_lead": int(i + 1), "to_lead": int(i + 2), "drop": float(drops[i])}
                 for i in sorted(indices)
@@ -116,11 +121,11 @@ def main() -> None:
         ax.grid(False)
         cb = fig.colorbar(image, ax=ax, pad=0.015)
         cb.set_label("ACC")
-        cb.set_ticks([-0.2, 0.0, 0.2, 0.4, 0.6, 0.8, 1.0])
+        cb.set_ticks([0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
         from matplotlib.patches import Patch
         fig.legend(
             handles=[Patch(facecolor="white", edgecolor="#555555", hatch="///",
-                           label="four fastest one-step ACC declines per start month")],
+                           label="six fastest one-step ACC declines per start month")],
             loc="lower right", bbox_to_anchor=(0.37, 0.075),
             framealpha=0.92, fontsize=8.5,
         )
@@ -136,12 +141,13 @@ def main() -> None:
         "split": "test",
         "series": "WalkerNet monthly Niño3.4 anomaly ACC only",
         "leads_plotted": "1-36",
-        "hatching": "For each start month, the four largest positive one-step drops ACC[lead]-ACC[lead+1]; hatch is drawn on the endpoint lead cell.",
+        "hatching": "For each start month, the six largest one-step drops ACC[lead]-ACC[lead+1]; hatch is drawn on the endpoint lead cell.",
+        "display_threshold": "ACC values below 0.5 are masked/rendered white for display only; raw values and hatch ranking are unchanged",
         "display_interpolation": "RectBivariateSpline cubic interpolation plus contourf for color-field display only; raw 12x36 cells and hatch locations are preserved",
         "transformations": [
             "direct saved start-month grouped ACC values rounded to <=6 decimals",
-            "shape-preserving PCHIP interpolation for display only",
-            "markers retain the saved lead values; no value filtering",
+            "ACC<0.5 masked to white for display only",
+            "no value filtering for the saved data or hatch ranking",
         ],
         "axes": {"x": "lead month", "y": "start month", "color": "ACC", "limits": "x=[1,36], y=start month 1..12"},
         "fastest_declines": fastest,
@@ -152,8 +158,8 @@ def main() -> None:
     )
     (OUT / "walkernet_acc_by_start_month_lead1_36.alt.txt").write_text(
         "Heatmap of WalkerNet monthly Nino3.4 anomaly ACC with lead month on the x-axis and "
-        "forecast start month on the y-axis. Hatched cells mark, separately for each start month, "
-        "the four endpoint lead cells following the largest one-step ACC declines. Color encodes ACC.",
+        "forecast start month on the y-axis. ACC values below 0.5 are rendered white. Hatched cells mark, separately for each start month, "
+        "the six endpoint lead cells following the largest one-step ACC declines. Color encodes ACC.",
         encoding="utf-8",
     )
 

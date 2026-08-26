@@ -20,7 +20,7 @@ The corrected second figure is:
 - [walkernet_acc_by_start_month_lead1_36.png](walkernet_acc_by_start_month_lead1_36.png)
 - [walkernet_acc_by_start_month_lead1_36.pdf](walkernet_acc_by_start_month_lead1_36.pdf)
 
-It uses start month on the y-axis, lead month 1--36 on the x-axis, and ACC as the color field. For each start-month row, hatching marks the four endpoint lead cells following the largest one-step ACC drops `ACC(lead) - ACC(lead+1)`. The previous 12-small-multiple orientation is retained only under `archive_wrong_orientation/` for traceability.
+It uses start month on the y-axis, lead month 1--36 on the x-axis, and ACC as the color field. Values below ACC=0.5 are rendered white for display only. For each start-month row, hatching marks the six endpoint lead cells following the largest one-step ACC drops `ACC(lead) - ACC(lead+1)`. The previous 12-small-multiple orientation is retained only under `archive_wrong_orientation/` for traceability.
 
 The saved 12×12 start/end-month matrices are also plotted as a two-panel contour comparison:
 
