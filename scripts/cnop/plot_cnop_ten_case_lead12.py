@@ -70,7 +70,10 @@ def interpolate_field(
     valid = np.isfinite(values)
     up_values = zoom(np.where(valid, values, 0.0), (factor, factor), order=3, mode="nearest", prefilter=True)
     up_weights = zoom(valid.astype(float), (factor, factor), order=1, mode="nearest")
-    up_field = np.divide(up_values, up_weights, out=np.full_like(up_values, np.nan), where=up_weights > 0.35)
+    # Keep valid ocean values close to coastlines; the source valid mask still
+    # controls land, while a lower threshold prevents an artificial white halo
+    # from appearing at panel boundaries after interpolation.
+    up_field = np.divide(up_values, up_weights, out=np.full_like(up_values, np.nan), where=up_weights > 0.15)
     up_lon = np.linspace(float(lon[0]), float(lon[-1]), up_field.shape[1])
     up_lat = np.linspace(float(lat[0]), float(lat[-1]), up_field.shape[0])
     return up_lon, up_lat, up_field
