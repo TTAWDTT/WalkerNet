@@ -228,7 +228,9 @@ def main():
         if quiver_ref is None and q is not None:
             quiver_ref=q; quiver_ax=a
     if quiver_ref is not None and quiver_ax is not None:
-        quiver_ax.quiverkey(quiver_ref, X=0.64, Y=1.18, U=3.0, label="3 m s$^{-1}$", labelpos="E", coordinates="axes", fontproperties={"size": 7})
+        # Place the vector key in the centered bottom margin, between the two
+        # scalar colorbars, matching the reference figure's composition.
+        quiver_ax.quiverkey(quiver_ref, X=0.48, Y=0.028, U=3.0, label="3 m s$^{-1}$", labelpos="E", coordinates="figure", fontproperties={"size": 7})
     cax1=fig.add_axes((0.10,0.07,0.28,0.018)); cax2=fig.add_axes((0.55,0.07,0.28,0.018)); cb1=fig.colorbar(mpl.cm.ScalarMappable(norm=tos_norm,cmap=tos_cmap),cax=cax1,orientation="horizontal",extend="both"); cb2=fig.colorbar(mpl.cm.ScalarMappable(norm=zos_norm,cmap=zos_cmap),cax=cax2,orientation="horizontal",extend="both"); cb1.set_label("TOS response (°C)"); cb2.set_label("ZOS response"); cb1.set_ticks(np.linspace(-TOS_VMAX,TOS_VMAX,7)); cb2.set_ticks(np.linspace(-ZOS_VMAX,ZOS_VMAX,7))
     source, year = args.case.rsplit("_", 1)
     fig.suptitle(f"CNOP response evolution: {source} {year}, delayed candidate rank 1 (lead12 ΔNiño={args.lead_delta})",fontsize=16,fontweight="bold",y=0.985)
