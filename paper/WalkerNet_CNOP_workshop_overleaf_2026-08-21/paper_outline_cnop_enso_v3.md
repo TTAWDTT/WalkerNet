@@ -182,59 +182,35 @@ Method 只分成两部分：
 
 ## 3.1 WalkerNet
 
-### 3.1.1 Input and output fields
+### 3.1.1 Architecture and autoregressive forecast
 
-定义 WalkerNet 的输入：
+**目的：** 用一个连续小节说明 WalkerNet 的输入、主要模块和多步预报方式，不把每个网络组件拆成独立标题。
+
+**输入与输出：**
 
 \[
 \mathbf{x}_{t-11:t}
 \in
-\mathbb{R}^{12\times4\times180\times360}.
+\mathbb{R}^{12\times4\times180\times360},
 \]
 
-四个变量为：
-
-```text
-TOS, ZOS, TAUU, TAUV
-```
-
-模型输出下一月的四变量全球场：
+其中四个变量为 TOS、ZOS、TAUU 和 TAUV。模型单步输出为：
 
 \[
 \widehat{\mathbf{x}}_{t+1}
 =
-F_\theta(\mathbf{x}_{t-11:t},m_{t+1}).
+F_\theta(\mathbf{x}_{t-11:t},m_{t+1},s).
 \]
 
-### 3.1.2 Network architecture
-
-按照模型实际结构说明：
-
-1. 变量感知的 patch embedding；
-2. 每个空间 patch 内的时间–变量 local fusion；
-3. 45×90 空间 patch 展平为 4050 个 spatial tokens；
-4. 6 个 Spatial Attention Blocks；
-5. target-month gated Temporal Mixture-of-Experts；
-6. 45×90 feature map 重建；
-7. 两级 PixelShuffle×2 上采样；
-8. 1×1 Conv 输出 4 个变量场；
-9. residual prediction。
-
-模型残差形式：
+正文依次概括：变量感知的 4×4 patch embedding、每个 patch 内的时间–变量 local fusion、45×90 patch grid 展平为 4050 个 spatial tokens、6 个 Spatial Attention Blocks、target-month gated TMoE、两级 PixelShuffle×2 decoder，以及 1×1 Conv 输出四变量场。模型采用残差形式：
 
 \[
 \widehat{\mathbf{x}}_{t+1}
 =
-\mathbf{x}_{t}
-+
-\Delta\mathbf{y}_{t+1}.
+\mathbf{x}_{t}+\Delta\mathbf{y}_{t+1}.
 \]
 
-**建议图：** WalkerNet 总架构图。Spatial Attention Block、TMoE 和 Decoder 详图可以作为补充解释图，不必在 Method 中逐个扩展成三级标题。
-
-### 3.1.3 Autoregressive rollout
-
-说明第一步预测完成后，预测场会被放回输入窗口：
+多步 rollout 使用滑动窗口：
 
 \[
 \mathbf{W}_{\ell+1}
@@ -243,22 +219,18 @@ F_\theta(\mathbf{x}_{t-11:t},m_{t+1}).
 \left(
 \operatorname{drop\ oldest}(\mathbf{W}_{\ell}),
 \widehat{\mathbf{x}}_{t+\ell}
-\right).
+\right),
 \]
 
-因此：
+因此 CNOP 优化的是完整的多月非线性轨迹，而不是单步静态输出。
 
-\[
-\widehat{\mathbf{x}}_{t+\ell}
-=
-F_\theta(\mathbf{W}_{\ell},m_{t+\ell}).
-\]
+**建议图：** WalkerNet 总架构图；Spatial Attention Block、TMoE 和 Decoder 详图作为补充图，不在 Method 中继续拆标题。
 
-解释这一点很重要，因为 CNOP 优化的不是单步静态输出，而是完整的多月非线性轨迹。
+### 3.1.2 Niño3.4 calculation and anomaly convention
 
-### 3.1.4 Niño3.4 evaluation from WalkerNet fields
+**目的：** 统一说明如何从 WalkerNet 的 TOS 场得到评测指标，避免 truth 与 baseline 使用不同口径。
 
-说明 Niño3.4 不是模型直接输出，而是从 TOS 场计算：
+定义 lead-\(\ell\) 的 Niño3.4 指数：
 
 \[
 N_{\ell}
@@ -271,37 +243,33 @@ N_{\ell}
 \right).
 \]
 
-说明：
+需要说明：
 
+- Niño3.4 是从预测 TOS 场计算的，不是模型直接输出；
 - truth 使用 observed climatology；
 - baseline 和 perturbed 使用 forecast-model climatology；
-- 三者的 anomaly 口径要在这里一次性说明清楚。
+- 三者的 anomaly、lead 和区域定义保持一致；
+- 如果图中展示 raw TOS，必须和 anomaly 图明确区分。
 
 ## 3.2 CNOP
 
-### 3.2.1 Perturbation definition
+### 3.2.1 Perturbation, constraint and objective
 
-定义扰动后的输入：
+**目的：** 在一个小节中完成 CNOP 的数学定义，避免把扰动、约束和目标拆成多个过细标题。
+
+扰动后的输入为：
 
 \[
 \mathbf{x}^{\delta}
 =
 \mathbf{x}
 +
-\mathbf{M}_{D}\odot\boldsymbol{\delta}.
+\mathbf{M}_{D}\odot\boldsymbol{\delta},
 \]
 
-其中：
+其中扰动只作用于最后一个输入月的 TOS 和 ZOS，TAUU 和 TAUV 不直接扰动，$D$ 表示允许扰动的区域。
 
-- 扰动只作用于最后一个输入月；
-- 直接扰动 TOS 和 ZOS；
-- TAUU 和 TAUV 不直接扰动；
-- (D) 表示允许扰动的空间区域；
-- (mathbf{M}_D) 为区域和变量 mask。
-
-### 3.2.2 Perturbation constraint
-
-使用 relative initial (L_2) 约束：
+relative initial $L_2$ 约束为：
 
 \[
 \mathcal{C}_{D}(r_D)
@@ -311,98 +279,76 @@ N_{\ell}
 \frac{\|\boldsymbol{\delta}\|_2}
 {\|\mathbf{x}\|_2}
 \le r_D
-\right\}.
+\right\},
+\qquad r_D=0.03
 \]
 
-对于当前 3% 配置：
+正文说明 normalization、TOS/ZOS balancing、projected Adam 和 `constraint_ratio`，但不再单独拆标题。
 
-\[
-r_D=0.03.
-\]
-
-本节还要说明：
-
-- 优化空间和物理空间的关系；
-- TOS/ZOS 的 normalization 和 balancing；
-- projected Adam 如何保证约束；
-- `constraint_ratio` 的定义。
-
-### 3.2.3 Objective function
-
-定义 baseline 和 perturbed 的 Niño3.4：
+令：
 
 \[
 N_{\ell}^{\mathrm{base}}=N_{\ell}(\mathbf{0}),
-\]
-
-\[
-N_{\ell}^{\mathrm{pert}}
-=N_{\ell}(\boldsymbol{\delta}),
+\qquad
+N_{\ell}^{\mathrm{pert}}=N_{\ell}(\boldsymbol{\delta}),
 \]
 
 \[
 \Delta N_{\ell}
 =
 N_{\ell}^{\mathrm{pert}}
--N_{\ell}^{\mathrm{base}}.
+-
+N_{\ell}^{\mathrm{base}}.
 \]
 
-normal objective 可以写成：
+normal objective 根据正式实验协议选择其一：
 
 \[
-J_{\mathrm{normal}}(\boldsymbol{\delta})
+J_{\mathrm{normal}}=\Delta N_{12},
+\]
+
+或：
+
+\[
+J_{\mathrm{normal}}
 =
-\Delta N_{12}
+\frac{1}{3}\sum_{\ell=10}^{12}\Delta N_{\ell}.
 \]
 
-或者，如果正式协议采用 late-season 三个月平均：
+delayed-onset objective 可以写成：
 
 \[
-J_{\mathrm{normal}}(\boldsymbol{\delta})
-=
-\frac{1}{3}
-\sum_{\ell=10}^{12}
-\Delta N_{\ell}.
-\]
-
-正文只能选择实际代码使用的一个版本。
-
-### 3.2.4 Delayed-onset objective
-
-如果 delayed-onset 是论文核心实验，则说明：
-
-\[
-J_{\mathrm{delay}}(\boldsymbol{\delta})
+J_{\mathrm{delay}}
 =
 \Delta N_{12}
 -
 \lambda_{\mathrm{early}}
-E_{\mathrm{early}}(\boldsymbol{\delta}),
+E_{\mathrm{early}},
 \]
 
-例如：
-
 \[
-E_{\mathrm{early}}(\boldsymbol{\delta})
+E_{\mathrm{early}}
 =
 \sum_{\ell=1}^{\ell_e}
 w_{\ell}|\Delta N_{\ell}|.
 \]
 
-这里要明确 delayed term 是在优化阶段加入，而不是优化完成后才筛选，否则方法含义不同。
+必须明确 delayed term 是优化阶段的目标项，而不是优化完成后的 post-hoc 筛选。
 
-### 3.2.5 Multi-start optimization and candidate selection
+### 3.2.2 Multi-start optimization and candidate comparison
 
-设置 (K) 个初始扰动：
+**目的：** 说明多个起点如何产生候选解，以及 rank-1 / top-3 如何定义。
+
+设置 $K$ 个初始扰动：
 
 \[
 \left\{
-\boldsymbol{\delta}^{(0)}_1,ldots,
+\boldsymbol{\delta}^{(0)}_1,\ldots,
 \boldsymbol{\delta}^{(0)}_K
 \right\}.
 \]
 
-每个起点独立进行 projected Adam：
+每个起点独立优化：
 
 \[
 \boldsymbol{\delta}^{*}_k
@@ -411,15 +357,19 @@ w_{\ell}|\Delta N_{\ell}|.
 J(\boldsymbol{\delta};\boldsymbol{\delta}^{(0)}_k).
 \]
 
-最终 rank-1：
+最终 rank-1 为：
 
 \[
 k^*
 =
-\arg\max_k J(\boldsymbol{\delta}^{*}_k).
+\arg\max_kJ(\boldsymbol{\delta}^{*}_k),
+\qquad
+\boldsymbol{\delta}_{\mathrm{CNOP}}^*
+=
+\boldsymbol{\delta}_{k^*}^*.
 \]
 
-如果保留 top-3，则写成：
+如果保留 top-3：
 
 \[
 \mathcal{T}_3
@@ -430,17 +380,7 @@ J(\boldsymbol{\delta}^{*}_k)
 \right\}_{k=1}^{K}.
 \]
 
-### 3.2.6 Truth, baseline and perturbed comparison
-
-定义三条轨迹：
-
-```text
-truth      = observed target evolution
-baseline   = WalkerNet rollout without CNOP perturbation
-perturbed  = WalkerNet rollout with optimized CNOP perturbation
-```
-
-结果图中所有 truth / baseline / perturbed 的 anomaly、climatology 和 lead 定义在本节统一说明。
+本节末尾用一段文字定义三条评测轨迹：truth 是观测目标演进，baseline 是未加 CNOP 的 WalkerNet rollout，perturbed 是加入优化扰动后的 rollout。三者的 anomaly、climatology 和 lead 口径沿用 3.1.2。
 
 **过渡到 Results：** Method 先验证 WalkerNet 能否提供可信的 ENSO forecast operator，再评估 CNOP 是否能在该 operator 上求解出有效扰动并改变 Niño3.4 演进。
 
@@ -513,7 +453,7 @@ start month × lead month ACC
 
 - 优化是否正常收敛；
 - 每个案例是否生成 summary / NPZ / candidate；
-- relative initial (L_2) constraint ratio；
+- relative initial $L_2$ constraint ratio；
 - rank-1 和 top-3 的 objective；
 - 多起点之间的 objective 分布。
 
@@ -627,7 +567,7 @@ Conclusion 只回答论文已经验证的两个问题，不再加入 Future Work
 
 在实验数据支持的范围内总结：
 
-1. 在给定变量、区域和 relative initial (L_2) 约束下，CNOP 可以被稳定求解；
+1. 在给定变量、区域和 relative initial $L_2$ 约束下，CNOP 可以被稳定求解；
 2. 多起点优化能够产生并排序一组候选最优扰动；
 3. 选定的 CNOP 扰动可以通过 WalkerNet rollout 改变 Niño3.4 的后续演进；
 4. 在满足判据的案例中，CNOP 可以激发 ENSO-like response；
