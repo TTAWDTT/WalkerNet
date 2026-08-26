@@ -13,7 +13,7 @@ from matplotlib.patches import PathPatch, Polygon
 from matplotlib.path import Path as MplPath
 from scipy.ndimage import gaussian_filter, zoom
 
-LON_MIN, LON_MAX = 150.0, 330.0
+LON_MIN, LON_MAX = 150.0, 300.0
 LAT_MIN, LAT_MAX = -35.0, 35.0
 NINO_BOX = (190.0, 240.0, -5.0, 5.0)
 TOS_VMAX, ZOS_VMAX = 0.8, 0.03
@@ -98,7 +98,7 @@ def raster_land_mask(lon, lat):
     return mask.reshape(len(lat), len(lon))
 
 
-def draw_layer(ax, lon, lat, field, corners, norm, cmap, levels, label, show_y):
+def draw_layer(ax, lon, lat, field, corners, norm, cmap, levels, label, show_y, wind_u=None, wind_v=None):
     xx, yy = np.meshgrid(edges(lon), edges(lat))
     xg, yg = map_xy(xx, yy, corners)
     fv = np.pad(field, ((0, 1), (0, 1)), mode="edge")
@@ -110,6 +110,21 @@ def draw_layer(ax, lon, lat, field, corners, norm, cmap, levels, label, show_y):
     contour_field = np.where(np.abs(field) > 1e-5, field, np.nan)
     ax.contour(xc, yc, contour_field, levels=[0.0], colors="#293241", linewidths=0.28, alpha=0.55, zorder=6)
     draw_land(ax, corners)
+    if wind_u is not None and wind_v is not None:
+        # Sparse quiver overlay for the two wind-stress response components.
+        # It is drawn only on the TOS layer, where vector direction remains
+        # legible without obscuring the ZOS surface below.
+        stride_y = max(1, len(lat) // 9); stride_x = max(1, len(lon) // 18)
+        qlon, qlat = np.meshgrid(lon[::stride_x], lat[::stride_y])
+        qu, qv = wind_u[::stride_y, ::stride_x], wind_v[::stride_y, ::stride_x]
+        qx, qy = map_xy(qlon, qlat, corners)
+        valid_q = np.isfinite(qu) & np.isfinite(qv)
+        if np.any(valid_q):
+            ax.quiver(qx[valid_q], qy[valid_q], qu[valid_q], qv[valid_q],
+                      color="#34495e", alpha=0.72, width=0.0018,
+                      headwidth=3.2, headlength=4.2, headaxislength=3.5,
+                      angles="xy", scale_units="xy", scale=0.22,
+                      pivot="mid", zorder=7, rasterized=True)
     outline = np.array([corners[0], corners[1], corners[3], corners[2], corners[0]])
     ax.plot(outline[:, 0], outline[:, 1], color="black", lw=0.8, zorder=6)
     for lo in (180, 210, 240, 270, 300):
@@ -128,7 +143,7 @@ def draw_layer(ax, lon, lat, field, corners, norm, cmap, levels, label, show_y):
     ax.text(corners[0][0]+0.015, corners[0][1]+0.012, label, fontsize=8.0, fontweight="bold", va="bottom", zorder=8)
 
 
-def draw_pseudo_panel(ax, lon, lat, tos, zos, title, tos_norm, zos_norm, tos_cmap, zos_cmap, tos_levels, zos_levels, main=False, show_y=False):
+def draw_pseudo_panel(ax, lon, lat, tos, zos, title, tos_norm, zos_norm, tos_cmap, zos_cmap, tos_levels, zos_levels, main=False, show_y=False, wind_u=None, wind_v=None):
     ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.axis("off")
     if main:
         top = ((0.08,0.55),(0.96,0.55),(0.18,0.84),(0.88,0.84)); bottom=((0.08,0.19),(0.96,0.19),(0.18,0.48),(0.88,0.48))
@@ -137,23 +152,33 @@ def draw_pseudo_panel(ax, lon, lat, tos, zos, title, tos_norm, zos_norm, tos_cma
     # shallow side walls bind the two layers
     ax.add_patch(Polygon(np.array([bottom[2],top[2],top[0],bottom[0]]), closed=True, facecolor="#B8B8B8", edgecolor="#777777", lw=0.3, alpha=0.16, zorder=0))
     ax.add_patch(Polygon(np.array([top[1],top[3],bottom[3],bottom[1]]), closed=True, facecolor="#B8B8B8", edgecolor="#777777", lw=0.3, alpha=0.16, zorder=0))
-    draw_layer(ax, lon, lat, tos, top, tos_norm, tos_cmap, tos_levels, "TOS", show_y)
+    draw_layer(ax, lon, lat, tos, top, tos_norm, tos_cmap, tos_levels, "TOS", show_y, wind_u=wind_u, wind_v=wind_v)
     draw_layer(ax, lon, lat, zos, bottom, zos_norm, zos_cmap, zos_levels, "ZOS", show_y)
-    for lo, text in ((150,"150E"),(180,"180"),(210,"150W"),(240,"120W"),(270,"90W"),(300,"60W"),(330,"30W")):
+    for lo, text in ((150,"150E"),(180,"180"),(210,"150W"),(240,"120W"),(270,"90W"),(300,"60W")):
         x, y = map_xy(np.array([lo]), np.array([LAT_MIN]), bottom)
         ax.text(x[0], y[0]-0.026, text, ha="center", va="top", fontsize=6.6 if not main else 8.0, fontweight="bold")
     ax.text(0.5, 0.98, title, ha="center", va="top", fontsize=8.7 if not main else 11.0, fontweight="bold", clip_on=False)
 
 
 def main():
-    p=argparse.ArgumentParser(); p.add_argument("--input",type=Path,required=True); p.add_argument("--output",type=Path,required=True); p.add_argument("--lead-delta",default="+0.76"); p.add_argument("--case",default="GFDL-ESM4_1930"); args=p.parse_args()
+    p=argparse.ArgumentParser(); p.add_argument("--input",type=Path,required=True); p.add_argument("--output",type=Path,required=True); p.add_argument("--wind-input",type=Path,default=None,help="optional same-case full response NPZ with TAUU/TAUV in channels 2/3"); p.add_argument("--lead-delta",default="+0.76"); p.add_argument("--case",default="GFDL-ESM4_1930"); args=p.parse_args()
     mpl.rcParams.update({"font.family":"DejaVu Sans","axes.facecolor":"white","figure.facecolor":"white","savefig.facecolor":"white","pdf.fonttype":42})
     z=np.load(args.input); response=np.asarray(z["response"],float); perturbation=np.asarray(z["perturbation"],float); lon=np.asarray(z["lon"],float); lat=np.asarray(z["lat"],float)
+    wind_response=None
+    if args.wind_input is not None:
+        wind_z=np.load(args.wind_input); wind_response=np.asarray(wind_z["response"],float)
+        if wind_response.ndim != 4 or wind_response.shape[1] < 4:
+            raise ValueError("--wind-input must contain response with channels [TOS, ZOS, TAUU, TAUV]")
     slon=(lon>=LON_MIN)&(lon<=LON_MAX); slat=(lat>=LAT_MIN)&(lat<=LAT_MAX); lon=lon[slon]; lat=lat[slat]
     mask=raster_land_mask(lon,lat); fields=[]
     for lead in (1,3,5,7,9,11):
         tos=upsample(smooth_grid(np.where(mask,np.nan,response[lead,0][np.ix_(slat,slon)])),4); zos=upsample(smooth_grid(np.where(mask,np.nan,response[lead,1][np.ix_(slat,slon)])),4)
-        lon_hi=np.linspace(lon[0],lon[-1],tos.shape[1]); lat_hi=np.linspace(lat[0],lat[-1],tos.shape[0]); land_hi=zoom(mask.astype(float),(4,4),order=1,mode="nearest")>=0.5; tos[land_hi]=np.nan; zos[land_hi]=np.nan; fields.append((lon_hi,lat_hi,tos,zos))
+        wind_u=wind_v=None
+        if wind_response is not None:
+            wind_u=upsample(smooth_grid(np.where(mask,np.nan,wind_response[lead,2][np.ix_(slat,slon)])),4); wind_v=upsample(smooth_grid(np.where(mask,np.nan,wind_response[lead,3][np.ix_(slat,slon)])),4)
+        lon_hi=np.linspace(lon[0],lon[-1],tos.shape[1]); lat_hi=np.linspace(lat[0],lat[-1],tos.shape[0]); land_hi=zoom(mask.astype(float),(4,4),order=1,mode="nearest")>=0.5; tos[land_hi]=np.nan; zos[land_hi]=np.nan
+        if wind_u is not None: wind_u[land_hi]=np.nan; wind_v[land_hi]=np.nan
+        fields.append((lon_hi,lat_hi,tos,zos,wind_u,wind_v))
     # The left panel is the corresponding initial CNOP perturbation.  Apply
     # exactly the same mask, upsampling, Gaussian smoothing, and color scales
     # used by the lead-response panels so the comparison remains honest.
@@ -173,7 +198,7 @@ def main():
     fig=plt.figure(figsize=(16.5,9.2)); ax=fig.add_axes((0.015,0.17,0.32,0.75)); draw_pseudo_panel(ax,lon_hi,lat_hi,init_tos,init_zos,"(a) Initial CNOP perturbation (rank 1)",tos_norm,zos_norm,tos_cmap,zos_cmap,tos_levels,zos_levels,main=True,show_y=True)
     leads=(2,4,6,8,10,12); positions=[(0.36+0.205*(i%3),0.51-0.38*(i//3)) for i in range(6)]
     for i,(lead,pos) in enumerate(zip(leads,positions)):
-        lon_i,lat_i,tos_i,zos_i=fields[i]; a=fig.add_axes((pos[0],pos[1],0.19,0.34)); draw_pseudo_panel(a,lon_i,lat_i,tos_i,zos_i,f"({chr(98+i)}) Lead {lead}",tos_norm,zos_norm,tos_cmap,zos_cmap,tos_levels,zos_levels,main=False,show_y=(i%3==0))
+        lon_i,lat_i,tos_i,zos_i,wind_u_i,wind_v_i=fields[i]; a=fig.add_axes((pos[0],pos[1],0.19,0.34)); draw_pseudo_panel(a,lon_i,lat_i,tos_i,zos_i,f"({chr(98+i)}) Lead {lead}",tos_norm,zos_norm,tos_cmap,zos_cmap,tos_levels,zos_levels,main=False,show_y=(i%3==0),wind_u=wind_u_i,wind_v=wind_v_i)
     cax1=fig.add_axes((0.10,0.07,0.28,0.018)); cax2=fig.add_axes((0.55,0.07,0.28,0.018)); cb1=fig.colorbar(mpl.cm.ScalarMappable(norm=tos_norm,cmap=tos_cmap),cax=cax1,orientation="horizontal"); cb2=fig.colorbar(mpl.cm.ScalarMappable(norm=zos_norm,cmap=zos_cmap),cax=cax2,orientation="horizontal"); cb1.set_label("TOS response (°C)"); cb2.set_label("ZOS response"); cb1.set_ticks(np.linspace(-TOS_VMAX,TOS_VMAX,7)); cb2.set_ticks(np.linspace(-ZOS_VMAX,ZOS_VMAX,7))
     source, year = args.case.rsplit("_", 1)
     fig.suptitle(f"CNOP response evolution: {source} {year}, delayed candidate rank 1 (lead12 ΔNiño={args.lead_delta})",fontsize=16,fontweight="bold",y=0.985)
