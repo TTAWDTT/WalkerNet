@@ -103,6 +103,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--climatology-batch-size", type=int, default=2)
     parser.add_argument("--trained-rollout-steps", type=int, default=0)
     parser.add_argument("--smooth-sigma", type=float, default=0.8)
+    parser.add_argument(
+        "--contour-levels",
+        type=int,
+        default=31,
+        help="Number of continuous contour intervals used for all map fields (higher values reduce color banding).",
+    )
     parser.add_argument("--tos-vmax", type=float, default=None, help="Fixed symmetric SSTA color limit.")
     parser.add_argument("--delta-vmax", type=float, default=None, help="Fixed symmetric initial-perturbation color limit.")
     parser.add_argument(
@@ -594,9 +600,10 @@ def main() -> None:
         perturb_vmax = float(args.delta_vmax)
     if args.tos_vmax is not None:
         tos_vmax = float(args.tos_vmax)
-    perturb_levels = np.linspace(-perturb_vmax, perturb_vmax, 25)
-    response_levels = np.linspace(-response_vmax, response_vmax, 25)
-    tos_levels = np.linspace(-tos_vmax, tos_vmax, 31)
+    contour_levels = max(31, int(args.contour_levels))
+    perturb_levels = np.linspace(-perturb_vmax, perturb_vmax, contour_levels)
+    response_levels = np.linspace(-response_vmax, response_vmax, contour_levels)
+    tos_levels = np.linspace(-tos_vmax, tos_vmax, contour_levels)
     tos_label = "SSTA" if args.tos_mode == "anomaly" else "TOS"
     initial_cmap = TOS_CMAP if args.initial_cmap == "overview_tos" else "RdBu_r"
 
