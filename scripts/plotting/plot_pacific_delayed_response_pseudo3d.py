@@ -177,7 +177,11 @@ def draw_pseudo_panel(ax, lon, lat, tos, zos, title, tos_norm, zos_norm, tos_cma
     for lo, text in ((150,"150E"),(180,"180"),(210,"150W"),(240,"120W"),(270,"90W"),(300,"60W")):
         x, y = map_xy(np.array([lo]), np.array([LAT_MIN]), bottom)
         ax.text(x[0], y[0]-0.026, text, ha="center", va="top", fontsize=6.6 if not main else 8.0, fontweight="bold")
-    ax.text(0.5, 0.98, title, ha="center", va="top", fontsize=8.7 if not main else 11.0, fontweight="bold", clip_on=False)
+    # The main panel is taller than the small lead panels; lower its title in
+    # axes coordinates so the (a) label shares the same figure-level baseline
+    # as the (b)-(d) titles.
+    title_y = 0.90 if main else 0.98
+    ax.text(0.5, title_y, title, ha="center", va="top", fontsize=8.7 if not main else 11.0, fontweight="bold", clip_on=False)
     return quiver_handle
 
 
