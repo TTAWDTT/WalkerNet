@@ -161,7 +161,13 @@ def read_manifest_rows(manifest_path: Path, max_cases: int) -> list[dict[str, st
             matches = [
                 row
                 for row in csv.DictReader(handle)
-                if row["source"] == source and int(row["target_year"]) == year
+                if row["source"] == source
+                and int(row["target_year"]) == year
+                # Formal summaries contain one row per basin. The historical
+                # Pacific overview manifest should resolve the Pacific row
+                # while remaining compatible with summary files without a
+                # domain column.
+                and row.get("domain", "pacific").lower() == "pacific"
             ]
         if len(matches) != 1:
             raise ValueError(f"Expected one summary row for {source} {year} in {cnop_dir}, found {len(matches)}")
