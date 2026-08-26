@@ -42,11 +42,24 @@
 | CNOP algorithms and observations | Sun et al. (2010); Mu et al. (2009); Zhou et al. (2021); Zu et al. (2025) | Optimization algorithms, targeted-observation applications, ensemble perturbations, and time-dimension extensions are active CNOP topics | Provides baselines, algorithmic concerns, and evaluation ideas | Does not impose a learned probabilistic state support during CNOP optimization |
 | Score/diffusion geometry | Song et al. (2021); Pidstrigach (2022); Huang et al. (2022); Jo & Hwang (2023); Fishman et al. (2023) | Score fields can support generation near low-dimensional data structure; diffusion can be generalized to Riemannian manifolds and constrained domains | Supplies the mathematical language for score/tangent/latent CNOP variants | General theory and benchmarks are not Earth-system-specific; “data manifold” still depends on data and score accuracy |
 | Diffusion guidance and inverse problems | Graikos et al. (2022); Chung et al. (2022); Bansal et al. (2023) | A differentiable auxiliary objective can guide a fixed diffusion prior; diffusion posterior sampling blends denoising with a manifold-constrained gradient | Directly addresses the user’s concern about objective guidance through denoising | These methods are approximate sampling/inference procedures, not monotone maximization of a CNOP forecast objective |
-| Climate/ESM generative models | Bassetti et al. (2023, 2024); Christensen et al. (2024); Brenowitz et al. (2025); Bouabid et al. (2026) | Diffusion/score models can emulate climate/ESM distributions, joint variables, extremes, or large-scale modes; diagnostics must include marginals, correlations, tails, regimes, and forced responses | Supports training a climate-state prior and gives a concrete naturalness audit suite | Several works report failure modes under regime shifts, extrapolation, bias, or unresolved tails; generation is not equivalent to physical validity |
+| Climate/ESM generative models | Bassetti et al. (2023, 2024); Christensen et al. (2024); Brenowitz et al. (2025); Bouabid et al. (2026); Zheng et al. (2026) | Diffusion/score models can emulate climate/ESM distributions, joint variables, extremes, or large-scale modes; latent-space ocean DA can generate unseen nonlinear evolution; diagnostics must include marginals, correlations, tails, regimes, and forced responses | Supports training a climate-state prior and gives a concrete naturalness audit suite | Several works report failure modes under regime shifts, extrapolation, bias, or unresolved tails; generation is not equivalent to physical validity |
 | Physics-informed generative modeling | Bastek et al. (2024) and related physics-informed diffusion work | Physical residuals and equality/inequality constraints can be included in diffusion training or generation | Suggests a route beyond purely statistical manifold support | Generic PDE demonstrations do not automatically encode coupled ocean–atmosphere balances or climate conservation laws |
-| On-manifold perturbations | Rahman et al. (2022); related latent-space on-manifold attack work | Perturbations constrained to a learned data manifold can remain effective; off-manifold distance is not a sufficient robustness criterion | Supports testing whether a natural perturbation can still strongly affect a downstream model | Adversarial image settings are not climate dynamics; “on-manifold” quality depends strongly on generator reconstruction and coverage |
+| On-manifold perturbations | Rahman et al. (2022); Manifold-Aware Perturbations (2026 preprint) | Perturbations constrained to a learned data manifold can remain effective; recent work explicitly modifies constrained generative distributions to recover support and stable sampling | Supports testing whether a natural perturbation can still strongly affect a downstream model | Adversarial/generative benchmarks are not climate dynamics; “on-manifold” quality depends strongly on generator reconstruction and coverage |
 
 ## Annotated bibliography
+
+### Source verification and quality matrix
+
+| Source family | Verification | Evidence grade used here | Notes |
+|---|---|---|---|
+| Mu/Duan/Sun CNOP papers and reviews | DOI metadata and abstracts retrieved from Crossref; official publisher pages surfaced for key items | Peer-reviewed primary/review (high for CNOP definition; moderate for generalization) | Strong for what CNOP is and how OPR/targeted-observation studies use it; mostly classical or model-specific settings |
+| Zhou et al. O-CNOP (npj Climate and Atmospheric Science) | DOI metadata plus full official Nature page and abstract/introduction/method/results text | Peer-reviewed primary (high for recent DL/CNOP precedent) | Historical CMIP6/SODA candidate sampling and independent-event validation were directly inspected on the official page |
+| Song/Pidstrigach/Huang/Jo/Fishman score/manifold papers | arXiv records and abstracts; Crossref/NeurIPS metadata where available | Major conference/preprint (high for method statements; moderate for climate transfer) | Theoretical and geometric claims are not Earth-system validation |
+| Graikos/Chung/Bansal guidance papers | arXiv records and abstracts | Major conference/preprint (high for guidance mechanism; moderate for CNOP transfer) | Relevant to composite optimization, not evidence of climate-state naturalness |
+| DiffESM, joint ESM diffusion, cBottle, score-based ESM emulation | arXiv records/abstracts and DOI metadata; official landing pages where available | Preprint/peer-reviewed mix (moderate; high for reported diagnostic design) | Strong evidence that distributional and regime diagnostics are needed; transfer to TOS/ZOS/TAUU/TAUV remains untested |
+| Physics-informed diffusion and on-manifold perturbation | arXiv records/abstracts and DOI metadata where available | Preprint/peer-reviewed mix (moderate) | Supports candidate mechanisms and cautions; not direct climate CNOP evidence |
+
+No source was treated as proof of the proposed method. Claims that depend only on abstracts are explicitly labeled “abstract-level” or “metadata/search finding.”
 
 ### A. CNOP and optimal precursor literature
 
@@ -103,6 +116,13 @@
 - Contribution: Demonstrates that a learned-model CNOP workflow can benefit from historical candidate support and orthogonal ensemble perturbations without claiming a diffusion manifold.
 - Limitation: Candidate generation is sample/ensemble based rather than a differentiable generator parameterization; the reported evaluation is for four extreme El Niño events and a DL ensemble, not a general natural-state manifold.
 
+**Zheng, Q., Shao, Q., Han, G., Li, W., Li, H., & Wang, X. (2026). Generating unseen nonlinear evolution in the ocean using deep learning-based latent space data assimilation model. *Ocean Modelling, 200*, 102677.** [DOI](https://doi.org/10.1016/j.ocemod.2026.102677)
+
+- Relevance: Recent ocean-specific latent-space work adjacent to the proposed problem.
+- Search/metadata finding: The paper focuses on capturing and generating unseen nonlinear ocean evolution through a deep-learning latent-space data-assimilation model and multi-source data fusion.
+- Contribution: Supports the idea that a learned latent representation can be used to produce nonlinear states not present as exact training snapshots, a useful distinction from nearest-neighbour perturbation.
+- Limitation: The available metadata/search record does not establish a CNOP objective, diffusion score, or a guarantee that generated states satisfy coupled Earth-system balances; full-text screening is required.
+
 ### B. Score models and manifold geometry
 
 **Song, Y., Sohl-Dickstein, J., Kingma, D. P., et al. (2021). Score-based generative modeling through stochastic differential equations. *International Conference on Learning Representations*.** [arXiv](https://arxiv.org/abs/2011.13456)
@@ -134,6 +154,13 @@
 - Relevance: Diffusion under inequality constraints rather than a smooth known manifold.
 - Abstract-level finding: Develops logarithmic-barrier and reflected-Brownian noising processes for constrained domains.
 - Contribution: Useful if climate naturalness is operationalized through inequality constraints, such as bounds, balance residuals, or regime-specific admissibility.
+
+**Behrens, G., Beucler, T., Gentine, P., Iglesias-Suarez, F., Pritchard, M., & Eyring, V. (2022). Non-linear dimensionality reduction with a variational encoder decoder to understand convective processes in climate models. *Journal of Advances in Modeling Earth Systems*.** [DOI](https://doi.org/10.1029/2022MS003130)
+
+- Relevance: Climate-model latent representation independent of diffusion.
+- Abstract-level finding: A variational encoder–decoder compressed a superparameterized aquaplanet convection state into five latent nodes while retaining interpretable convective regimes.
+- Contribution: Shows that low-dimensional, regime-structured latent spaces can be scientifically useful in climate models; it motivates measuring latent coverage and regime separation before treating a latent parameterization as a hard manifold.
+- Limitation: The state is sub-grid convection in an aquaplanet simulation, not global coupled ocean–atmosphere initial conditions.
 
 ### C. Diffusion guidance and constrained inference
 
@@ -199,6 +226,13 @@
 - Abstract-level finding: On-manifold adversarial examples can achieve substantial attack rates; the true manifold is unknown and approximated using real/synthetic data.
 - Contribution: Supports evaluating “natural” perturbations for impact, not assuming manifold restriction makes the perturbation scientifically irrelevant.
 
+**Manifold-Aware Perturbations for Constrained Generative Modeling (2026).** [arXiv](https://arxiv.org/abs/2601.23151)
+
+- Relevance: Emerging method for equality-constrained generative distributions.
+- Abstract-level finding: Perturbs a constrained data distribution so its support matches ambient-space dimension while retaining implicit manifold geometry, aiming for stable sampling with diffusion and normalizing flows.
+- Contribution: Relevant warning that exact equality-constrained generators can have pathological support; the proposed CNOP should test whether a generator’s support is numerically stable rather than assuming every denoised output lies on a useful manifold.
+- Limitation: It is a general generative-model preprint, not a climate or CNOP evaluation.
+
 ## Preliminary synthesis
 
 ### What the literature supports
@@ -212,6 +246,7 @@
 ### What is not yet established by this search
 
 - No directly matching paper was found in the targeted search that formulates CNOP for a learned climate emulator with a differentiable learned-manifold or latent-space constraint.
+- Exact-overlap web queries (`CNOP diffusion model optimal perturbation climate` and `manifold-constrained CNOP climate perturbation`) returned established CNOP/O-CNOP papers and generic manifold/generative papers, but no paper combining all three elements; this is a discovery signal, not an exhaustive novelty proof.
 - No source found here proves that post-hoc denoising preserves or increases a CNOP objective.
 - No source found here validates “diffusion likelihood = physically possible Earth state.”
 - No source found here establishes a universal climate-state manifold across CMIP6 models, historical/reanalysis data, seasons, and ENSO regimes.
