@@ -68,6 +68,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--candidate-rank", type=int, default=1)
     parser.add_argument(
+        "--initial-cmap",
+        choices=("overview_tos", "RdBu_r"),
+        default="overview_tos",
+        help="Color map for the initial perturbation column; overview_tos shares the forecast-panel palette.",
+    )
+    parser.add_argument(
         "--layout",
         choices=("four", "three"),
         default="four",
@@ -586,6 +592,7 @@ def main() -> None:
     response_levels = np.linspace(-response_vmax, response_vmax, 25)
     tos_levels = np.linspace(-tos_vmax, tos_vmax, 31)
     tos_label = "SSTA" if args.tos_mode == "anomaly" else "TOS"
+    initial_cmap = TOS_CMAP if args.initial_cmap == "overview_tos" else "RdBu_r"
 
     if args.layout == "three":
         fig, axes = plt.subplots(
@@ -662,10 +669,10 @@ def main() -> None:
         fields = (item["perturb"], second_field, item["baseline"], item["perturbed"])
         if args.second_column == "truth":
             levels = (perturb_levels, tos_levels, tos_levels, tos_levels)
-            cmaps = ("RdBu_r", TOS_CMAP, TOS_CMAP, TOS_CMAP)
+            cmaps = (initial_cmap, TOS_CMAP, TOS_CMAP, TOS_CMAP)
         else:
             levels = (perturb_levels, response_levels, tos_levels, tos_levels)
-            cmaps = ("RdBu_r", "RdBu_r", TOS_CMAP, TOS_CMAP)
+            cmaps = (initial_cmap, "RdBu_r", TOS_CMAP, TOS_CMAP)
         for col_idx in range(4):
             ax = axes[row_idx, col_idx]
             if col_idx == 0:
