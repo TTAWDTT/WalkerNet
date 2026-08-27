@@ -326,7 +326,23 @@ def monthly_tos_climatology(dataset: WalkerDataset, source_idx: int, month: int)
     if not np.any(mask):
         source = dataset.source_names[source_idx]
         raise ValueError(f"No climatology samples for source={source} month={month}")
-    return np.nanmean(np.asarray(payload["data"][mask, 0], dtype=np.float32), axis=0)
+    # Avoid a large fancy-indexed memmap copy (roughly 40 MB per call on the
+    # 1-degree grid).  Chunked accumulation is numerically equivalent to
+    # nanmean for this display-only climatology and keeps redraws viable when
+    # other local GPU/desktop processes are using the commit limit.
+    selected = np.flatnonzero(mask)
+    data = payload["data"]
+    height, width = data.shape[-2:]
+    total = np.zeros((height, width), dtype=np.float64)
+    count = np.zeros((height, width), dtype=np.int64)
+    for offset in range(0, len(selected), 32):
+        chunk = np.asarray(data[selected[offset : offset + 32], 0], dtype=np.float32)
+        finite = np.isfinite(chunk)
+        total += np.where(finite, chunk, 0.0).sum(axis=0, dtype=np.float64)
+        count += finite.sum(axis=0, dtype=np.int64)
+    result = np.full((height, width), np.nan, dtype=np.float32)
+    np.divide(total, count, out=result, where=count > 0)
+    return result
 
 
 def valid_climatology_starts(dataset: WalkerDataset, source_idx: int, horizon: int, mode: str, split: str) -> list[int]:
@@ -815,12 +831,13 @@ def main() -> None:
                 nino_value = item["baseline_nino"] if col_idx == 2 else item["perturbed_nino"]
                 add_panel_label(ax, f"Nino3.4={nino_value:+.2f}")
 
-    cb_delta_ax = fig.add_axes([0.945, 0.69, 0.011, 0.22])
-    cb_resp_ax = fig.add_axes([0.945, 0.405, 0.011, 0.22])
-    cb_tos_ax = fig.add_axes([0.945, 0.12, 0.011, 0.22])
+    # The three forecast columns share one identical SSTA norm and palette;
+    # a single shared colorbar is therefore sufficient and avoids implying
+    # separate scales for observed, predicted, and perturbed fields.
+    cb_delta_ax = fig.add_axes([0.945, 0.70, 0.011, 0.22])
+    cb_tos_ax = fig.add_axes([0.945, 0.12, 0.011, 0.47])
     fig.colorbar(mappables[0], cax=cb_delta_ax).set_label("delta TOS", fontsize=7)
-    fig.colorbar(mappables[1], cax=cb_resp_ax).set_label(f"truth {tos_label}" if args.second_column == "truth" else "response", fontsize=7)
-    fig.colorbar(mappables[2], cax=cb_tos_ax).set_label(tos_label, fontsize=7)
+    fig.colorbar(mappables[1], cax=cb_tos_ax).set_label(tos_label, fontsize=7)
 
     fig.suptitle(f"Rank-{args.candidate_rank} CNOP cases: lead-{args.lead_month} {tos_label} and Nino3.4", fontsize=10, y=0.992)
     args.output.parent.mkdir(parents=True, exist_ok=True)
