@@ -683,7 +683,7 @@ def main() -> None:
         fig.subplots_adjust(left=0.115, right=0.91, top=0.955, bottom=0.055, wspace=0.045, hspace=0.11)
         col_titles = (
             f"Observed lead-{args.lead_month} {tos_label}",
-            f"Baseline lead-{args.lead_month} {tos_label}",
+            f"Predicted lead-{args.lead_month} {tos_label}",
             f"Perturbed lead-{args.lead_month} {tos_label}",
         )
         tos_mappable = None
@@ -740,9 +740,9 @@ def main() -> None:
     tos_label = "SSTA" if args.tos_mode == "anomaly" else "TOS"
     second_title = f"Observed lead-{args.lead_month} {tos_label}" if args.second_column == "truth" else f"Lead-{args.lead_month} TOS response"
     col_titles = (
-        "Initial delta TOS",
+        "CNOP",
         second_title,
-        f"Baseline lead-{args.lead_month} {tos_label}",
+        f"Predicted lead-{args.lead_month} {tos_label}",
         f"Perturbed lead-{args.lead_month} {tos_label}",
     )
     mappables = [None, None, None]
