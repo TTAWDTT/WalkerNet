@@ -769,12 +769,13 @@ def main() -> None:
         row_label = f"{item['source']} {item['year']}{scale_label}\n{item['label']}"
         second_field = item["truth"] if args.second_column == "truth" else item["response"]
         fields = (item["perturb"], second_field, item["baseline"], item["perturbed"])
-        if args.second_column == "truth":
-            levels = (perturb_levels, tos_levels, tos_levels, tos_levels)
-            cmaps = (initial_cmap, TOS_CMAP, TOS_CMAP, TOS_CMAP)
-        else:
-            levels = (perturb_levels, response_levels, tos_levels, tos_levels)
-            cmaps = (initial_cmap, "RdBu_r", TOS_CMAP, TOS_CMAP)
+        # All four panels are TOS-like fields in the same physical units.  Use
+        # one common symmetric norm and one palette so their colors are
+        # directly comparable and a single colorbar is sufficient.
+        common_vmax = max(perturb_vmax, tos_vmax, response_vmax if args.second_column == "response" else 0.0)
+        common_norm = TwoSlopeNorm(vmin=-float(common_vmax), vcenter=0.0, vmax=float(common_vmax))
+        levels = (perturb_levels, response_levels, tos_levels, tos_levels)
+        cmaps = (initial_cmap, TOS_CMAP, TOS_CMAP, TOS_CMAP)
         for col_idx in range(4):
             ax = axes[row_idx, col_idx]
             if col_idx == 0:
@@ -795,12 +796,10 @@ def main() -> None:
             )
             if col_idx == 0:
                 # Zero perturbation outside the constrained Pacific is real
-                # data, not missing data.  Keep it in the continuous norm and
-                # reserve a neutral gray only for masked land/NaN cells so
-                # panel edges cannot be mistaken for an empty field.
-                display_cmap = lighten_cmap(initial_cmap, args.initial_lighten).with_extremes(
-                    bad="#D9DEE3"
-                )
+                # data, not missing data.  Keep it in the continuous norm.
+                # Use the exact same cmap as the forecast panels so the one
+                # shared colorbar has identical meaning in every column.
+                display_cmap = initial_cmap.with_extremes(bad="#D9DEE3")
             else:
                 display_cmap = cmaps[col_idx]
             mappable = ax.imshow(
@@ -808,7 +807,7 @@ def main() -> None:
                 origin="lower",
                 extent=(float(plot_lon[0]), float(plot_lon[-1]), float(plot_lat[0]), float(plot_lat[-1])),
                 cmap=display_cmap,
-                norm=TwoSlopeNorm(vmin=float(levels[col_idx][0]), vcenter=0.0, vmax=float(levels[col_idx][-1])),
+                norm=common_norm,
                 interpolation="bicubic",
                 aspect="auto",
                 zorder=0,
@@ -831,13 +830,10 @@ def main() -> None:
                 nino_value = item["baseline_nino"] if col_idx == 2 else item["perturbed_nino"]
                 add_panel_label(ax, f"Nino3.4={nino_value:+.2f}")
 
-    # The three forecast columns share one identical SSTA norm and palette;
-    # a single shared colorbar is therefore sufficient and avoids implying
-    # separate scales for observed, predicted, and perturbed fields.
-    cb_delta_ax = fig.add_axes([0.945, 0.70, 0.011, 0.22])
-    cb_tos_ax = fig.add_axes([0.945, 0.12, 0.011, 0.47])
-    fig.colorbar(mappables[0], cax=cb_delta_ax).set_label("delta TOS", fontsize=7)
-    fig.colorbar(mappables[1], cax=cb_tos_ax).set_label(tos_label, fontsize=7)
+    # All four columns now use the same norm and palette, so one shared
+    # colorbar communicates the scale without duplicating legends.
+    cb_ax = fig.add_axes([0.945, 0.14, 0.011, 0.72])
+    fig.colorbar(mappables[0], cax=cb_ax).set_label("TOS / SSTA", fontsize=7)
 
     fig.suptitle(f"Rank-{args.candidate_rank} CNOP cases: lead-{args.lead_month} {tos_label} and Nino3.4", fontsize=10, y=0.992)
     args.output.parent.mkdir(parents=True, exist_ok=True)
