@@ -33,41 +33,97 @@ k8s-node3-gpu 容器
 
 ## 2. 推荐登录方式
 
-### 2.1 yundun 入口（当前脚本使用的方式）
+堡垒机登录必须使用**交互式、带 TTY 的 SSH**。本机没有可用的 `ssh-agent`，也没有统一的 `~/.ssh/config`；因此不要把“检查 SSH key”或非交互式 `ssh host command` 当作登录成功的判据。私钥和密码都不写入本项目文档。
 
-在 PowerShell、Windows Terminal 或 WSL 中：
+### 2.1 osm 入口：已验证的 node 2 → container 1 流程
 
-```bash
-ssh -tt -o StrictHostKeyChecking=no \
-    -o PreferredAuthentications=password \
-    -p 60022 zhen.luo@yundun.insightst.com
-```
-
-也可以使用 Paramiko 建立交互 shell。关键点是：
-
-1. 等待 GateShell 菜单完全出现；
-2. 用方向键或 `j`/`k` 选择目标节点，或者在菜单提供搜索时输入目标节点名，例如 `k8s-sh-azb-gpu-007`；
-3. 进入目标节点后选择正确容器；
-4. 进入容器后执行 `stty -echo`，避免密码或命令回显污染日志；
-5. 工作结束时执行 `stty echo`，再退出容器和 GateShell。
-
-历史脚本中使用过 `j` 键移动菜单光标，但菜单顺序可能变化，因此应先读取菜单，不能假定固定移动次数。
-
-### 2.2 osm 入口（node 2 路径）
+这是目前最明确、最容易复现的 GateShell 流程。在 Windows PowerShell、Windows Terminal 或 WSL 中执行：
 
 ```bash
-ssh -tt -o StrictHostKeyChecking=no \
-    -o PreferredAuthentications=password \
-    -p 18000 zhen.luo@osm.insightst.com
+ssh -tt zhen.luo@osm.insightst.com -p 18000
 ```
 
-在 GateShell 中按实际菜单选择：
+看到密码提示后，在终端中交互输入堡垒机密码。登录成功后不要直接输入 Linux 命令；此时仍处于 GateShell 菜单，需要按下面顺序发送：
 
 ```text
-node 2 → container 1 → stty -echo
+2<Enter>       # 选择 node 2（历史名称：k8s-node3-gpu）
+1<Enter>       # 选择该 node 下的 container 1
+stty -echo<Enter>
 ```
 
-该入口对应的历史目标名是 `k8s-node3-gpu`。node、容器编号和当前可用 GPU 必须每次现场确认。
+也就是完整链路：
+
+```text
+Windows 本机
+  → ssh zhen.luo@osm.insightst.com -p 18000
+  → 交互输入密码
+  → GateShell 发送 2 + Enter
+  → GateShell 发送 1 + Enter
+  → 容器 shell
+  → stty -echo
+```
+
+进入容器后先确认位置和 GPU：
+
+```bash
+hostname
+nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total --format=csv
+```
+
+离开前恢复回显：
+
+```bash
+stty echo
+exit
+```
+
+`2` 和 `1` 是这条 osm node 2 路径的已验证菜单选择，不应直接套用到其他入口；如果 GateShell 菜单发生变化，必须先读取当前菜单。
+
+### 2.2 yundun 入口：GPU005/006/007 路径
+
+连接 yundun 时同样必须分两阶段：先 SSH 到 GateShell，再在菜单中选计算节点和容器。
+
+```bash
+ssh -tt zhen.luo@yundun.insightst.com -p 60022
+```
+
+看到密码提示后交互输入密码。进入 GateShell 后：
+
+1. 等待菜单完整显示；
+2. 选择目标节点，例如 `k8s-sh-azb-gpu-005`、`k8s-sh-azb-gpu-006` 或 `k8s-sh-azb-gpu-007`；
+3. 进入该节点后选择目标容器；
+4. 进入容器 shell 后执行 `stty -echo`；
+5. 任务结束执行 `stty echo`，再依次退出容器和 GateShell。
+
+历史脚本曾用 `j` 键移动菜单光标，也曾使用 GateShell 搜索节点名；这些是交互手段，不是固定的节点编号。不要假定固定移动次数，也不要把 yundun 的菜单编号与 osm 的 `2 → 1` 流程混用。
+
+### 2.3 Paramiko/自动化脚本的要求
+
+需要脚本化时，必须使用 Paramiko 的 `invoke_shell()` 或等价的伪终端连接，而不是普通的非交互 `exec_command()`：
+
+```python
+client.connect(
+    "osm.insightst.com", port=18000,
+    username="zhen.luo",
+    look_for_keys=False,
+    allow_agent=False,
+)
+channel = client.invoke_shell(width=240, height=40)
+```
+
+脚本应等待 GateShell 提示符后，发送 `2\r`、等待节点菜单，再发送 `1\r`；只有收到容器 shell 提示后才发送 Linux 命令。密码应由交互输入、环境外部的安全凭据注入或 SSH agent 提供，不能硬编码进脚本、日志或 Markdown。
+
+### 2.4 常见失败原因
+
+截图中“SSH agent 不可用”“`~/.ssh/config` 不存在”并不表示堡垒机不可用，而是说明：
+
+- 本机没有运行 SSH agent；
+- 当前用户目录没有 SSH config；
+- 不能依赖公钥自动登录；
+- 需要带 `-tt` 建立交互终端，并在密码提示处手动完成认证；
+- 认证成功后还必须完成 GateShell 的节点和容器选择，SSH 连接本身不等于已经进入 GPU 容器。
+
+如果出现 `Unable to open channel`，优先检查是否用了非交互方式、是否已有旧的堡垒机 shell 占用会话、以及是否尚未完成 GateShell/二次认证；不要因此修改远端作业或反复尝试杀掉其他会话。
 
 ## 3. 远程节点与 GPU 概况
 
@@ -378,4 +434,3 @@ summary CSV、NPZ、audit JSON/CSV
 - PNG/PDF 文件确实来自一次完整脚本运行，而不是后处理拼接；
 - 输出目录包含对应的 provenance、alt text 或 README；
 - 远端结果拉回本地后保留原目录结构和文件名，并记录 checksum。
-
