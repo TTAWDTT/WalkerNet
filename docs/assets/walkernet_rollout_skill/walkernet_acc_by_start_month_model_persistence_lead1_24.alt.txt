@@ -1,0 +1,1 @@
+Two-panel heatmap of monthly Niño3.4 anomaly ACC by forecast start month and lead month. The left panel is WalkerNet and the right panel is persistence. ACC values below 0.5 are rendered white; hatched cells mark, separately for each system and start month, the six endpoint lead cells following the largest one-step ACC declines within leads 1-24.

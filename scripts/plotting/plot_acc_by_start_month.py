@@ -61,9 +61,35 @@ ACC_BY_START_MONTH_TAIL = np.array([
 ACC_BY_START_MONTH = np.concatenate([ACC_BY_START_MONTH, ACC_BY_START_MONTH_TAIL], axis=1)
 LEADS = np.arange(1, 37)
 
+GROUPED_CSV = OUT / "eval_rollout_best_skill_lead1_36_by_start_month.csv"
+
+
+def load_grouped_acc(path: Path) -> dict[str, np.ndarray]:
+    """Load the formal 12×36 start-month ACC table for model and persistence."""
+
+    import csv
+
+    values = {"model": np.full((12, 36), np.nan), "persistence": np.full((12, 36), np.nan)}
+    with path.open("r", newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            system = row["system"].strip().lower()
+            if system not in values:
+                continue
+            start = int(row["start_month"]) - 1
+            lead = int(row["lead"]) - 1
+            if not (0 <= start < 12 and 0 <= lead < 36):
+                raise ValueError(f"Out-of-range start/lead in {path}: {row}")
+            values[system][start, lead] = float(row["acc"])
+    for system, array in values.items():
+        if not np.isfinite(array).all():
+            raise ValueError(f"Missing {system} values in {path}")
+    return values
+
 
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
+    grouped = load_grouped_acc(GROUPED_CSV)
+    output_stem = "walkernet_acc_by_start_month_model_persistence_lead1_24"
     with mpl.rc_context({
         "font.family": "Times New Roman",
         "font.serif": ["Times New Roman"],
@@ -77,73 +103,69 @@ def main() -> None:
         "grid.alpha": 0.26,
         "savefig.facecolor": "white",
     }):
-        fig, ax = plt.subplots(figsize=(10.5, 5.45))
-        fig.subplots_adjust(left=0.075, right=0.90, bottom=0.18, top=0.92)
-        # Keep the complete 36-lead snapshot above for provenance, but this
-        # presentation intentionally stops at lead 24.  Hatch ranking is
-        # recomputed on exactly the displayed lead range.
-        values = ACC_BY_START_MONTH[:, :MAX_LEAD]
+        fig, axes = plt.subplots(1, 2, figsize=(20.0, 5.45), sharex=True, sharey=True)
+        fig.subplots_adjust(left=0.075, right=0.90, bottom=0.20, top=0.88, wspace=0.08)
         x_raw = np.arange(1, MAX_LEAD + 1, dtype=float)
         y_raw = np.arange(1, 13, dtype=float)
         x_dense = np.linspace(1, MAX_LEAD, 480)
         y_dense = np.linspace(1, 12, 240)
-        spline = RectBivariateSpline(y_raw, x_raw, values, kx=3, ky=3, s=0)
-        smooth_values = np.clip(spline(y_dense, x_dense), np.nanmin(values), 1.0)
-        # Display-only threshold: retain all raw values for the audit and
-        # hatching, but render sub-0.5 ACC as white to emphasize the useful-
-        # skill region.  Masking avoids inventing a second color scale.
-        display_values = np.ma.masked_less(smooth_values, 0.5)
         X, Y = np.meshgrid(x_dense, y_dense)
         levels = np.linspace(0.5, 1.0, 17)
-        image = ax.contourf(
-            X, Y, display_values, levels=levels, cmap="YlOrBr", extend="neither",
-        )
-        # For each start month, hatch the six one-step intervals with the
-        # largest ACC drop. The hatch is placed on the endpoint lead cell.
         fastest = {}
-        for row in range(12):
-            drops = values[row, :-1] - values[row, 1:]
-            indices = np.argsort(drops)[-N_FASTEST:]
-            fastest[str(row + 1)] = [
-                {"from_lead": int(i + 1), "to_lead": int(i + 2), "drop": float(drops[i])}
-                for i in sorted(indices)
-            ]
-            for i in indices:
-                from matplotlib.patches import Rectangle
-                ax.add_patch(Rectangle(
-                    (float(i + 1.5), float(row + 0.5)), 1.0, 1.0,
-                    facecolor="none", edgecolor="#555555", hatch="///", linewidth=0.0,
-                ))
-        ax.set_title("Nino3.4 ACC by forecast start month", fontsize=15, pad=10)
-        ax.set_xlabel("Lead month")
-        ax.set_ylabel("Start month")
-        ax.set_xticks([1, 6, 12, 18, 24])
-        ax.set_yticks(range(1, 13))
-        ax.set_yticklabels(MONTH_NAMES)
-        ax.set_xlim(0.5, MAX_LEAD + 0.5)
-        ax.set_ylim(0.5, 12.5)
-        ax.grid(False)
-        cb = fig.colorbar(image, ax=ax, pad=0.015)
+        image = None
+        for ax, system, title in zip(axes, ("model", "persistence"), ("WalkerNet", "Persistence")):
+            values = grouped[system][:, :MAX_LEAD]
+            spline = RectBivariateSpline(y_raw, x_raw, values, kx=3, ky=3, s=0)
+            smooth_values = np.clip(spline(y_dense, x_dense), np.nanmin(values), 1.0)
+            display_values = np.ma.masked_less(smooth_values, 0.5)
+            image = ax.contourf(X, Y, display_values, levels=levels, cmap="YlOrBr", extend="neither")
+            system_fastest = {}
+            for row in range(12):
+                drops = values[row, :-1] - values[row, 1:]
+                indices = np.argsort(drops)[-N_FASTEST:]
+                system_fastest[str(row + 1)] = [
+                    {"from_lead": int(i + 1), "to_lead": int(i + 2), "drop": float(drops[i])}
+                    for i in sorted(indices)
+                ]
+                for i in indices:
+                    from matplotlib.patches import Rectangle
+                    ax.add_patch(Rectangle(
+                        (float(i + 1.5), float(row + 0.5)), 1.0, 1.0,
+                        facecolor="none", edgecolor="#555555", hatch="///", linewidth=0.0,
+                    ))
+            fastest[system] = system_fastest
+            ax.set_title(title, fontsize=15, pad=10)
+            ax.set_xlabel("Lead month")
+            ax.set_xticks([1, 6, 12, 18, 24])
+            ax.set_xlim(0.5, MAX_LEAD + 0.5)
+            ax.set_ylim(0.5, 12.5)
+            ax.grid(False)
+        axes[0].set_ylabel("Start month")
+        axes[0].set_yticks(range(1, 13))
+        axes[0].set_yticklabels(MONTH_NAMES)
+        fig.suptitle("Nino3.4 ACC by forecast start month", fontsize=15, y=0.96)
+        assert image is not None
+        cb = fig.colorbar(image, ax=axes, pad=0.015, fraction=0.025)
         cb.set_label("ACC")
         cb.set_ticks([0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
         from matplotlib.patches import Patch
         fig.legend(
             handles=[Patch(facecolor="white", edgecolor="#555555", hatch="///",
                            label="six fastest one-step ACC declines per start month")],
-            loc="lower right", bbox_to_anchor=(0.37, 0.075),
+            loc="lower center", bbox_to_anchor=(0.5, 0.045),
             framealpha=0.92, fontsize=8.5,
         )
         for fmt in ("png", "pdf"):
-            fig.savefig(OUT / f"walkernet_acc_by_start_month_lead1_{MAX_LEAD}.{fmt}", dpi=600 if fmt == "png" else None)
+            fig.savefig(OUT / f"{output_stem}.{fmt}", dpi=600 if fmt == "png" else None)
         plt.close(fig)
 
     manifest = {
-        "figure": "walkernet_acc_by_start_month_lead1_24",
+        "figure": output_stem,
         "source_remote_dir": "/data/WalkerNet/outputs/eval_rollout_best_skill_test_lead1_36_20260825/",
         "source_file": "eval_rollout_best_skill_lead1_36_by_start_month.csv",
         "checkpoint": "historical_mixed5_best_skill.pt",
         "split": "test",
-        "series": "WalkerNet monthly Niño3.4 anomaly ACC only",
+        "series": ["WalkerNet monthly Niño3.4 anomaly ACC", "persistence monthly Niño3.4 anomaly ACC"],
         "leads_plotted": "1-24",
         "hatching": "For each start month, the six largest one-step drops ACC[lead]-ACC[lead+1]; hatch is drawn on the endpoint lead cell.",
         "display_threshold": "ACC values below 0.5 are masked/rendered white for display only; raw values and hatch ranking are unchanged",
@@ -155,15 +177,15 @@ def main() -> None:
         ],
         "axes": {"x": "lead month", "y": "start month", "color": "ACC", "limits": "x=[1,24], y=start month 1..12"},
         "fastest_declines": fastest,
-        "outputs": ["walkernet_acc_by_start_month_lead1_24.png", "walkernet_acc_by_start_month_lead1_24.pdf"],
+        "outputs": [f"{output_stem}.png", f"{output_stem}.pdf"],
     }
-    (OUT / "walkernet_acc_by_start_month_lead1_24.provenance.json").write_text(
+    (OUT / f"{output_stem}.provenance.json").write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
     )
-    (OUT / "walkernet_acc_by_start_month_lead1_24.alt.txt").write_text(
-        "Heatmap of WalkerNet monthly Nino3.4 anomaly ACC with lead month on the x-axis and "
-        "forecast start month on the y-axis. ACC values below 0.5 are rendered white. Hatched cells mark, separately for each start month, "
-        "the six endpoint lead cells following the largest one-step ACC declines within leads 1-24. Color encodes ACC.",
+    (OUT / f"{output_stem}.alt.txt").write_text(
+        "Two-panel heatmap of monthly Niño3.4 anomaly ACC by forecast start month and lead month. "
+        "The left panel is WalkerNet and the right panel is persistence. ACC values below 0.5 are rendered white; "
+        "hatched cells mark, separately for each system and start month, the six endpoint lead cells following the largest one-step ACC declines within leads 1-24.",
         encoding="utf-8",
     )
 

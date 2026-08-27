@@ -1,0 +1,804 @@
+{
+  "figure": "walkernet_acc_by_start_month_model_persistence_lead1_24",
+  "source_remote_dir": "/data/WalkerNet/outputs/eval_rollout_best_skill_test_lead1_36_20260825/",
+  "source_file": "eval_rollout_best_skill_lead1_36_by_start_month.csv",
+  "checkpoint": "historical_mixed5_best_skill.pt",
+  "split": "test",
+  "series": [
+    "WalkerNet monthly Niño3.4 anomaly ACC",
+    "persistence monthly Niño3.4 anomaly ACC"
+  ],
+  "leads_plotted": "1-24",
+  "hatching": "For each start month, the six largest one-step drops ACC[lead]-ACC[lead+1]; hatch is drawn on the endpoint lead cell.",
+  "display_threshold": "ACC values below 0.5 are masked/rendered white for display only; raw values and hatch ranking are unchanged",
+  "display_interpolation": "RectBivariateSpline cubic interpolation plus contourf for color-field display only; raw 12x24 displayed cells and hatch locations are preserved",
+  "transformations": [
+    "direct saved start-month grouped ACC values rounded to <=6 decimals",
+    "ACC<0.5 masked to white for display only",
+    "no value filtering for the saved data or hatch ranking"
+  ],
+  "axes": {
+    "x": "lead month",
+    "y": "start month",
+    "color": "ACC",
+    "limits": "x=[1,24], y=start month 1..12"
+  },
+  "fastest_declines": {
+    "model": {
+      "1": [
+        {
+          "from_lead": 3,
+          "to_lead": 4,
+          "drop": 0.07493004271670234
+        },
+        {
+          "from_lead": 4,
+          "to_lead": 5,
+          "drop": 0.07275193755473253
+        },
+        {
+          "from_lead": 7,
+          "to_lead": 8,
+          "drop": 0.0560999147353376
+        },
+        {
+          "from_lead": 8,
+          "to_lead": 9,
+          "drop": 0.06348764851968436
+        },
+        {
+          "from_lead": 16,
+          "to_lead": 17,
+          "drop": 0.27121205338054744
+        },
+        {
+          "from_lead": 17,
+          "to_lead": 18,
+          "drop": 0.1499965052625064
+        }
+      ],
+      "2": [
+        {
+          "from_lead": 2,
+          "to_lead": 3,
+          "drop": 0.0808594550037216
+        },
+        {
+          "from_lead": 3,
+          "to_lead": 4,
+          "drop": 0.08418994435983496
+        },
+        {
+          "from_lead": 6,
+          "to_lead": 7,
+          "drop": 0.08169964127232554
+        },
+        {
+          "from_lead": 7,
+          "to_lead": 8,
+          "drop": 0.0947910174656783
+        },
+        {
+          "from_lead": 15,
+          "to_lead": 16,
+          "drop": 0.22760971155236898
+        },
+        {
+          "from_lead": 16,
+          "to_lead": 17,
+          "drop": 0.0869025322546012
+        }
+      ],
+      "3": [
+        {
+          "from_lead": 5,
+          "to_lead": 6,
+          "drop": 0.1015142287209142
+        },
+        {
+          "from_lead": 6,
+          "to_lead": 7,
+          "drop": 0.0996483004943931
+        },
+        {
+          "from_lead": 14,
+          "to_lead": 15,
+          "drop": 0.23001779733132677
+        },
+        {
+          "from_lead": 15,
+          "to_lead": 16,
+          "drop": 0.11929136374998844
+        },
+        {
+          "from_lead": 20,
+          "to_lead": 21,
+          "drop": 0.06337067747626057
+        },
+        {
+          "from_lead": 21,
+          "to_lead": 22,
+          "drop": 0.08160743795096537
+        }
+      ],
+      "4": [
+        {
+          "from_lead": 4,
+          "to_lead": 5,
+          "drop": 0.12909768161117008
+        },
+        {
+          "from_lead": 5,
+          "to_lead": 6,
+          "drop": 0.09873371704114187
+        },
+        {
+          "from_lead": 13,
+          "to_lead": 14,
+          "drop": 0.2700877518839269
+        },
+        {
+          "from_lead": 14,
+          "to_lead": 15,
+          "drop": 0.10728041126422627
+        },
+        {
+          "from_lead": 20,
+          "to_lead": 21,
+          "drop": 0.07684499088265612
+        },
+        {
+          "from_lead": 23,
+          "to_lead": 24,
+          "drop": 0.09448136014597636
+        }
+      ],
+      "5": [
+        {
+          "from_lead": 11,
+          "to_lead": 12,
+          "drop": 0.08096009502887525
+        },
+        {
+          "from_lead": 12,
+          "to_lead": 13,
+          "drop": 0.26941672090402474
+        },
+        {
+          "from_lead": 13,
+          "to_lead": 14,
+          "drop": 0.10985493174919364
+        },
+        {
+          "from_lead": 19,
+          "to_lead": 20,
+          "drop": 0.08990511463330098
+        },
+        {
+          "from_lead": 22,
+          "to_lead": 23,
+          "drop": 0.07713472532322407
+        },
+        {
+          "from_lead": 23,
+          "to_lead": 24,
+          "drop": 0.09727605501721215
+        }
+      ],
+      "6": [
+        {
+          "from_lead": 2,
+          "to_lead": 3,
+          "drop": 0.12338939427406759
+        },
+        {
+          "from_lead": 3,
+          "to_lead": 4,
+          "drop": 0.0853259334442995
+        },
+        {
+          "from_lead": 11,
+          "to_lead": 12,
+          "drop": 0.16944907612001492
+        },
+        {
+          "from_lead": 21,
+          "to_lead": 22,
+          "drop": 0.08501372153492293
+        },
+        {
+          "from_lead": 22,
+          "to_lead": 23,
+          "drop": 0.11818978763122673
+        },
+        {
+          "from_lead": 23,
+          "to_lead": 24,
+          "drop": 0.1327318422949635
+        }
+      ],
+      "7": [
+        {
+          "from_lead": 1,
+          "to_lead": 2,
+          "drop": 0.07705409920328277
+        },
+        {
+          "from_lead": 2,
+          "to_lead": 3,
+          "drop": 0.07347417173708992
+        },
+        {
+          "from_lead": 10,
+          "to_lead": 11,
+          "drop": 0.1715395364429274
+        },
+        {
+          "from_lead": 21,
+          "to_lead": 22,
+          "drop": 0.07761002060024225
+        },
+        {
+          "from_lead": 22,
+          "to_lead": 23,
+          "drop": 0.09237988432060329
+        },
+        {
+          "from_lead": 23,
+          "to_lead": 24,
+          "drop": 0.08540020160596778
+        }
+      ],
+      "8": [
+        {
+          "from_lead": 1,
+          "to_lead": 2,
+          "drop": 0.06469246451557531
+        },
+        {
+          "from_lead": 6,
+          "to_lead": 7,
+          "drop": 0.07025497763478594
+        },
+        {
+          "from_lead": 9,
+          "to_lead": 10,
+          "drop": 0.11138629157991498
+        },
+        {
+          "from_lead": 20,
+          "to_lead": 21,
+          "drop": 0.08074748150190747
+        },
+        {
+          "from_lead": 21,
+          "to_lead": 22,
+          "drop": 0.15965175232163337
+        },
+        {
+          "from_lead": 22,
+          "to_lead": 23,
+          "drop": 0.12907452865306546
+        }
+      ],
+      "9": [
+        {
+          "from_lead": 5,
+          "to_lead": 6,
+          "drop": 0.05114358425110099
+        },
+        {
+          "from_lead": 6,
+          "to_lead": 7,
+          "drop": 0.04778704821516666
+        },
+        {
+          "from_lead": 7,
+          "to_lead": 8,
+          "drop": 0.07653585622670445
+        },
+        {
+          "from_lead": 8,
+          "to_lead": 9,
+          "drop": 0.1038499358545264
+        },
+        {
+          "from_lead": 20,
+          "to_lead": 21,
+          "drop": 0.20304337953413465
+        },
+        {
+          "from_lead": 21,
+          "to_lead": 22,
+          "drop": 0.17913784975618585
+        }
+      ],
+      "10": [
+        {
+          "from_lead": 6,
+          "to_lead": 7,
+          "drop": 0.08278863249131674
+        },
+        {
+          "from_lead": 7,
+          "to_lead": 8,
+          "drop": 0.08878789394534092
+        },
+        {
+          "from_lead": 10,
+          "to_lead": 11,
+          "drop": 0.08499137751244268
+        },
+        {
+          "from_lead": 11,
+          "to_lead": 12,
+          "drop": 0.07706713467612636
+        },
+        {
+          "from_lead": 19,
+          "to_lead": 20,
+          "drop": 0.07851071329864878
+        },
+        {
+          "from_lead": 20,
+          "to_lead": 21,
+          "drop": 0.10196781968432056
+        }
+      ],
+      "11": [
+        {
+          "from_lead": 5,
+          "to_lead": 6,
+          "drop": 0.07803138559709344
+        },
+        {
+          "from_lead": 6,
+          "to_lead": 7,
+          "drop": 0.07843103760803383
+        },
+        {
+          "from_lead": 9,
+          "to_lead": 10,
+          "drop": 0.07607732559729363
+        },
+        {
+          "from_lead": 18,
+          "to_lead": 19,
+          "drop": 0.1354560580911749
+        },
+        {
+          "from_lead": 19,
+          "to_lead": 20,
+          "drop": 0.15452858725690294
+        },
+        {
+          "from_lead": 20,
+          "to_lead": 21,
+          "drop": 0.06378982326939919
+        }
+      ],
+      "12": [
+        {
+          "from_lead": 4,
+          "to_lead": 5,
+          "drop": 0.0728246131474587
+        },
+        {
+          "from_lead": 5,
+          "to_lead": 6,
+          "drop": 0.07255195920494373
+        },
+        {
+          "from_lead": 8,
+          "to_lead": 9,
+          "drop": 0.06827794356818295
+        },
+        {
+          "from_lead": 16,
+          "to_lead": 17,
+          "drop": 0.05742388920220165
+        },
+        {
+          "from_lead": 17,
+          "to_lead": 18,
+          "drop": 0.18370089852260296
+        },
+        {
+          "from_lead": 18,
+          "to_lead": 19,
+          "drop": 0.1772683250760253
+        }
+      ]
+    },
+    "persistence": {
+      "1": [
+        {
+          "from_lead": 2,
+          "to_lead": 3,
+          "drop": 0.1312614308655825
+        },
+        {
+          "from_lead": 3,
+          "to_lead": 4,
+          "drop": 0.13047768507110136
+        },
+        {
+          "from_lead": 4,
+          "to_lead": 5,
+          "drop": 0.15454872525788166
+        },
+        {
+          "from_lead": 5,
+          "to_lead": 6,
+          "drop": 0.23454206397554844
+        },
+        {
+          "from_lead": 7,
+          "to_lead": 8,
+          "drop": 0.14409359324282983
+        },
+        {
+          "from_lead": 12,
+          "to_lead": 13,
+          "drop": 0.12699993051767852
+        }
+      ],
+      "2": [
+        {
+          "from_lead": 1,
+          "to_lead": 2,
+          "drop": 0.12775513122922166
+        },
+        {
+          "from_lead": 2,
+          "to_lead": 3,
+          "drop": 0.12623333010775062
+        },
+        {
+          "from_lead": 3,
+          "to_lead": 4,
+          "drop": 0.14873494855643066
+        },
+        {
+          "from_lead": 4,
+          "to_lead": 5,
+          "drop": 0.28608096513310255
+        },
+        {
+          "from_lead": 5,
+          "to_lead": 6,
+          "drop": 0.14794488774583475
+        },
+        {
+          "from_lead": 6,
+          "to_lead": 7,
+          "drop": 0.16802387910774988
+        }
+      ],
+      "3": [
+        {
+          "from_lead": 2,
+          "to_lead": 3,
+          "drop": 0.11830876391951017
+        },
+        {
+          "from_lead": 3,
+          "to_lead": 4,
+          "drop": 0.30025103961797
+        },
+        {
+          "from_lead": 4,
+          "to_lead": 5,
+          "drop": 0.14635512390041797
+        },
+        {
+          "from_lead": 5,
+          "to_lead": 6,
+          "drop": 0.1878355300705582
+        },
+        {
+          "from_lead": 10,
+          "to_lead": 11,
+          "drop": 0.12407581942403394
+        },
+        {
+          "from_lead": 14,
+          "to_lead": 15,
+          "drop": 0.13598013023166294
+        }
+      ],
+      "4": [
+        {
+          "from_lead": 1,
+          "to_lead": 2,
+          "drop": 0.17305377901555896
+        },
+        {
+          "from_lead": 2,
+          "to_lead": 3,
+          "drop": 0.33615002091010454
+        },
+        {
+          "from_lead": 3,
+          "to_lead": 4,
+          "drop": 0.1453463407545718
+        },
+        {
+          "from_lead": 4,
+          "to_lead": 5,
+          "drop": 0.1895862565628095
+        },
+        {
+          "from_lead": 9,
+          "to_lead": 10,
+          "drop": 0.11694187396298882
+        },
+        {
+          "from_lead": 13,
+          "to_lead": 14,
+          "drop": 0.19189472729539303
+        }
+      ],
+      "5": [
+        {
+          "from_lead": 1,
+          "to_lead": 2,
+          "drop": 0.33218040078882183
+        },
+        {
+          "from_lead": 2,
+          "to_lead": 3,
+          "drop": 0.1454918604463954
+        },
+        {
+          "from_lead": 3,
+          "to_lead": 4,
+          "drop": 0.13838924186431178
+        },
+        {
+          "from_lead": 8,
+          "to_lead": 9,
+          "drop": 0.12076412417660415
+        },
+        {
+          "from_lead": 11,
+          "to_lead": 12,
+          "drop": 0.11862376240217345
+        },
+        {
+          "from_lead": 12,
+          "to_lead": 13,
+          "drop": 0.2131800023532019
+        }
+      ],
+      "6": [
+        {
+          "from_lead": 1,
+          "to_lead": 2,
+          "drop": 0.11356131765574007
+        },
+        {
+          "from_lead": 2,
+          "to_lead": 3,
+          "drop": 0.12677643832400498
+        },
+        {
+          "from_lead": 9,
+          "to_lead": 10,
+          "drop": 0.1090392342000922
+        },
+        {
+          "from_lead": 10,
+          "to_lead": 11,
+          "drop": 0.1336386674531968
+        },
+        {
+          "from_lead": 11,
+          "to_lead": 12,
+          "drop": 0.23342903462245762
+        },
+        {
+          "from_lead": 12,
+          "to_lead": 13,
+          "drop": 0.15665411126191914
+        }
+      ],
+      "7": [
+        {
+          "from_lead": 8,
+          "to_lead": 9,
+          "drop": 0.19951306669136776
+        },
+        {
+          "from_lead": 9,
+          "to_lead": 10,
+          "drop": 0.13901581934670793
+        },
+        {
+          "from_lead": 10,
+          "to_lead": 11,
+          "drop": 0.20493376783396608
+        },
+        {
+          "from_lead": 11,
+          "to_lead": 12,
+          "drop": 0.21821193140398426
+        },
+        {
+          "from_lead": 12,
+          "to_lead": 13,
+          "drop": 0.1003784815907482
+        },
+        {
+          "from_lead": 18,
+          "to_lead": 19,
+          "drop": 0.11953078468507139
+        }
+      ],
+      "8": [
+        {
+          "from_lead": 7,
+          "to_lead": 8,
+          "drop": 0.21875905863583311
+        },
+        {
+          "from_lead": 8,
+          "to_lead": 9,
+          "drop": 0.12676840526808697
+        },
+        {
+          "from_lead": 9,
+          "to_lead": 10,
+          "drop": 0.1616621782843033
+        },
+        {
+          "from_lead": 10,
+          "to_lead": 11,
+          "drop": 0.2338225425178529
+        },
+        {
+          "from_lead": 11,
+          "to_lead": 12,
+          "drop": 0.1242295719394719
+        },
+        {
+          "from_lead": 17,
+          "to_lead": 18,
+          "drop": 0.12462703349685089
+        }
+      ],
+      "9": [
+        {
+          "from_lead": 6,
+          "to_lead": 7,
+          "drop": 0.19456843312682415
+        },
+        {
+          "from_lead": 7,
+          "to_lead": 8,
+          "drop": 0.12963449835962365
+        },
+        {
+          "from_lead": 8,
+          "to_lead": 9,
+          "drop": 0.19329725991934016
+        },
+        {
+          "from_lead": 9,
+          "to_lead": 10,
+          "drop": 0.24607146929963905
+        },
+        {
+          "from_lead": 10,
+          "to_lead": 11,
+          "drop": 0.13286820346028208
+        },
+        {
+          "from_lead": 16,
+          "to_lead": 17,
+          "drop": 0.12297983463958595
+        }
+      ],
+      "10": [
+        {
+          "from_lead": 5,
+          "to_lead": 6,
+          "drop": 0.15714891376667994
+        },
+        {
+          "from_lead": 6,
+          "to_lead": 7,
+          "drop": 0.14098626751598586
+        },
+        {
+          "from_lead": 7,
+          "to_lead": 8,
+          "drop": 0.2292573780463089
+        },
+        {
+          "from_lead": 8,
+          "to_lead": 9,
+          "drop": 0.28586009469852125
+        },
+        {
+          "from_lead": 9,
+          "to_lead": 10,
+          "drop": 0.1144977965605585
+        },
+        {
+          "from_lead": 10,
+          "to_lead": 11,
+          "drop": 0.13613244727812762
+        }
+      ],
+      "11": [
+        {
+          "from_lead": 4,
+          "to_lead": 5,
+          "drop": 0.14723659859761595
+        },
+        {
+          "from_lead": 5,
+          "to_lead": 6,
+          "drop": 0.1299805870766213
+        },
+        {
+          "from_lead": 6,
+          "to_lead": 7,
+          "drop": 0.2330286550317915
+        },
+        {
+          "from_lead": 7,
+          "to_lead": 8,
+          "drop": 0.2950858721049945
+        },
+        {
+          "from_lead": 8,
+          "to_lead": 9,
+          "drop": 0.13686198530888719
+        },
+        {
+          "from_lead": 9,
+          "to_lead": 10,
+          "drop": 0.16527354328638935
+        }
+      ],
+      "12": [
+        {
+          "from_lead": 3,
+          "to_lead": 4,
+          "drop": 0.13780433683118276
+        },
+        {
+          "from_lead": 4,
+          "to_lead": 5,
+          "drop": 0.1255410218173214
+        },
+        {
+          "from_lead": 5,
+          "to_lead": 6,
+          "drop": 0.22666920725620177
+        },
+        {
+          "from_lead": 6,
+          "to_lead": 7,
+          "drop": 0.29710170470848385
+        },
+        {
+          "from_lead": 7,
+          "to_lead": 8,
+          "drop": 0.12687256676430966
+        },
+        {
+          "from_lead": 8,
+          "to_lead": 9,
+          "drop": 0.16758971073016546
+        }
+      ]
+    }
+  },
+  "outputs": [
+    "walkernet_acc_by_start_month_model_persistence_lead1_24.png",
+    "walkernet_acc_by_start_month_model_persistence_lead1_24.pdf"
+  ]
+}
