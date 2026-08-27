@@ -70,10 +70,12 @@ def interpolate_field(
     valid = np.isfinite(values)
     up_values = zoom(np.where(valid, values, 0.0), (factor, factor), order=3, mode="nearest", prefilter=True)
     up_weights = zoom(valid.astype(float), (factor, factor), order=1, mode="nearest")
-    # Keep valid ocean values close to coastlines; the source valid mask still
-    # controls land, while a lower threshold prevents an artificial white halo
-    # from appearing at panel boundaries after interpolation.
-    up_field = np.divide(up_values, up_weights, out=np.full_like(up_values, np.nan), where=up_weights > 0.15)
+    # Keep valid ocean values close to coastlines.  A strict threshold here
+    # creates a second, artificial NaN halo around the land mask after the
+    # display-only upsampling.  The source mask still controls genuinely
+    # invalid cells; using a small weight threshold only rejects pixels with
+    # no valid support at all.
+    up_field = np.divide(up_values, up_weights, out=np.full_like(up_values, np.nan), where=up_weights > 0.05)
     up_lon = np.linspace(float(lon[0]), float(lon[-1]), up_field.shape[1])
     up_lat = np.linspace(float(lat[0]), float(lat[-1]), up_field.shape[0])
     return up_lon, up_lat, up_field
@@ -136,7 +138,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--initial-smooth-sigma",
         type=float,
-        default=1.8,
+        default=2.4,
         help="Additional display-only Gaussian smoothing for the initial perturbation column.",
     )
     parser.add_argument(
@@ -160,11 +162,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--interpolation-factor",
         type=int,
-        default=4,
+        default=8,
         help="Display-only bicubic interpolation factor applied after smoothing.",
     )
     parser.add_argument("--tos-vmax", type=float, default=None, help="Fixed symmetric SSTA color limit.")
-    parser.add_argument("--delta-vmax", type=float, default=None, help="Fixed symmetric initial-perturbation color limit.")
+    parser.add_argument(
+        "--delta-vmax",
+        type=float,
+        default=1.5,
+        help="Fixed symmetric initial-perturbation color limit (default: +/-1.5 TOS).",
+    )
     parser.add_argument(
         "--initial-map-extent",
         type=str,
@@ -609,7 +616,12 @@ def main() -> None:
         baseline_nino = float(compute_nino34_numpy(baseline_tos[None], lat, lon)[0])
         perturbed_nino = float(compute_nino34_numpy(perturbed_tos[None], lat, lon)[0])
 
-        perturb_tos = apply_ocean_mask(perturb_tos, tos_valid)
+        # The CNOP files explicitly store zero perturbation on land and
+        # outside the constrained basin.  Keep those physical zeros for the
+        # initial-delta panel instead of converting them to NaN: masking them
+        # was the source of the apparent blank strips at the map boundaries.
+        # The forecast/truth fields below remain ocean-masked as before.
+        perturb_tos = np.asarray(perturb_tos, dtype=np.float32)
         response_tos = apply_ocean_mask(response_tos, tos_valid)
         truth_tos = apply_ocean_mask(truth_tos, tos_valid)
         baseline_tos = apply_ocean_mask(baseline_tos, tos_valid)
@@ -765,10 +777,16 @@ def main() -> None:
             plot_lon, plot_lat, plot_field = interpolate_field(
                 lon, lat, display_field, args.interpolation_factor
             )
-            display_cmap = (
-                lighten_cmap(initial_cmap, args.initial_lighten)
-                if col_idx == 0 else cmaps[col_idx]
-            )
+            if col_idx == 0:
+                # Zero perturbation outside the constrained Pacific is real
+                # data, not missing data.  Keep it in the continuous norm and
+                # reserve a neutral gray only for masked land/NaN cells so
+                # panel edges cannot be mistaken for an empty field.
+                display_cmap = lighten_cmap(initial_cmap, args.initial_lighten).with_extremes(
+                    bad="#D9DEE3"
+                )
+            else:
+                display_cmap = cmaps[col_idx]
             mappable = ax.imshow(
                 np.ma.masked_invalid(plot_field),
                 origin="lower",
