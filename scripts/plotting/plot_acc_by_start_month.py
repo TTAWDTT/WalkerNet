@@ -104,7 +104,9 @@ def main() -> None:
         "savefig.facecolor": "white",
     }):
         fig, axes = plt.subplots(1, 2, figsize=(20.0, 5.45), sharex=True, sharey=True)
-        fig.subplots_adjust(left=0.075, right=0.90, bottom=0.20, top=0.88, wspace=0.08)
+        # Use the canvas more efficiently: the shared colorbar needs only a
+        # narrow margin, so avoid the oversized blank strip on the right.
+        fig.subplots_adjust(left=0.075, right=0.95, bottom=0.20, top=0.88, wspace=0.08)
         x_raw = np.arange(1, MAX_LEAD + 1, dtype=float)
         y_raw = np.arange(1, 13, dtype=float)
         x_dense = np.linspace(1, MAX_LEAD, 480)
@@ -145,7 +147,7 @@ def main() -> None:
         axes[0].set_yticklabels(MONTH_NAMES)
         fig.suptitle("Nino3.4 ACC by forecast start month", fontsize=15, y=0.96)
         assert image is not None
-        cb = fig.colorbar(image, ax=axes, pad=0.015, fraction=0.025)
+        cb = fig.colorbar(image, ax=axes, pad=0.010, fraction=0.022)
         cb.set_label("ACC")
         cb.set_ticks([0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
         from matplotlib.patches import Patch
