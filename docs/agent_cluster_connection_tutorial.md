@@ -39,7 +39,12 @@ WalkerNet 工作目录和实验环境
 
 ## 2. 凭据和 `CLUSTER PWD` 的含义
 
-项目中没有统一的 `CLUSTER_PWD` 文件或固定环境变量。界面出现 `CLUSTER PWD` 时，通常表示当前 GateShell/集群平台要求的目标集群密码字段；它不一定等同于：
+项目中没有保存 `CLUSTER_PWD` 的真实值。需要注意两种不同情况：
+
+1. **交互式 SSH/GateShell**：密码在终端提示处输入，不需要预先设置环境变量；
+2. **`remote_yundun.py` 等自动化脚本**：脚本可能在启动前强制检查 `CLUSTER_PWD` 是否为非空。若为空，脚本会在建立 SSH 连接前直接退出。
+
+界面或脚本出现 `CLUSTER PWD` 时，通常表示当前 GateShell/集群平台要求的目标集群密码字段；它不一定等同于：
 
 - GitHub/GitLab 密码或 token；
 - Linux `sudo` 密码；
@@ -50,9 +55,66 @@ Agent 的处理规则：
 
 1. 不从仓库、命令历史或旧日志猜测密码；
 2. 不把密码拼接进命令行、Python 源码、Markdown、日志或提交记录；
-3. 如果提示需要 `CLUSTER PWD`，暂停在认证状态，向用户请求通过安全渠道提供或手动输入；
+3. 如果自动化脚本要求 `CLUSTER_PWD`，在启动该脚本的同一个 shell 环境中安全注入密码（见下文），而不是把密码写进命令行或源码；
 4. 如果只是 SSH 密码提示，使用用户在终端中的交互输入；
 5. 二次认证由用户完成时，agent 等待认证完成，不重复创建多个 SSH 会话。
+
+### 2.1 为 `remote_yundun.py` 安全注入 `CLUSTER_PWD`
+
+如果 agent 输出类似：
+
+```text
+[err] set CLUSTER_PWD
+```
+
+说明脚本只检查到了空环境变量，还没有开始连接。请在**运行 agent/脚本的同一个终端进程**中执行下面的交互式输入（不要在命令历史中写明口令）：
+
+Linux、WSL 或远程 shell：
+
+```bash
+read -r -s -p 'Cluster password: ' CLUSTER_PWD
+printf '\\n'
+export CLUSTER_PWD
+test -n "$CLUSTER_PWD" && echo 'CLUSTER_PWD is set (value hidden)'
+```
+
+然后在同一个 shell 中运行：
+
+```bash
+python remote_yundun.py ...
+```
+
+任务结束后清除环境变量：
+
+```bash
+unset CLUSTER_PWD
+```
+
+Windows PowerShell：
+
+```powershell
+$secure = Read-Host 'Cluster password' -AsSecureString
+$ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+try {
+    $env:CLUSTER_PWD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+} finally {
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+}
+if ($env:CLUSTER_PWD) { Write-Output 'CLUSTER_PWD is set (value hidden)' }
+python remote_yundun.py ...
+Remove-Item Env:CLUSTER_PWD
+```
+
+`CLUSTER_PWD` 的值应由用户根据当前集群认证要求提供；不能由 agent 从仓库、GitHub 密码或旧日志推导。若交互式 SSH 使用的密码与集群认证密码是同一套凭据，用户可以在提示时输入同一凭据；若平台要求两套密码，则必须分别按提示提供。
+
+不要使用以下不安全方式：
+
+```bash
+export CLUSTER_PWD='真实口令'       # 会进入 shell history 或进程审计
+python remote_yundun.py --password '真实口令'  # 可能泄露到 argv/日志
+```
+
+如果 agent 不能继承你设置的环境变量，说明你是在另一个终端、另一个 IDE task 或另一个进程中设置的；必须在启动 agent 的父 shell 中设置，或让脚本本身通过 `getpass`/安全凭据接口读取。
 
 ## 3. 入口选择
 
@@ -398,4 +460,3 @@ agent 应确认 SSH channel 已关闭，并清理本地内存中的密码变量�
 - [rollout 评测记录](walkernet_rollout_accuracy_record.md)
 - [Pacific delayed-onset CNOP 计划](cnop_pacific_delayed_onset_plan.md)
 - [Global delayed-onset CNOP 计划](cnop_global_delayed_onset_plan.md)
-
