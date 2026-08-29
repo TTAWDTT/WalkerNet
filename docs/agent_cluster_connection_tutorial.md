@@ -116,6 +116,45 @@ python remote_yundun.py --password '真实口令'  # 可能泄露到 argv/日志
 
 如果 agent 不能继承你设置的环境变量，说明你是在另一个终端、另一个 IDE task 或另一个进程中设置的；必须在启动 agent 的父 shell 中设置，或让脚本本身通过 `getpass`/安全凭据接口读取。
 
+### 2.2 为什么旧的临时脚本不需要 `CLUSTER_PWD`
+
+项目此前成功连接 GPU 节点时，使用的是一次性的 Paramiko 或原生 `ssh -tt` 脚本，而不是 `remote_yundun.py`。这类脚本的认证接口通常是：
+
+```text
+Paramiko: client.connect(..., password=<运行时提供的密码>)
+原生 SSH: ssh -tt ... → 等待 password: → 交互发送密码
+```
+
+认证后再使用 `invoke_shell()`/TTY，完成 GateShell 的 node/container 选择。因此它们没有读取 `CLUSTER_PWD`，也不会出现 `[err] set CLUSTER_PWD`。
+
+这解释了为什么“我之前能连上”与“现在的 `remote_yundun.py` 直接退出”可以同时成立：它们是两个不同的脚本接口。
+
+旧脚本的成功路径可以概括为：
+
+```text
+SSH/Paramiko 连接 yundun:60022
+  → invoke_shell() 或 ssh -tt
+  → 等待 GateShell 菜单
+  → 选择目标节点和容器
+  → stty -echo
+  → hostname / nvidia-smi
+```
+
+这类临时脚本不应作为长期凭据管理方案。尤其不要复用把密码写死在源码中的旧副本；应改成 `getpass`、SSH agent 或外部秘密管理器，并在任务完成后清理临时文件和环境变量。
+
+如果可以修改 `remote_yundun.py`，更友好的接口是“环境变量优先、环境变量为空时交互式回退”：
+
+```python
+import getpass
+import os
+
+cluster_pwd = os.environ.get("CLUSTER_PWD")
+if not cluster_pwd:
+    cluster_pwd = getpass.getpass("Cluster password: ")
+```
+
+这样脚本仍支持自动化环境注入，同时不会因为变量未预先设置而在连接前无条件退出；密码仍不会出现在命令行参数或日志中。
+
 ## 3. 入口选择
 
 ### 3.1 `osm` 入口：node 2 → container 1（已验证流程）
