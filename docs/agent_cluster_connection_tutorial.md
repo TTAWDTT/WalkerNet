@@ -116,6 +116,22 @@ python remote_yundun.py --password '真实口令'  # 可能泄露到 argv/日志
 
 如果 agent 不能继承你设置的环境变量，说明你是在另一个终端、另一个 IDE task 或另一个进程中设置的；必须在启动 agent 的父 shell 中设置，或让脚本本身通过 `getpass`/安全凭据接口读取。
 
+### 2.1.1 无 TTY 的 agent 工具不能使用 `getpass`
+
+许多 Codex/CI/自动化 Bash 工具默认以非交互方式执行命令，没有 TTY。此时：
+
+- `getpass.getpass()` 没有可用的终端输入，可能挂起、超时或立即失败；
+- 在你自己的 Windows Terminal/WSL 窗口执行 `export CLUSTER_PWD=...` 不会改变已经运行的 agent 进程；
+- agent 不能从聊天内容自动取得你在终端中输入的口令；
+- `remote_yundun.py` 的“变量为空就退出”与“getpass 回退”都不能在无 TTY 且无环境注入的情况下自动认证。
+
+无 TTY 环境只有两条安全路径：
+
+1. **在启动 agent 的父进程中注入环境变量**：先在同一个 shell 中安全读取并导出 `CLUSTER_PWD`，再从该 shell 启动 agent/脚本；如果是桌面应用，必须在设置变量后重新启动应用，使子进程继承变量；
+2. **为命令分配 PTY**：让 agent 使用支持 `tty=true` 的执行接口启动连接脚本，拿到交互式 session 后由用户在该 session 的密码提示处输入。
+
+如果当前 agent 平台既不能注入秘密环境变量，也不能分配 PTY，则不存在“仅靠 agent 自己自动获取密码”的安全办法；此时只能由用户手动 SSH，或先在平台侧配置受控的 credential broker。不要把口令写入脚本、命令参数、仓库、聊天消息或普通日志。
+
 ### 2.2 为什么旧的临时脚本不需要 `CLUSTER_PWD`
 
 项目此前成功连接 GPU 节点时，使用的是一次性的 Paramiko 或原生 `ssh -tt` 脚本，而不是 `remote_yundun.py`。这类脚本的认证接口通常是：
