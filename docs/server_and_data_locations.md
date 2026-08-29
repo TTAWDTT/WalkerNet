@@ -2,6 +2,8 @@
 
 本文档记录 WalkerNet 项目的远程登录路径、节点用途、数据/模型/缓存位置，以及本地结果和绘图脚本位置。
 
+如果需要按 agent 状态机复现登录，请先阅读：[WalkerNet 集群连接教程（面向 Agent）](agent_cluster_connection_tutorial.md)。
+
 > 更新时间：2026-08-28  
 > 安全说明：本文档不保存堡垒机密码、SSH 密钥、GitHub token 或其他凭据。认证信息应通过交互式输入、SSH agent 或个人安全凭据管理器提供。
 
