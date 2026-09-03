@@ -1,0 +1,1 @@
+Global equirectangular TOS map from one CESM2 WalkerNet training sample with thin 4-degree latitude and longitude grid lines. The grid contains 45 latitude cells by 90 longitude cells, matching 4x4 spatial patches.

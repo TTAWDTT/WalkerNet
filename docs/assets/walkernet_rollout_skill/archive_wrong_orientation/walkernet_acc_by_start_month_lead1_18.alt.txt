@@ -1,0 +1,1 @@
+Twelve small multiples show WalkerNet monthly Nino3.4 anomaly ACC versus lead month, one panel for each forecast start month from January through December. Red markers are saved lead values and the red curves are shape-preserving PCHIP display interpolations; gray dashed lines mark ACC=0.5. All panels use y=[0,1].

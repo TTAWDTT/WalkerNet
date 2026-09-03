@@ -19,7 +19,8 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
+from scipy.ndimage import zoom
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -42,11 +43,42 @@ from src.dataset import WalkerDataset  # noqa: E402
 from src.utils import load_config  # noqa: E402
 
 
-TOS_CMAP = LinearSegmentedColormap.from_list(
-    "overview_tos",
-    ["#4B56A6", "#8FC7D9", "#F7F3D0", "#F0A35A", "#B61732"],
-    N=256,
-)
+# Use the same blue--pale-yellow--orange/red diverging palette as the supplied
+# reference figure for *all* four overview columns, including initial delta.
+# Keeping one global cmap prevents the perturbation panel from looking like a
+# different variable solely because it was plotted with another palette.
+TOS_CMAP = mpl.colormaps["RdYlBu_r"]
+
+
+def lighten_cmap(cmap: mpl.colors.Colormap, amount: float = 0.18) -> mpl.colors.Colormap:
+    """Blend a display colormap toward white without changing field values."""
+
+    colors = cmap(np.linspace(0.0, 1.0, 256))
+    colors[:, :3] = colors[:, :3] * (1.0 - amount) + amount
+    return mpl.colors.ListedColormap(colors, name=f"{cmap.name}_light")
+
+
+def interpolate_field(
+    lon: np.ndarray, lat: np.ndarray, field: np.ndarray, factor: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Densify a display field without changing metric computations."""
+
+    factor = max(1, int(factor))
+    if factor == 1:
+        return lon, lat, field
+    values = np.asarray(field, dtype=float)
+    valid = np.isfinite(values)
+    up_values = zoom(np.where(valid, values, 0.0), (factor, factor), order=3, mode="nearest", prefilter=True)
+    up_weights = zoom(valid.astype(float), (factor, factor), order=1, mode="nearest")
+    # Keep valid ocean values close to coastlines.  A strict threshold here
+    # creates a second, artificial NaN halo around the land mask after the
+    # display-only upsampling.  The source mask still controls genuinely
+    # invalid cells; using a small weight threshold only rejects pixels with
+    # no valid support at all.
+    up_field = np.divide(up_values, up_weights, out=np.full_like(up_values, np.nan), where=up_weights > 0.05)
+    up_lon = np.linspace(float(lon[0]), float(lon[-1]), up_field.shape[1])
+    up_lat = np.linspace(float(lat[0]), float(lat[-1]), up_field.shape[0])
+    return up_lon, up_lat, up_field
 
 
 def parse_args() -> argparse.Namespace:
@@ -67,6 +99,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--split", type=str, default="test")
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--candidate-rank", type=int, default=1)
+    parser.add_argument(
+        "--initial-cmap",
+        choices=("overview_tos", "RdBu_r"),
+        default="overview_tos",
+        help="Color map for the initial perturbation column; overview_tos shares the forecast-panel palette.",
+    )
     parser.add_argument(
         "--layout",
         choices=("four", "three"),
@@ -97,8 +135,43 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--climatology-batch-size", type=int, default=2)
     parser.add_argument("--trained-rollout-steps", type=int, default=0)
     parser.add_argument("--smooth-sigma", type=float, default=0.8)
+    parser.add_argument(
+        "--initial-smooth-sigma",
+        type=float,
+        default=2.4,
+        help="Additional display-only Gaussian smoothing for the initial perturbation column.",
+    )
+    parser.add_argument(
+        "--initial-lighten",
+        type=float,
+        default=0.20,
+        help="Blend amount toward white for the initial perturbation colormap.",
+    )
+    parser.add_argument(
+        "--contour-levels",
+        type=int,
+        default=31,
+        help="Number of continuous contour intervals used for all map fields (higher values reduce color banding).",
+    )
+    parser.add_argument(
+        "--draw-contours",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Draw the zero contour over map fields (disabled by default for smooth gradient rendering).",
+    )
+    parser.add_argument(
+        "--interpolation-factor",
+        type=int,
+        default=8,
+        help="Display-only bicubic interpolation factor applied after smoothing.",
+    )
     parser.add_argument("--tos-vmax", type=float, default=None, help="Fixed symmetric SSTA color limit.")
-    parser.add_argument("--delta-vmax", type=float, default=None, help="Fixed symmetric initial-perturbation color limit.")
+    parser.add_argument(
+        "--delta-vmax",
+        type=float,
+        default=1.5,
+        help="Fixed symmetric initial-perturbation color limit (default: +/-1.5 TOS).",
+    )
     parser.add_argument(
         "--initial-map-extent",
         type=str,
@@ -155,7 +228,13 @@ def read_manifest_rows(manifest_path: Path, max_cases: int) -> list[dict[str, st
             matches = [
                 row
                 for row in csv.DictReader(handle)
-                if row["source"] == source and int(row["target_year"]) == year
+                if row["source"] == source
+                and int(row["target_year"]) == year
+                # Formal summaries contain one row per basin. The historical
+                # Pacific overview manifest should resolve the Pacific row
+                # while remaining compatible with summary files without a
+                # domain column.
+                and row.get("domain", "pacific").lower() == "pacific"
             ]
         if len(matches) != 1:
             raise ValueError(f"Expected one summary row for {source} {year} in {cnop_dir}, found {len(matches)}")
@@ -247,7 +326,23 @@ def monthly_tos_climatology(dataset: WalkerDataset, source_idx: int, month: int)
     if not np.any(mask):
         source = dataset.source_names[source_idx]
         raise ValueError(f"No climatology samples for source={source} month={month}")
-    return np.nanmean(np.asarray(payload["data"][mask, 0], dtype=np.float32), axis=0)
+    # Avoid a large fancy-indexed memmap copy (roughly 40 MB per call on the
+    # 1-degree grid).  Chunked accumulation is numerically equivalent to
+    # nanmean for this display-only climatology and keeps redraws viable when
+    # other local GPU/desktop processes are using the commit limit.
+    selected = np.flatnonzero(mask)
+    data = payload["data"]
+    height, width = data.shape[-2:]
+    total = np.zeros((height, width), dtype=np.float64)
+    count = np.zeros((height, width), dtype=np.int64)
+    for offset in range(0, len(selected), 32):
+        chunk = np.asarray(data[selected[offset : offset + 32], 0], dtype=np.float32)
+        finite = np.isfinite(chunk)
+        total += np.where(finite, chunk, 0.0).sum(axis=0, dtype=np.float64)
+        count += finite.sum(axis=0, dtype=np.int64)
+    result = np.full((height, width), np.nan, dtype=np.float32)
+    np.divide(total, count, out=result, where=count > 0)
+    return result
 
 
 def valid_climatology_starts(dataset: WalkerDataset, source_idx: int, horizon: int, mode: str, split: str) -> list[int]:
@@ -537,7 +632,12 @@ def main() -> None:
         baseline_nino = float(compute_nino34_numpy(baseline_tos[None], lat, lon)[0])
         perturbed_nino = float(compute_nino34_numpy(perturbed_tos[None], lat, lon)[0])
 
-        perturb_tos = apply_ocean_mask(perturb_tos, tos_valid)
+        # The CNOP files explicitly store zero perturbation on land and
+        # outside the constrained basin.  Keep those physical zeros for the
+        # initial-delta panel instead of converting them to NaN: masking them
+        # was the source of the apparent blank strips at the map boundaries.
+        # The forecast/truth fields below remain ocean-masked as before.
+        perturb_tos = np.asarray(perturb_tos, dtype=np.float32)
         response_tos = apply_ocean_mask(response_tos, tos_valid)
         truth_tos = apply_ocean_mask(truth_tos, tos_valid)
         baseline_tos = apply_ocean_mask(baseline_tos, tos_valid)
@@ -582,10 +682,12 @@ def main() -> None:
         perturb_vmax = float(args.delta_vmax)
     if args.tos_vmax is not None:
         tos_vmax = float(args.tos_vmax)
-    perturb_levels = np.linspace(-perturb_vmax, perturb_vmax, 25)
-    response_levels = np.linspace(-response_vmax, response_vmax, 25)
-    tos_levels = np.linspace(-tos_vmax, tos_vmax, 31)
+    contour_levels = max(31, int(args.contour_levels))
+    perturb_levels = np.linspace(-perturb_vmax, perturb_vmax, contour_levels)
+    response_levels = np.linspace(-response_vmax, response_vmax, contour_levels)
+    tos_levels = np.linspace(-tos_vmax, tos_vmax, contour_levels)
     tos_label = "SSTA" if args.tos_mode == "anomaly" else "TOS"
+    initial_cmap = TOS_CMAP if args.initial_cmap == "overview_tos" else mpl.colormaps["RdBu_r"]
 
     if args.layout == "three":
         fig, axes = plt.subplots(
@@ -597,7 +699,7 @@ def main() -> None:
         fig.subplots_adjust(left=0.115, right=0.91, top=0.955, bottom=0.055, wspace=0.045, hspace=0.11)
         col_titles = (
             f"Observed lead-{args.lead_month} {tos_label}",
-            f"Baseline lead-{args.lead_month} {tos_label}",
+            f"Predicted lead-{args.lead_month} {tos_label}",
             f"Perturbed lead-{args.lead_month} {tos_label}",
         )
         tos_mappable = None
@@ -615,15 +717,22 @@ def main() -> None:
                     show_xticks=row_idx == nrows - 1,
                     show_yticks=col_idx == 0,
                 )
-                tos_mappable = ax.contourf(
-                    lon,
-                    lat,
-                    field,
-                    levels=tos_levels,
-                    cmap=TOS_CMAP,
-                    extend="both",
+                display_field = field
+                plot_lon, plot_lat, plot_field = interpolate_field(
+                    lon, lat, display_field, args.interpolation_factor
                 )
-                ax.contour(lon, lat, field, levels=[0.0], colors="#263238", linewidths=0.22, alpha=0.5)
+                tos_mappable = ax.imshow(
+                    np.ma.masked_invalid(plot_field),
+                    origin="lower",
+                    extent=(float(plot_lon[0]), float(plot_lon[-1]), float(plot_lat[0]), float(plot_lat[-1])),
+                    cmap=TOS_CMAP,
+                    norm=TwoSlopeNorm(vmin=float(tos_levels[0]), vcenter=0.0, vmax=float(tos_levels[-1])),
+                    interpolation="bicubic",
+                    aspect="auto",
+                    zorder=0,
+                )
+                if args.draw_contours:
+                    ax.contour(lon, lat, field, levels=[0.0], colors="#263238", linewidths=0.22, alpha=0.5)
                 add_nino34_box(ax)
                 if row_idx == 0:
                     ax.set_title(col_titles[col_idx], pad=3)
@@ -647,9 +756,9 @@ def main() -> None:
     tos_label = "SSTA" if args.tos_mode == "anomaly" else "TOS"
     second_title = f"Observed lead-{args.lead_month} {tos_label}" if args.second_column == "truth" else f"Lead-{args.lead_month} TOS response"
     col_titles = (
-        "Initial delta TOS",
+        "CNOP",
         second_title,
-        f"Baseline lead-{args.lead_month} {tos_label}",
+        f"Predicted lead-{args.lead_month} {tos_label}",
         f"Perturbed lead-{args.lead_month} {tos_label}",
     )
     mappables = [None, None, None]
@@ -660,12 +769,13 @@ def main() -> None:
         row_label = f"{item['source']} {item['year']}{scale_label}\n{item['label']}"
         second_field = item["truth"] if args.second_column == "truth" else item["response"]
         fields = (item["perturb"], second_field, item["baseline"], item["perturbed"])
-        if args.second_column == "truth":
-            levels = (perturb_levels, tos_levels, tos_levels, tos_levels)
-            cmaps = ("RdBu_r", TOS_CMAP, TOS_CMAP, TOS_CMAP)
-        else:
-            levels = (perturb_levels, response_levels, tos_levels, tos_levels)
-            cmaps = ("RdBu_r", "RdBu_r", TOS_CMAP, TOS_CMAP)
+        # All four panels are TOS-like fields in the same physical units.  Use
+        # one common symmetric norm and one palette so their colors are
+        # directly comparable and a single colorbar is sufficient.
+        common_vmax = max(perturb_vmax, tos_vmax, response_vmax if args.second_column == "response" else 0.0)
+        common_norm = TwoSlopeNorm(vmin=-float(common_vmax), vcenter=0.0, vmax=float(common_vmax))
+        levels = (perturb_levels, response_levels, tos_levels, tos_levels)
+        cmaps = (initial_cmap, TOS_CMAP, TOS_CMAP, TOS_CMAP)
         for col_idx in range(4):
             ax = axes[row_idx, col_idx]
             if col_idx == 0:
@@ -677,8 +787,33 @@ def main() -> None:
                 )
             else:
                 setup_axis(ax, show_xticks=row_idx == nrows - 1, show_yticks=False)
-            mappable = ax.contourf(lon, lat, fields[col_idx], levels=levels[col_idx], cmap=cmaps[col_idx], extend="both")
-            ax.contour(lon, lat, fields[col_idx], levels=[0.0], colors="#263238", linewidths=0.22, alpha=0.5)
+            display_field = (
+                smooth_field(fields[col_idx], args.initial_smooth_sigma)
+                if col_idx == 0 else fields[col_idx]
+            )
+            plot_lon, plot_lat, plot_field = interpolate_field(
+                lon, lat, display_field, args.interpolation_factor
+            )
+            if col_idx == 0:
+                # Zero perturbation outside the constrained Pacific is real
+                # data, not missing data.  Keep it in the continuous norm.
+                # Use the exact same cmap as the forecast panels so the one
+                # shared colorbar has identical meaning in every column.
+                display_cmap = initial_cmap.with_extremes(bad="#D9DEE3")
+            else:
+                display_cmap = cmaps[col_idx]
+            mappable = ax.imshow(
+                np.ma.masked_invalid(plot_field),
+                origin="lower",
+                extent=(float(plot_lon[0]), float(plot_lon[-1]), float(plot_lat[0]), float(plot_lat[-1])),
+                cmap=display_cmap,
+                norm=common_norm,
+                interpolation="bicubic",
+                aspect="auto",
+                zorder=0,
+            )
+            if args.draw_contours:
+                ax.contour(lon, lat, fields[col_idx], levels=[0.0], colors="#263238", linewidths=0.22, alpha=0.5)
             if col_idx != 0 or initial_map_extent is None:
                 add_nino34_box(ax)
             if row_idx == 0:
@@ -695,12 +830,10 @@ def main() -> None:
                 nino_value = item["baseline_nino"] if col_idx == 2 else item["perturbed_nino"]
                 add_panel_label(ax, f"Nino3.4={nino_value:+.2f}")
 
-    cb_delta_ax = fig.add_axes([0.945, 0.69, 0.011, 0.22])
-    cb_resp_ax = fig.add_axes([0.945, 0.405, 0.011, 0.22])
-    cb_tos_ax = fig.add_axes([0.945, 0.12, 0.011, 0.22])
-    fig.colorbar(mappables[0], cax=cb_delta_ax).set_label("delta TOS", fontsize=7)
-    fig.colorbar(mappables[1], cax=cb_resp_ax).set_label(f"truth {tos_label}" if args.second_column == "truth" else "response", fontsize=7)
-    fig.colorbar(mappables[2], cax=cb_tos_ax).set_label(tos_label, fontsize=7)
+    # All four columns now use the same norm and palette, so one shared
+    # colorbar communicates the scale without duplicating legends.
+    cb_ax = fig.add_axes([0.945, 0.14, 0.011, 0.72])
+    fig.colorbar(mappables[0], cax=cb_ax).set_label("TOS / SSTA", fontsize=7)
 
     fig.suptitle(f"Rank-{args.candidate_rank} CNOP cases: lead-{args.lead_month} {tos_label} and Nino3.4", fontsize=10, y=0.992)
     args.output.parent.mkdir(parents=True, exist_ok=True)

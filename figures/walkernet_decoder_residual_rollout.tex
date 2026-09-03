@@ -1,0 +1,111 @@
+
+\documentclass[border=8pt, multi, tikz]{standalone} 
+\usepackage{import}
+\subimport{plotneuralnet_layers/}{init}
+\usetikzlibrary{positioning}
+\usetikzlibrary{3d} %for including external image 
+\usetikzlibrary{calc}
+\def\ConvColor{rgb:yellow,5;red,2.5;white,5}
+\def\ConvReluColor{rgb:yellow,5;red,5;white,5}
+\def\PoolColor{rgb:red,1;black,0.3}
+\def\UnpoolColor{rgb:blue,2;green,1;black,0.3}
+\def\FcColor{rgb:blue,5;red,2.5;white,5}
+\def\FcReluColor{rgb:blue,5;red,5;white,4}
+\def\SoftmaxColor{rgb:magenta,5;black,7}   
+\def\SumColor{rgb:blue,5;green,15}
+
+\newcommand{\copymidarrow}{\tikz \draw[-Stealth,line width=0.8mm,draw={rgb:blue,4;red,1;green,1;black,3}] (-0.3,0) -- ++(0.3,0);}
+
+\begin{document}
+\begin{tikzpicture}
+\tikzstyle{connection}=[ultra thick,every node/.style={sloped,allow upside down},draw=\edgecolor,opacity=0.7]
+\tikzstyle{copyconnection}=[ultra thick,every node/.style={sloped,allow upside down},draw={rgb:blue,4;red,1;green,1;black,3},opacity=0.7]
+
+\pic[shift={(0,0,0)}] at (0,0,0) 
+    {Box={
+        name=history0,
+        caption=History,
+        fill=\ConvColor,
+        height=8.0,
+        width=1.45,
+        depth=8.0
+        }
+    };
+
+\pic[shift={ (3.4,0,0) }] at (0,0,0) 
+    {RightBandedBox={
+        name=model,
+        caption=Model,
+        fill=\ConvColor,
+        bandfill=\ConvReluColor,
+        height=8.5,
+        width={ 1.75 , 1.05 },
+        depth=8.5
+        }
+    };
+
+\draw [connection]  (history0-east)    -- node {\midarrow} (model-west);
+
+\pic[shift={(4.15,2.15,0)}] at (0,0,0) 
+    {Box={
+        name=condition,
+        caption= ,
+        fill=\SoftmaxColor,
+        opacity=0.8,
+        height=2.1,
+        width=1.15,
+        depth=3.5
+        }
+    };
+\draw [connection] (condition-south) -- (model-north);\node[font=\scriptsize,text=black!65] at (4.15,3.55) {target month / rollout step};
+\pic[shift={(6.8,0,0)}] at (0,0,0) 
+    {Box={
+        name=delta,
+        caption=dy,
+        fill=\ConvColor,
+        height=7.5,
+        width=1.05,
+        depth=7.5
+        }
+    };
+
+\draw [connection]  (model-east)    -- node {\midarrow} (delta-west);
+
+\pic[shift={(9.35,0,0)}] at (0,0,0) 
+    {Ball={
+        name=add,
+        fill=\SumColor,
+        opacity=0.85,
+        radius=1.25,
+        logo=$+$
+        }
+    };
+
+\draw [connection]  (delta-east)    -- node {\midarrow} (add-west);
+
+\pic[shift={(11.55,0,0)}] at (0,0,0) 
+    {Box={
+        name=pred,
+        caption=Forecast,
+        fill=\ConvColor,
+        height=8.5,
+        width=1.5,
+        depth=8.5
+        }
+    };
+
+\draw [connection]  (add-east)    -- node {\midarrow} (pred-west);
+
+\pic[shift={(7.9,-2.25,0)}] at (0,0,0) 
+    {Box={
+        name=xlast,
+        caption= ,
+        fill=\ConvColor,
+        height=3.8,
+        width=1.2,
+        depth=3.8
+        }
+    };
+\node[font=\small\bfseries] at (7.15,-2.25) {$x_{last}$};\draw [copyconnection,-Stealth] (xlast-east) .. controls +(1.0,-0.2) and +(-0.5,-0.8) .. (add-south);\node[font=\small\bfseries,text=black!60] at (9.0,-4.05) {Autoregressive rollout};\tikzset{rollbox/.style={draw=black!35,fill=blue!4,rounded corners=2pt,align=center,font=\small,minimum width=2.15cm,minimum height=0.7cm,inner sep=3pt}}\node[rollbox] (w0) at (0.8,-5.05) {$X_k=[x_{k-11},...,x_k]$};\node[rollbox] (m1) at (4.0,-5.05) {$f_\theta$};\node[rollbox] (p1) at (7.2,-5.05) {$\hat{x}_{k+1}$};\node[rollbox] (w1) at (10.4,-5.05) {$X_{k+1}$};\node[rollbox] (m2) at (13.6,-5.05) {$f_\theta$};\node[rollbox] (p2) at (16.8,-5.05) {$\hat{x}_{k+2}$};\node[font=\Large\bfseries] (more) at (19.5,-5.05) {$\cdots$};\draw[-Stealth,thick,draw=black!60] (w0.east) -- (m1.west);\draw[-Stealth,thick,draw=black!60] (m1.east) -- (p1.west);\draw[-Stealth,thick,draw=black!60] (p1.east) -- node[above,font=\scriptsize,sloped=false] {append / drop oldest} (w1.west);\draw[-Stealth,thick,draw=black!60] (w1.east) -- (m2.west);\draw[-Stealth,thick,draw=black!60] (m2.east) -- (p2.west);\draw[-Stealth,thick,draw=black!60] (p2.east) -- (more.west);\node[font=\scriptsize,text=black!65] at (10.4,-6.05) {same 12-month length; target month and rollout step advance};\node[font=\Large\bfseries] at (9.0,5.6) {Autoregressive Rollout};\node[font=\large] at (9.0,4.95) {one residual forecast followed by a deterministic window update};\node[font=\small] at (9.0,4.35) {$\hat{x}_{k+1}=x_{last}+\Delta y_{k+1}$};
+\end{tikzpicture}
+\end{document}

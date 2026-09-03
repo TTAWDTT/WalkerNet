@@ -1,0 +1,1 @@
+Two-panel contour plot of Nino3.4 ACC indexed by forecast start month and end month. The left panel is WalkerNet and the right panel is persistence; both use the same ACC color scale from -0.5 to 1.0. The displayed contours are interpolated from saved 12x12 matrices.

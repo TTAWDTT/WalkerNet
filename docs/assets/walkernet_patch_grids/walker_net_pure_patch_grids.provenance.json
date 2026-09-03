@@ -1,0 +1,16 @@
+{
+  "type": "pure geometric grid diagram",
+  "data_field": "none",
+  "aspect_ratio": "2:1 rectangle",
+  "dense": "45x90 = 4050 cells",
+  "coarse": "23x44 = 1012 cells, approximately one quarter of 4050",
+  "palette": {
+    "grid": "#225EA8",
+    "alternate_cell": "#FFF0A8",
+    "background": "#FFF8D8"
+  },
+  "outputs": [
+    "walker_net_pure_grid_45x90.png",
+    "walker_net_pure_grid_23x44.png"
+  ]
+}

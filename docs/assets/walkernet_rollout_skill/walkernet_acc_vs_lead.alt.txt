@@ -1,0 +1,1 @@
+Line chart of WalkerNet Nino3.4 anomaly ACC from lead 1 to 36. The solid red line shows a shape-preserving PCHIP display curve through the saved monthly ACC points, and the dashed red line does the same for three-month mean ACC; markers show the saved lead values. A horizontal dashed line marks ACC=0.5. The interpolation is display-only and does not replace the saved lead values.
