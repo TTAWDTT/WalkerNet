@@ -15,6 +15,7 @@ Example:
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import json
 import math
@@ -36,6 +37,7 @@ from src.dataset import WalkerDataset
 from src.metrics import compute_nino34
 from src.model import WalkerNet
 from src.utils import load_config, set_seed
+from scripts.cnop.basin_domains import torch_basin_region
 
 
 VARIABLES = ("tos", "zos", "tauu", "tauv")
@@ -73,8 +75,45 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--horizon", type=int, default=12, help="Rollout months for the CNOP objective.")
     parser.add_argument("--steps", type=int, default=80, help="Projected-gradient optimization steps per case.")
     parser.add_argument("--lr", type=float, default=0.08)
+    parser.add_argument(
+        "--optimizer-mode",
+        type=str,
+        default="adam",
+        choices=("adam", "accepted_adam"),
+        help=(
+            "adam reproduces the original projected Adam search. accepted_adam "
+            "keeps an update only when the unregularized CNOP objective does not decrease."
+        ),
+    )
+    parser.add_argument(
+        "--acceptance-tolerance",
+        type=float,
+        default=0.0,
+        help="Allowed objective decrease when --optimizer-mode=accepted_adam.",
+    )
+    parser.add_argument(
+        "--backtrack-factor",
+        type=float,
+        default=0.5,
+        help="Learning-rate multiplier after an objective-rejected Adam proposal.",
+    )
+    parser.add_argument(
+        "--min-lr",
+        type=float,
+        default=1.0e-5,
+        help="Minimum learning rate used by accepted_adam backtracking.",
+    )
     parser.add_argument("--num-starts", type=int, default=16, help="Number of initial perturbations optimized per case.")
     parser.add_argument("--start-index-offset", type=int, default=0, help="Global start-index offset used by parallel shards.")
+    parser.add_argument(
+        "--warm-start-npz",
+        action="append",
+        default=[],
+        help=(
+            "Optional regional CNOP NPZ used to initialize a broader-domain search. "
+            "Repeat this option to add multiple structures; their mixtures are generated automatically."
+        ),
+    )
     parser.add_argument("--top-k", type=int, default=5, help="Number of locally optimal CNOP candidates saved per case.")
     parser.add_argument(
         "--candidate-max-cosine-similarity",
@@ -118,7 +157,7 @@ def parse_args() -> argparse.Namespace:
         "--basin-lat-bounds",
         type=str,
         default="-60,60",
-        help="Latitude range used by Pacific and Atlantic-Indian basin-sector masks.",
+        help="Common latitude range used by Pacific, Atlantic-Indian, and global basin masks.",
     )
     parser.add_argument(
         "--objective-mode",
@@ -321,28 +360,12 @@ def build_domain_mask(
     lat = torch.as_tensor(payload["lat"], dtype=torch.float32, device=device)
     lon = torch.as_tensor(payload["lon"], dtype=torch.float32, device=device)
     lon_360 = torch.remainder(lon, 360.0)
-    if domain == "global":
-        region = torch.ones((lat.numel(), lon.numel()), dtype=torch.bool, device=device)
-    elif domain == "tropical_pacific":
+    if domain == "tropical_pacific":
         lat_mask = (lat >= lat_bounds[0]) & (lat <= lat_bounds[1])
         lon_mask = (lon_360 >= lon_bounds[0]) & (lon_360 <= lon_bounds[1])
         region = lat_mask[:, None] & lon_mask[None, :]
     else:
-        # Transparent longitude-sector definitions keep the basin experiments
-        # reproducible without a runtime dependency on external shapefiles.
-        lat_mask = (lat >= basin_lat_bounds[0]) & (lat <= basin_lat_bounds[1])
-        pacific_lon = (lon_360 >= 120.0) & (lon_360 <= 290.0)
-        if domain == "pacific":
-            lon_mask = pacific_lon
-        elif domain == "indian":
-            # Indian Ocean sector: 20E-120E, restricted to the common basin
-            # latitude band. This excludes the Atlantic for a clean comparison.
-            lon_mask = (lon_360 >= 20.0) & (lon_360 < 120.0)
-        else:
-            # Complement of the Pacific sector, retained for the historical
-            # Atlantic+Indian diagnostic mode.
-            lon_mask = ~pacific_lon
-        region = lat_mask[:, None] & lon_mask[None, :]
+        region = torch_basin_region(lat, lon, domain, basin_lat_bounds)
 
     valid = dataset.source_payloads[case.source_idx]["valid_mask"][:2].to(device=device, dtype=torch.bool)
     return (valid & region[None]).unsqueeze(0)
@@ -512,6 +535,12 @@ def cnop_objective(nino_anom: torch.Tensor, baseline_nino: torch.Tensor, args: a
     return temp * torch.logsumexp(rolling / temp, dim=0)
 
 
+def accepts_objective_update(current_objective: float, trial_objective: float, tolerance: float = 0.0) -> bool:
+    """Whether a proposed projected update preserves the declared CNOP objective."""
+
+    return float(trial_objective) + float(tolerance) >= float(current_objective)
+
+
 def initialize_delta_param(
     shape: tuple[int, int, int, int],
     x0: torch.Tensor,
@@ -523,11 +552,17 @@ def initialize_delta_param(
     start_idx: int,
     seed: int,
     case: NeutralCase,
+    initial_delta: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """初始化一个候选扰动；start 0 从零开始，其余 start 随机初始化。"""
 
     delta_param = torch.zeros(shape, dtype=x0.dtype, device=x0.device)
-    if start_idx > 0 and float(args.random_init_scale) > 0:
+    if initial_delta is not None:
+        initial = initial_delta.to(device=x0.device, dtype=x0.dtype)
+        if initial.ndim == 3:
+            initial = initial.unsqueeze(0)
+        delta_param.copy_(F.interpolate(initial, size=shape[-2:], mode="bilinear", align_corners=False))
+    elif start_idx > 0 and float(args.random_init_scale) > 0:
         generator = torch.Generator(device=x0.device)
         generator.manual_seed(int(seed))
         delta_param.normal_(mean=0.0, std=float(args.random_init_scale), generator=generator)
@@ -613,8 +648,10 @@ def optimize_single_start(
     eps: tuple[float, float],
     start_idx: int,
     seed: int,
+    initial_delta: torch.Tensor | None = None,
+    init_label: str = "random",
 ) -> dict[str, Any]:
-    """从一个初值出发做 projected Adam，上山寻找一个局部 CNOP。"""
+    """从一个初值出发做受约束的局地 CNOP 搜索。"""
 
     delta_param = initialize_delta_param(
         (1, 2, param_hw[0], param_hw[1]),
@@ -627,9 +664,14 @@ def optimize_single_start(
         start_idx,
         seed,
         case,
+        initial_delta,
     )
     optimizer = torch.optim.Adam([delta_param], lr=float(args.lr))
     history: list[dict[str, float]] = []
+    best_objective = -float("inf")
+    best_delta_param = delta_param.detach().clone()
+    rejected_steps = 0
+    accepted_steps = 0
 
     for step in range(1, int(args.steps) + 1):
         optimizer.zero_grad(set_to_none=True)
@@ -652,7 +694,13 @@ def optimize_single_start(
         )
         penalty = smoothness_penalty(delta, mask) * float(args.smoothness_weight)
         loss = -metrics["objective"] + penalty
+        objective_value = float(metrics["objective"].detach().cpu().item())
+        if objective_value > best_objective:
+            best_objective = objective_value
+            best_delta_param = delta_param.detach().clone()
         loss.backward()
+        previous_param = delta_param.detach().clone()
+        previous_optimizer_state = copy.deepcopy(optimizer.state_dict()) if args.optimizer_mode == "accepted_adam" else None
         optimizer.step()
         project_delta_param(
             delta_param,
@@ -667,6 +715,41 @@ def optimize_single_start(
             case=case,
         )
 
+        accepted = True
+        if args.optimizer_mode == "accepted_adam":
+            with torch.no_grad():
+                trial_delta = expand_delta(delta_param, target_hw, args.perturb_grid)
+                trial_metrics = evaluate_delta(
+                    model,
+                    dataset,
+                    case,
+                    x0,
+                    trial_delta,
+                    mask,
+                    climatology,
+                    args,
+                    trained_rollout_steps,
+                    lat,
+                    lon,
+                    baseline_nino,
+                    baseline_3m,
+                    use_checkpoint=False,
+                )
+                trial_objective = float(trial_metrics["objective"].item())
+            accepted = accepts_objective_update(objective_value, trial_objective, args.acceptance_tolerance)
+            if accepted:
+                accepted_steps += 1
+                if trial_objective > best_objective:
+                    best_objective = trial_objective
+                    best_delta_param = delta_param.detach().clone()
+            else:
+                rejected_steps += 1
+                with torch.no_grad():
+                    delta_param.copy_(previous_param)
+                optimizer.load_state_dict(previous_optimizer_state)
+                for group in optimizer.param_groups:
+                    group["lr"] = max(float(args.min_lr), float(group["lr"]) * float(args.backtrack_factor))
+
         if step == 1 or step == int(args.steps) or step % max(1, int(args.steps) // 10) == 0:
             history.append(
                 {
@@ -677,10 +760,32 @@ def optimize_single_start(
                     "max_3m": float(metrics["max_3m"].detach().cpu().item()),
                     "mean_3m": float(metrics["mean_3m"].detach().cpu().item()),
                     "loss": float(loss.detach().cpu().item()),
+                    "accepted": float(accepted),
+                    "learning_rate": float(optimizer.param_groups[0]["lr"]),
                 }
             )
 
     with torch.no_grad():
+        current_delta = expand_delta(delta_param, target_hw, args.perturb_grid) * mask.to(dtype=x0.dtype)
+        current_metrics = evaluate_delta(
+            model,
+            dataset,
+            case,
+            x0,
+            current_delta,
+            mask,
+            climatology,
+            args,
+            trained_rollout_steps,
+            lat,
+            lon,
+            baseline_nino,
+            baseline_3m,
+            use_checkpoint=False,
+        )
+        if float(current_metrics["objective"].detach().cpu().item()) > best_objective:
+            best_delta_param = delta_param.detach().clone()
+        delta_param = best_delta_param
         final_delta = expand_delta(delta_param, target_hw, args.perturb_grid) * mask.to(dtype=x0.dtype)
         final_metrics = evaluate_delta(
             model,
@@ -707,13 +812,23 @@ def optimize_single_start(
             eps,
             args,
         )
+        delta_phys = normalized_delta_to_physical(dataset, final_delta.detach())[0]
+        normalized_abs_max = float(final_delta.detach().abs().max().item())
 
     return {
         "start_idx": start_idx,
         "seed": seed,
+        "init_label": init_label,
+        "optimizer_mode": args.optimizer_mode,
+        "accepted_steps": accepted_steps,
+        "rejected_steps": rejected_steps,
+        "final_learning_rate": float(optimizer.param_groups[0]["lr"]),
         "delta_norm": final_delta.detach().cpu().numpy()[0],
         "delta_param": delta_param.detach(),
-        "delta_phys": normalized_delta_to_physical(dataset, final_delta.detach())[0],
+        "delta_phys": delta_phys,
+        "normalized_abs_max": normalized_abs_max,
+        "tos_physical_abs_max": float(np.nanmax(np.abs(delta_phys[0]))),
+        "zos_physical_abs_max": float(np.nanmax(np.abs(delta_phys[1]))),
         "final_nino": final_metrics["nino"].detach().cpu().numpy(),
         "final_3m": final_metrics["three_month"].detach().cpu().numpy(),
         "objective": float(final_metrics["objective"].detach().cpu().item()),
@@ -727,6 +842,32 @@ def optimize_single_start(
         "constraint_ratio": constraint_norm / max(constraint_radius, 1.0e-12),
         "history": history,
     }
+
+
+def load_warm_start_deltas(paths: list[str]) -> list[tuple[str, torch.Tensor]]:
+    """Load regional candidates and create deterministic mixtures for global search."""
+
+    loaded: list[tuple[str, torch.Tensor]] = []
+    for value in paths:
+        path = Path(value)
+        with np.load(path) as payload:
+            array = np.asarray(payload["delta_norm"], dtype=np.float32)
+        if array.ndim != 3 or array.shape[0] != 2:
+            raise ValueError(f"Warm-start delta must have shape (2,H,W), got {array.shape} from {path}")
+        loaded.append((path.parent.name, torch.from_numpy(array)))
+    if len(loaded) < 2:
+        return loaded
+
+    left_label, left = loaded[0]
+    right_label, right = loaded[1]
+    if left.shape != right.shape:
+        raise ValueError(f"Warm-start shapes differ: {left.shape} vs {right.shape}")
+    mixtures = [
+        (f"mix:{left_label}+{right_label}", left + right),
+        (f"mix:3{left_label}+{right_label}", 0.75 * left + 0.25 * right),
+        (f"mix:{left_label}+3{right_label}", 0.25 * left + 0.75 * right),
+    ]
+    return loaded + mixtures
 
 
 def refine_with_lbfgs(
@@ -901,11 +1042,17 @@ def optimize_case(
     num_starts = max(1, int(args.num_starts))
     top_k = max(1, min(int(args.top_k), num_starts))
     candidates: list[dict[str, Any]] = []
+    warm_starts = load_warm_start_deltas(list(args.warm_start_npz))
 
     start_offset = max(0, int(args.start_index_offset))
     for local_start_idx in range(num_starts):
         start_idx = start_offset + local_start_idx
         start_seed = int(args.seed) + case.source_idx * 100_000 + case.target_t * 10 + start_idx
+        if start_idx < len(warm_starts):
+            init_label, initial_delta = warm_starts[start_idx]
+        else:
+            init_label = "zero" if start_idx == 0 else "random"
+            initial_delta = None
         candidate = optimize_single_start(
             model,
             dataset,
@@ -924,11 +1071,14 @@ def optimize_case(
             eps,
             start_idx,
             start_seed,
+            initial_delta,
+            init_label,
         )
         candidates.append(candidate)
         print(
             f"  start {local_start_idx + 1}/{num_starts} global_idx={start_idx}: "
             f"objective={candidate['objective']:.4f} "
+            f"init={candidate['init_label']} "
             f"lead_delta={candidate['lead_delta']:.4f} "
             f"cnop_max_3m={candidate['cnop_max_3m']:.4f} "
             f"gain={candidate['gain_max_3m']:.4f}",
@@ -1082,6 +1232,19 @@ def prepare_event_l2_constraint(dataset: WalkerDataset, args: argparse.Namespace
     constraint_path = Path(args.constraint_file)
     with constraint_path.open("r", encoding="utf-8") as handle:
         payload = json.load(handle)
+    constraint_domain = payload.get("domain")
+    if constraint_domain is not None and str(constraint_domain) != str(args.domain):
+        raise ValueError(
+            f"Constraint domain mismatch: file={constraint_domain!r}, requested={args.domain!r}"
+        )
+    constraint_lat_bounds = payload.get("basin_lat_bounds")
+    if constraint_lat_bounds is not None:
+        requested_bounds = parse_bounds(args.basin_lat_bounds)
+        stored_bounds = (float(constraint_lat_bounds[0]), float(constraint_lat_bounds[1]))
+        if not np.allclose(requested_bounds, stored_bounds, atol=1.0e-6):
+            raise ValueError(
+                f"Constraint latitude mismatch: file={stored_bounds}, requested={requested_bounds}"
+            )
     radius = float(payload["constraint_l2"]) * float(args.constraint_scale)
     if radius <= 0:
         raise ValueError(f"event_l2 constraint must be positive, got {radius}")
@@ -1101,17 +1264,25 @@ def prepare_event_l2_constraint(dataset: WalkerDataset, args: argparse.Namespace
     args.event_constraint_equalization_rms = equalization_rms
 
     if normalization == "december_anomaly_train_std_equal_rms":
-        train_start, train_end = dataset.data_config["train_years"]
+        stored_stds = payload.get("source_december_std", {})
         std_rows: list[np.ndarray] = []
-        for payload_item in dataset.source_payloads:
-            years = np.asarray(payload_item["years"])
-            months = np.asarray(payload_item["months"])
-            mask = (years >= int(train_start)) & (years <= int(train_end)) & (months == 12)
-            fields = np.asarray(payload_item["data"][mask, :2], dtype=np.float32)
-            mean_field = np.nanmean(fields, axis=0)
-            std_scalar = np.nanstd(fields - mean_field[None], axis=(0, 2, 3)).astype(np.float32)
-            std_scalar = np.where(std_scalar > 1.0e-12, std_scalar, 1.0).astype(np.float32)
-            std_rows.append(std_scalar)
+        if stored_stds:
+            for source_name in dataset.source_names:
+                if source_name not in stored_stds:
+                    raise ValueError(f"Constraint file lacks December std for source={source_name}")
+                std_rows.append(np.asarray(stored_stds[source_name], dtype=np.float32))
+        else:
+            # Legacy global constraint files did not persist source-wise values.
+            train_start, train_end = dataset.data_config["train_years"]
+            for payload_item in dataset.source_payloads:
+                years = np.asarray(payload_item["years"])
+                months = np.asarray(payload_item["months"])
+                mask = (years >= int(train_start)) & (years <= int(train_end)) & (months == 12)
+                fields = np.asarray(payload_item["data"][mask, :2], dtype=np.float32)
+                mean_field = np.nanmean(fields, axis=0)
+                std_scalar = np.nanstd(fields - mean_field[None], axis=(0, 2, 3)).astype(np.float32)
+                std_scalar = np.where(std_scalar > 1.0e-12, std_scalar, 1.0).astype(np.float32)
+                std_rows.append(std_scalar)
         args.event_constraint_december_std = torch.from_numpy(np.stack(std_rows, axis=0).astype(np.float32))
     elif normalization == "dataset_zscore_equal_rms":
         args.event_constraint_december_std = None
@@ -1197,6 +1368,7 @@ def write_case_npz(output_dir: Path, result: dict[str, Any], dataset: WalkerData
         top_constraint_radius=np.asarray([item["constraint_radius"] for item in top_candidates], dtype=np.float32),
         top_constraint_ratio=np.asarray([item["constraint_ratio"] for item in top_candidates], dtype=np.float32),
         top_start_idx=np.asarray([item["start_idx"] for item in top_candidates], dtype=np.int32),
+        top_init_label=np.asarray([item.get("init_label", "unknown") for item in top_candidates]),
         baseline_nino=result["baseline_nino"],
         cnop_nino=result["final_nino"],
         baseline_3m=result["baseline_3m"],
@@ -1214,6 +1386,7 @@ def serializable_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
         "rank": candidate.get("rank"),
         "start_idx": candidate["start_idx"],
         "seed": candidate["seed"],
+        "init_label": candidate.get("init_label", "unknown"),
         "objective": candidate["objective"],
         "early_penalty": candidate["early_penalty"],
         "lead_nino": candidate["lead_nino"],
@@ -1223,6 +1396,9 @@ def serializable_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
         "constraint_norm": candidate["constraint_norm"],
         "constraint_radius": candidate["constraint_radius"],
         "constraint_ratio": candidate["constraint_ratio"],
+        "normalized_abs_max": candidate["normalized_abs_max"],
+        "tos_physical_abs_max": candidate["tos_physical_abs_max"],
+        "zos_physical_abs_max": candidate["zos_physical_abs_max"],
         "refined_with_lbfgs": bool(candidate.get("refined_with_lbfgs", False)),
         "history": candidate.get("history", []),
     }
@@ -1250,6 +1426,9 @@ def write_summary_csv(output_dir: Path, results: list[dict[str, Any]]) -> Path:
                 "constraint_norm",
                 "constraint_radius",
                 "constraint_ratio",
+                "normalized_abs_max",
+                "tos_physical_abs_max",
+                "zos_physical_abs_max",
                 "mask_count",
             ]
         )
@@ -1273,6 +1452,9 @@ def write_summary_csv(output_dir: Path, results: list[dict[str, Any]]) -> Path:
                     result["top_candidates"][0]["constraint_norm"],
                     result["top_candidates"][0]["constraint_radius"],
                     result["top_candidates"][0]["constraint_ratio"],
+                    result["top_candidates"][0]["normalized_abs_max"],
+                    result["top_candidates"][0]["tos_physical_abs_max"],
+                    result["top_candidates"][0]["zos_physical_abs_max"],
                     result["mask_count"],
                 ]
             )
@@ -1290,6 +1472,7 @@ def write_candidate_summary_csv(output_dir: Path, results: list[dict[str, Any]])
                 "rank",
                 "start_idx",
                 "seed",
+                "init_label",
                 "objective",
                 "early_penalty",
                 "baseline_lead_nino",
@@ -1301,6 +1484,9 @@ def write_candidate_summary_csv(output_dir: Path, results: list[dict[str, Any]])
                 "constraint_norm",
                 "constraint_radius",
                 "constraint_ratio",
+                "normalized_abs_max",
+                "tos_physical_abs_max",
+                "zos_physical_abs_max",
                 "refined_with_lbfgs",
             ]
         )
@@ -1314,6 +1500,7 @@ def write_candidate_summary_csv(output_dir: Path, results: list[dict[str, Any]])
                         candidate.get("rank"),
                         candidate["start_idx"],
                         candidate["seed"],
+                        candidate.get("init_label", "unknown"),
                         candidate["objective"],
                         candidate["early_penalty"],
                         result["baseline_lead_nino"],
@@ -1325,6 +1512,9 @@ def write_candidate_summary_csv(output_dir: Path, results: list[dict[str, Any]])
                         candidate["constraint_norm"],
                         candidate["constraint_radius"],
                         candidate["constraint_ratio"],
+                        candidate["normalized_abs_max"],
+                        candidate["tos_physical_abs_max"],
+                        candidate["zos_physical_abs_max"],
                         bool(candidate.get("refined_with_lbfgs", False)),
                     ]
                 )
@@ -1408,6 +1598,10 @@ def write_method_json(output_dir: Path, args: argparse.Namespace, checkpoint: di
         "horizon": args.horizon,
         "steps": args.steps,
         "lr": args.lr,
+        "optimizer_mode": args.optimizer_mode,
+        "acceptance_tolerance": args.acceptance_tolerance,
+        "backtrack_factor": args.backtrack_factor,
+        "min_lr": args.min_lr,
         "num_starts": args.num_starts,
         "start_index_offset": args.start_index_offset,
         "top_k": args.top_k,

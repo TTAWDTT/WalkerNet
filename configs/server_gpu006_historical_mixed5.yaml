@@ -1,0 +1,90 @@
+# Portable GPU-006 configuration for the immutable historical mixed-5 checkpoint.
+# Keep model and training fields aligned with server_3090_mixed5_ddp8.yaml.
+data:
+  path: "/data/WalkerNet/input/historical/CESM2"
+  source_name: "CESM2"
+  sources:
+    - name: "CESM2"
+      path: "/data/WalkerNet/input/historical/CESM2"
+    - name: "EC-Earth3"
+      path: "/data/WalkerNet/input/historical/EC-Earth3"
+    - name: "GFDL-ESM4"
+      path: "/data/WalkerNet/input/historical/GFDL-ESM4"
+    - name: "IPSL-CM6A-LR"
+      path: "/data/WalkerNet/input/historical/IPSL-CM6A-LR"
+    - name: "MPI-ESM1-2-HR"
+      path: "/data/WalkerNet/input/historical/MPI-ESM1-2-HR"
+  L: 12
+  H: 180
+  W: 360
+  variables: ["tos", "zos", "tauu", "tauv"]
+  norm: "zscore"
+  data_cache_path: "/data/WalkerNet/cache/mixed5_data"
+  norm_stats_path: "/data/WalkerNet/input/artifacts/normalization/mixed5_norm_stats_train.pt"
+  train_years: [1850, 2000]
+  val_years: [2001, 2007]
+  test_years: [2008, 2014]
+
+model:
+  patch_size: 4
+  d_model: 256
+  nhead: 8
+  dim_ff: 1024
+  num_layers: 6
+  patch_fusion_heads: 4
+  patch_fusion_layers: 1
+  patch_fusion_dim_ff: 1024
+  num_experts: 12
+  top_k: 2
+  decoder_hidden: 128
+  dropout: 0.1
+  max_rollout_steps: 24
+  residual_output: true
+
+training:
+  epochs: 100
+  batch_size: 1
+  lr: 3.0e-5
+  weight_decay: 1.0e-2
+  amp: true
+  grad_accum_steps: 2
+  grad_clip: 1.0
+  rollout_steps: 18
+  rollout_curriculum:
+    - until_epoch: 3
+      steps: 12
+    - until_epoch: 7
+      steps: 15
+    - steps: 18
+  detach_rollout: true
+  lead_weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+  loss: "area_weighted_field_tropical_pacific_nino_structure"
+  loss_weights:
+    area_weighted: true
+    field: 1.0
+    tropical_pacific: 0.1
+    nino34: 0.3
+    nino34_structure: 0.1
+    nino34_batch_corr: 0.1
+  rollout_selection:
+    enabled: true
+    split: "val"
+    interval_epochs: 2
+    max_lead: 18
+    leads: [6, 9, 12, 18]
+    mode: "three_month_mean"
+    max_samples_per_source: 24
+    batch_size: 2
+    score: "mean_acc"
+  early_stopping:
+    enabled: true
+    monitor: "rollout_skill"
+    patience: 8
+    min_delta: 0.003
+    start_epoch: 8
+  seed: 42
+
+logging:
+  log_interval: 50
+  save_dir: "/data/WalkerNet/outputs/checkpoints_unused"
+  use_tensorboard: true

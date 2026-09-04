@@ -1,0 +1,5 @@
+source,target_year
+# Populate this manifest only after the constraint protocol is fixed.
+# Each row must be a held-out neutral target year with a complete preceding input year.
+# Example:
+# GFDL-ESM4,1995

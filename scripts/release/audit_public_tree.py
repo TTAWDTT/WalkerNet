@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-FORBIDDEN_PATH_PARTS = {"outputs", ".local", "cache"}
+FORBIDDEN_PATH_PARTS = {"outputs", ".local", "cache", "runs"}
 FORBIDDEN_SUFFIXES = {".nc", ".npy", ".npz", ".pt", ".pth", ".log"}
 PRIVATE_PATTERNS = {
     "server mount": re.compile(r"/mnt/[A-Za-z0-9_.-]+"),
